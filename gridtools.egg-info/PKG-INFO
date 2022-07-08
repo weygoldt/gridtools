@@ -1,0 +1,20 @@
+Metadata-Version: 2.1
+Name: gridtools
+Version: 0.0.1
+Summary: Data pipeline for electrode grid recordings
+Author: weygoldt (Patrick Weygoldt)
+Author-email: <weygoldt@pm.me>
+License: UNKNOWN
+Keywords: python,efish,neurobiology,neuroethology
+Platform: UNKNOWN
+Classifier: Development Status :: 1 - Planning
+Classifier: Intended Audience :: Biologists
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: Unix
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Operating System :: Microsoft :: Windows
+Description-Content-Type: text/markdown
+
+
+
+
