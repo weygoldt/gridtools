@@ -1,4 +1,7 @@
 # GridTools
+
+**Disclaimer**: The build file does not include all dependencies, docstrings are missing and some functions might be buggy! 
+
 `gridtools` provides easy access to tracked frequencies of electrode recordings as provided by the [wavetracker](https://github.com/tillraab/wavetracker.git).
 Functions include preprocessing, position estimation and ID extraction.
 

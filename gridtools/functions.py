@@ -55,7 +55,6 @@ def kde1d(y, bandwidth, xlims="auto", resolution=500, kernel="gaussian"):
             x = np.linspace(xlims[0], xlims[1], resolution)
         except ValueError:
             print("Invalid argument for 'xlims'. Must be a list/array or 'auto'.")
-            return None
     kde = KernelDensity(kernel=kernel, bandwidth=bandwidth).fit(y[:, None])
     log_dens = kde.score_samples(x[:, None])
 
