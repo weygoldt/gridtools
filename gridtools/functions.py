@@ -66,11 +66,16 @@ def kde1d(y, bandwidth, xlims="auto", resolution=500, kernel="gaussian"):
     return x, np.exp(log_dens)
 
 
-def kde2d(x, y, bandwidth, xbins=100j, ybins=100j, kernel="gaussian", **kwargs):
+def kde2d(
+    x, y, bandwidth, xbins=100j, ybins=100j, dims=None, kernel="gaussian", **kwargs
+):
     """Build 2D kernel density estimate (KDE)."""
 
     # create grid of sample locations (default: 100x100)
-    xx, yy = np.mgrid[x.min() : x.max() : xbins, y.min() : y.max() : ybins]
+    if dims is None:
+        xx, yy = np.mgrid[x.min() : x.max() : xbins, y.min() : y.max() : ybins]
+    else:
+        xx, yy = np.mgrid[dims[0] : dims[1] : xbins, dims[2] : dims[3] : ybins]
 
     xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
     xy_train = np.vstack([y, x]).T
