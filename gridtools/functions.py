@@ -627,6 +627,8 @@ def simple_outputdir(path):
     else:
         print("using existing output directory")
 
+    return path
+
 
 """Signal processing"""
 
