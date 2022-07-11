@@ -5,7 +5,7 @@
 `gridtools` provides easy access to tracked frequencies of electrode recordings as provided by the [wavetracker](https://github.com/tillraab/wavetracker.git).
 Functions include preprocessing, position estimation and ID extraction.
 
-The main classes provided by `gridtools` is `gridtools.GridTracks`. It loads a single track recording, estimates positions and supports common operations such as:
+The main classes provided by `gridtools` is `gridtools.GridTracks`. It loads all tracked fundamental frequenies of a single tracked recording and supports common operations such as:
 
 - `gridtools.GridTracks.fill_powers`: Recompute missing powers after manual frequency tracking using the `EODsorter.py` gui from the [wavetracker](https://github.com/tillraab/wavetracker.git). 
 - `gridtools.GridTracks.remove_nans`: Remove all NANs from the dataset.
