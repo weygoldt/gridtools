@@ -743,7 +743,6 @@ def aim_index(c1, c2):
 
         # transform r to degrees
         rd = degrees(r)
-        print(rd)
 
         # norm right side of unit circle to 0
         if rd <= 180:
@@ -753,5 +752,7 @@ def aim_index(c1, c2):
             aim = (rd - 180) / 180
 
         aims.append(aim)
+
+    aims = nanpad(aims, "right", 1)
 
     return np.asarray(aims)
