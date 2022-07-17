@@ -1,13 +1,14 @@
 import datetime
 import os
 from itertools import combinations, pairwise
-from math import copysign
+from math import atan2, copysign, degrees
 from operator import itemgetter
 from string import Formatter
 
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+from IPython import embed
 from scipy import ndimage
 from scipy.signal import butter, sosfiltfilt
 from scipy.spatial import cKDTree
@@ -64,6 +65,12 @@ def kde1d(y, bandwidth, xlims="auto", resolution=500, kernel="gaussian"):
         )
     )
     return x, np.exp(log_dens)
+
+
+def kde1d_mode(y, bandwidth, resolution):
+    kde = kde1d(y, bandwidth, xlims="auto", resolution=resolution)
+    mode = kde[0][kde[1] == np.max(kde[1])][0]
+    return mode
 
 
 def kde2d(
@@ -643,6 +650,23 @@ def lowpass_filter(data, rate, cutoff, order=2):
 
 
 def velocity2d(t, x, y):
+    """
+    Compute the velocity of an object in 2D space.
+
+    Parameters
+    ----------
+    t : array-like
+        time axis for coordinates
+    x : array-like
+        x coordinates of object
+    y : array-like
+        y coordinates of object
+
+    Returns
+    -------
+    velocity : numpy array
+        velocity of object with same dimension as input (padded with nans).
+    """
 
     # delta t
     dt = np.array([x - x0 for x0, x in zip(t, t[2:])])
@@ -651,7 +675,7 @@ def velocity2d(t, x, y):
     dx = np.array([(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(x, x[1:], x[2:])])
     dy = np.array([(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(y, y[1:], y[2:])])
 
-    # delta d tot.
+    # delta d tot. (pythagoras)
     dd = np.sqrt(dx**2 + dy**2)
 
     # velocity & correcsponding time
@@ -661,3 +685,73 @@ def velocity2d(t, x, y):
     v = nanpad(v, position="center", padlen=1)
 
     return v
+
+
+def aim_index(c1, c2):
+    """
+    And index to quanify the aim of the trajectory of one fish towards the position of another.
+
+    A value between 0 and 1 indicating whether fish 1 swims into the opposite direciton
+    of fish 2 (aim index = 0) or into the the direction where fish 2 is located (aim index = 1).
+
+    Parameters
+    ----------
+    c1 : array-like
+        x and y coordinates of fish 1
+    c2 : array-like
+        x and y coordinates of fish 2
+
+    Returns
+    -------
+    aims : numpy array
+        aim index of fish 1 towards fish 2
+    """
+
+    # fish 1 current position coordinates
+    x1 = c1[0][:-1]
+    y1 = c1[1][:-1]
+
+    # fish 1 trajectory coordinates
+    x1t = c1[0][1:]
+    y1t = c1[1][1:]
+
+    # fish 2 coordinates
+    x2 = c2[0][:-1]
+    y2 = c2[1][:-1]
+
+    aims = []
+
+    for i in range(len(x1)):
+
+        # compute trajectory angle
+        adj = x1[i] - x1t[i]  # adjacent side of triangle
+        opp = y1[i] - y1t[i]  # opposite side of triangle
+        a = atan2(opp, adj)  # angle between them in radians
+
+        # compute trajectory angle
+        adj = x2[i] - x1[i]  # adjacent side of triangle
+        opp = y2[i] - y1[i]  # opposite side of triangle
+        b = atan2(opp, adj)  # angle between them in radians
+
+        # first transform two radians to keep them positive
+        a = 2 * np.pi + a if a < 0 else a
+        b = 2 * np.pi + b if b < 0 else b
+
+        # get the absolute of the relative angle
+        # (because its easier and for now we dont care about left or right)
+        r = np.abs(b - a)
+
+        # transform r to degrees
+        rd = degrees(r)
+        print(rd)
+
+        # norm right side of unit circle to 0
+        if rd <= 180:
+            aim = 1 - rd / 180
+        # norm left side of unit circle to 0
+        elif rd > 180:
+            aim = (rd - 180) / 180
+
+        aims.append(aim)
+
+    return np.asarray(aims)

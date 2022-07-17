@@ -56,7 +56,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from IPython import embed
-from scipy.signal import butter, find_peaks, medfilt, savgol_filter, sosfiltfilt
+from scipy.signal import (butter, find_peaks, medfilt, savgol_filter,
+                          sosfiltfilt)
 from thunderfish import dataloader, powerspectrum
 from tqdm import tqdm
 
@@ -389,6 +390,7 @@ class GridTracks:
     def sex_ids(self, upper="m", thresh=740):
         self.sex = []
         self.eodf = []
+
         for track_id in self.ids:
             fund = self.fund_v[self.ident_v == track_id]
             kde = kde1d(fund, bandwidth=0.3, resolution=100)
@@ -405,6 +407,7 @@ class GridTracks:
                     self.sex.append("f")
                 if eodf <= thresh:
                     self.sex.append("m")
+
         self.sex = np.asarray(self.sex)
         self.eodf = np.asarray(self.eodf)
 
