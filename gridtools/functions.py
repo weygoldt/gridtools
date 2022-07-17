@@ -10,7 +10,7 @@ import numpy as np
 import yaml
 from IPython import embed
 from scipy import ndimage
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, find_peaks, sosfiltfilt
 from scipy.spatial import cKDTree
 from sklearn.metrics import auc
 from sklearn.neighbors import KernelDensity
@@ -725,8 +725,8 @@ def aim_index(c1, c2):
     for i in range(len(x1)):
 
         # compute trajectory angle
-        adj = x1[i] - x1t[i]  # adjacent side of triangle
-        opp = y1[i] - y1t[i]  # opposite side of triangle
+        adj = x1t[i] - x1[i]  # adjacent side of triangle
+        opp = y1t[i] - y1[i]  # opposite side of triangle
         a = atan2(opp, adj)  # angle between them in radians
 
         # compute trajectory angle
@@ -748,9 +748,10 @@ def aim_index(c1, c2):
         # norm right side of unit circle to 0
         if rd <= 180:
             aim = 1 - rd / 180
+
         # norm left side of unit circle to 0
         elif rd > 180:
-            aim = (rd - 180) / 180
+            aim = 1 - (180 - (rd - 180)) / 180
 
         aims.append(aim)
         relangles.append(rd)
@@ -795,3 +796,123 @@ def veloc(times, dist):
     v = nanpad(v, position="center", padlen=1)
 
     return v
+
+
+def find_interactions(dyad, start, stop, maxd, peakprom, plot=False):
+    """
+    Uses fish trajectory, velocity and proximity to find interactions between two individuals.
+
+    This is experimental and must be rigorously tested before being used.
+    This function calculates the product of:
+
+        - aim index:
+            The "directedness" of movement of a fish. Becomes 1 if fish
+            1 swims directly towards fish 2 and 0 if it swims into the
+            opposite direction.
+
+        - velocity:
+            Simply the velocity of a fish at a given point in time.
+
+        - proximity index:
+            Becomes 1 if fish have a distance of 0 cm and decreases with increasing
+            distance to 0. If maxd is smaller than the maximum possible distance of
+            two fish on the grid, this implements a threshold. I.e. all instances where
+            fish distances surpass maxd become 0, the rest are scaled between 0 and 1.
+
+    This means that the resulting function increases, as velocities increase,
+    heading precision towards the conspecific increases and distance decreases.
+
+    By incorporating both velocity and heading direction, interactions can be
+    computed for each individual seperately, instead of just thresholding the distance.
+
+    If the correct parameters, e.g. from competition experiments are supplied,
+    this could be used to detect attack events in the grid recording. I set the
+    peak prominence lower to detect "social interactions" in general.
+
+
+    Parameters
+    ----------
+    dyad : dyad object
+        A class instance of the gridtools.Dyad class.
+    start : float
+        Start time stamp on the time axis.
+    stop : float
+        Stop time stamp on the time axis.
+    maxd : float or int
+        Maximum distance for distance index.
+    peakprom : float or int
+        Peak prominence of the peak detection.
+    plot : bool, optional
+        To plot or not to plot the parameters during calculation, by default False.
+
+    Returns
+    -------
+    peaks1, peaks2 : tuple(array, array)
+        The peaks, i.e. interactions for each individual.
+    """
+
+    # make arrays for aim index
+    c1 = [dyad.xpos_smth_id1[start:stop], dyad.ypos_smth_id1[start:stop]]
+    c2 = [dyad.xpos_smth_id2[start:stop], dyad.ypos_smth_id2[start:stop]]
+    t = dyad.times[start:stop]
+
+    # extract aim index
+    aims1, relangles1 = aim_index(c1, c2)
+    aims2, relangles2 = aim_index(c2, c1)
+
+    # extract distance index (0 at max dist, 1 at min dist)
+    dist_index = []
+    for dpos in dyad.dpos[start:stop]:
+        if dpos < maxd:
+            dist_index.append(1 - dpos / maxd)
+        else:
+            dist_index.append(0)
+
+    # extract velocities
+    v1 = velocity2d(t, c1[0], c1[1])
+    v2 = velocity2d(t, c2[0], c2[1])
+
+    # compute relative velocities
+    vr = veloc(dyad.times[start:stop], dyad.dpos[start:stop])
+
+    interact_index1 = v1 * aims1 * dist_index
+    interact_index2 = v2 * aims2 * dist_index
+
+    # find peaks, i.e. attacks
+    peaks1 = find_peaks(interact_index1, prominence=peakprom)[0]
+    peaks2 = find_peaks(interact_index2, prominence=peakprom)[0]
+
+    if plot:
+        fig, ax = plt.subplots(6, 1, figsize=(6, 12), sharex=True)
+
+        ax[0].set_title("Fundamental frequencies")
+        ax[0].plot(dyad.times[start:stop], dyad.fund_id1[start:stop])
+        ax[0].plot(dyad.times[start:stop], dyad.fund_id2[start:stop])
+
+        ax[1].set_title("Velocities of both fish")
+        ax[1].plot(t, v1)
+        ax[1].plot(t, v2)
+
+        ax[2].set_title("Aim index of both fish, should have peaks where attack is")
+        ax[2].plot(t, aims1)
+        ax[2].plot(t, aims2)
+
+        ax[3].set_title("Distance index")
+        ax[3].plot(t, dist_index)
+
+        ax[4].set_title("Attack index, i.e. v * aim_index * dist_index")
+        ax[4].plot(t, interact_index1)
+        ax[4].plot(t, interact_index2)
+
+        peakbool1 = np.full(len(interact_index1), False, dtype=bool)
+        peakbool2 = np.full(len(interact_index2), False, dtype=bool)
+        peakbool1[peaks1] = True
+        peakbool2[peaks2] = True
+
+        ax[5].set_title("Attack index masked for approach phases only")
+        ax[5].plot(t, interact_index1)
+        ax[5].plot(t, interact_index2)
+        ax[5].plot(t[peakbool1], interact_index1[peakbool1], ".")
+        ax[5].plot(t[peakbool2], interact_index2[peakbool2], ".")
+
+    return peaks1, peaks2
