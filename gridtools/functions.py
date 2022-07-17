@@ -720,6 +720,7 @@ def aim_index(c1, c2):
     y2 = c2[1][:-1]
 
     aims = []
+    relangles = []
 
     for i in range(len(x1)):
 
@@ -752,7 +753,45 @@ def aim_index(c1, c2):
             aim = (rd - 180) / 180
 
         aims.append(aim)
+        relangles.append(rd)
 
     aims = nanpad(aims, "right", 1)
+    relangles = nanpad(relangles, "right", 1)
+    aims = np.asarray(aims)
+    relangles = np.asarray(relangles)
 
-    return np.asarray(aims)
+    return aims, relangles
+
+
+def veloc(times, dist):
+    """
+    Compute velocity as distance over time.
+
+    Parameters
+    ----------
+    times : array-like
+        array with time stamps, e.g. in seconds
+    dist : array-like
+        array with distances
+
+    Returns
+    -------
+    velocity: numpy array
+        velocities at time points
+    """
+
+    # make times
+    dt = np.array([x - x0 for x0, x in zip(times, times[2:])])
+
+    # compute distances
+    dx = np.array(
+        [(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(dist, dist[1:], dist[2:])]
+    )
+
+    # compute velocity, i.e. distance over time
+    v = dx / dt
+
+    # add nans to make same dimension as input
+    v = nanpad(v, position="center", padlen=1)
+
+    return v
