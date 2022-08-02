@@ -24,6 +24,30 @@ verbose = True  # to set the functions to verbose
 
 
 def get_ylims(y1, y2, t, tstart, tstop, padding=0.2):
+    """
+    Get y limits of two data arrays that share a same time array only during a certain time window
+    specified by tstart and tstop and some padding before and after.
+
+    Parameters
+    ----------
+    y1 : 1d array-like
+        First data array
+    y2 : 1d array-like
+        Second data array
+    t : 1d array-like
+        Shared time array
+    tstart : float
+        Starting timestamp
+    tstop : float
+        Stop timestamp
+    padding : float, optional
+        The factor to pad the time range, by default 0.2
+
+    Returns
+    -------
+    list
+        [ymin, ymax]
+    """
 
     # make indices
     indices = np.arange(len(t))
@@ -48,7 +72,31 @@ def get_ylims(y1, y2, t, tstart, tstop, padding=0.2):
 
 
 def kde1d(y, bandwidth, xlims="auto", resolution=500, kernel="gaussian"):
+    """
+    Estimate the probability density function of a continuous variable using the kernel density method.
+    Computes the limits by minimum and maximum of the supplied variable or set the maxima (e.g. for variables that
+    cannot the smaller then 0 etc.).
 
+    Parameters
+    ----------
+    y : 1d array-like
+        The continuous variable
+    bandwidth : float
+        The bandwidth of the kernel (i.e. sigma of a gaussian)
+    xlims : {array-like, 'auto'}, optional
+        The limits of the data, by default "auto"
+    resolution : int, optional
+        The number of points to draw the KDE, by default 500
+    kernel : {'gaussian', 'tophat', 'epanechnikov', 'exponential', 'linear', 'cosine'}
+        The kernel to use, by default "gaussian"
+
+    Returns
+    -------
+    x : array
+        The x axis of the estimated PDF.
+    pdf : array
+        The KDE-estimated PDF of the input data.
+    """
     if xlims == "auto":
         x = np.linspace(np.min(y), np.max(y), resolution)
     else:
@@ -68,6 +116,7 @@ def kde1d(y, bandwidth, xlims="auto", resolution=500, kernel="gaussian"):
 
 
 def kde1d_mode(y, bandwidth, resolution):
+    """Estimate the mode of a continuous variable by the maximum of the probability density function."""
     kde = kde1d(y, bandwidth, xlims="auto", resolution=resolution)
     mode = kde[0][kde[1] == np.max(kde[1])][0]
     return mode
@@ -190,19 +239,18 @@ def knn_2d_dens_slow(xs, ys, reso, n_neighbours):
 
 
 def lims(track1, track2):
-    """Helper function to get frequency y axis limits from two fundamental frequency tracks.
+    """
+    Get the maximum and minimum of the values contained in two arrays.
 
-    Args:
-        track1 (array): First track
-        track2 (array): Second track
-        start (int): Index for first value to be plotted
-        stop (int): Index for second value to be plotted
-        padding (int): Padding for the upper and lower limit
+    Parameters
+    ----------
+    track1 : array
+    track2 : array
 
-    Returns:
-        lower (float): lower limit
-        upper (float): upper limit
-
+    Returns
+    -------
+    touple
+        The minimum and maximum value.
     """
     allfunds_tmp = (
         np.concatenate(
@@ -269,16 +317,23 @@ def find_closest(array, target):
 
 
 def points2ranges(timestamps, time, radius):
-    """Genereates time ranges of a specified window size from point events.
+    """
+    Genereates time ranges of a specified window size from point events.
     Window is sized by (radius * 2)+1.
 
-    Args:
-        timestamps (1d array of ints): Timestamps of point events.
-        time (1d array of ints): Time in int, use index vector for time.
-        radius (int): Radius determining window size.
+    Parameters
+    ----------
+    timestamps : 1d array of integers
+        Timestamps of point events
+    time : 1d array of integers
+        Time in integers, e.g. index vector a float time array.
+    radius : integer
+        Radius determining window size.
 
-    Returns:
-        list of arrays: List of numpy arrays of ranges. The middle element of a range is the point event.
+    Returns
+    -------
+    List of arrays
+        List of numpy arrays of ranges. The center element is the point event.
     """
     ranges = []
     for timestamp in timestamps:
@@ -304,25 +359,51 @@ def points2ranges(timestamps, time, radius):
 
 
 def combine_cooccurences(peaks1, peaks2, time, radius, merge=True, crop=False):
-    """Finds ranges where some peaks2 fall within a given range of another list of peaks1. Useful to find cooccuring events on two seperate filter scales of the same data. I use it to detect peaks of local covariances on two time scales (i.e. where fast modulations and slow modulations between two datasets are similar).
+    """
+    Finds ranges where some peaks2 fall within a given range of another list of peaks1. Useful to find cooccuring events on two seperate filter scales of the same data. I use it to detect peaks of local covariances on two time scales (i.e. where fast modulations and slow modulations between two datasets are similar).
 
     (1) Makes ranges around supplied peaks of sizes (2*radius)+1.
-    (2) Selects all highpass peaks in ranges of lowpass peaks.
-    -- if merge is True:
-        (3) Merges ranges of selected highpass peaks with the lowpass peak range.
-    -- if merge is False:
-        (3) Only uses range of low pass peaks in which high pass peaks fall within
-    (4) Checks if resulting ranges overlap.
-    (5) Combines overlapping ranges and returns resulting ranges.
-    -- if crop is True: Crops half of the specified radius from the onset and offset of the events.
 
-    Args:
-        peaks2 (int array): Peak indices of highpass filtered data.
-        peaks1 (int array): Peak indices of lowpass filtered data.
-        time (int array): Integer time, e.g. index vector for time.
-        radius (int): Range radius around peak.
-        merge (bool): Whether to merge or not to merge ranges of slow ts and fast ts peaks.
-        crop (bool): Whether to crop or not to crop some of the onset and offset of the event. Currently set to crop 3/4 of the radius from start and stop.
+    (2) Selects all highpass peaks in ranges of lowpass peaks.
+
+        -- if merge is True:
+            (3) Merges ranges of selected highpass peaks with the lowpass peak range.
+
+        -- if merge is False:
+            (3) Only uses range of low pass peaks in which high pass peaks fall within
+
+    (4) Checks if resulting ranges overlap.
+
+    (5) Combines overlapping ranges and returns resulting ranges.
+
+        -- if crop is True: Crops half of the specified radius from the onset and offset of the events.
+
+
+    Parameters
+    ----------
+    peaks1 : array of integers
+        Peak indices of the first array.
+    peaks2 : array of integers
+        Peak indices of the second
+    time : array
+        Time or index array of the peaks
+    radius : int
+        Crop ranges using this parameter
+    merge : bool, optional
+        Whether to merge ranges of both peak ararys or not, by default True
+    crop : bool, optional
+        Whether to crop the resulting ranges by the radius or not.
+
+    Returns
+    -------
+    cooccurrences : List of arrays
+        The coocurrence ranges.
+
+    coocc_peaks_large : List of integers
+        Indices for the coocurring lowpass peaks.
+
+    coocc_peaks_small : List of integers
+        Indices for the coocurring highpass peaks.
     """
 
     # combine large with small ranges where small peaks are in large ranges
@@ -360,7 +441,9 @@ def combine_cooccurences(peaks1, peaks2, time, radius, merge=True, crop=False):
 
     # sort list of arrays with ranges by first value of each range
     ranges_new_sort = sorted(ranges_new, key=itemgetter(0))
-    cooccurrences = list_magic(ranges_new_sort)
+
+    # combine ranges when they overlap
+    cooccurrences = clean_ranges(ranges_new_sort)
 
     # get peaks where cooccurrences are
     peakbool_small = np.zeros(len(time), dtype=bool)
@@ -400,22 +483,36 @@ def combine_cooccurences(peaks1, peaks2, time, radius, merge=True, crop=False):
 
 
 def axmax_2d(image, lags, dim):
-    """Returns maxima across one dimension of a 2d-array (e.g. an image).
+    """
+    Returns maxima across one dimension of a 2d-array (e.g. an image).
     If given the 'x' argument to the dimesion, len(y) values are returned,
     each with the maximum of all values across the x axis for the respective index
     of the y axis point. In other words, the maximum values off datapoints across
     the x-axis. For time series data, where x is the time axis, the y argument results
     in the maxima across all y values.
 
-    Args:
-        image (2d array): 2d array, e.g. image, rolling window crosscorrelation, etc.
-        lags (1d array): values for the axis of interest, e.g. time, crosscorrelation lags, etc.
+    Parameters
+    ----------
+    image : 2d array
+        E.g. image, rolling window crosscorrelation, etc.
+    lags : 1d array
+        Values for the axis of interest, e.g. time, crosscorrelation lags, etc.
+    dim : string
+        'x' or 'y' dimension to compute the maxima for.
 
-    Returns:
-        maxs (1d array): maxima across given dimension
-        lags_maxs (1d array): values of the supplied lags values for the maxima
+    Returns
+    -------
+    maxs : 1d array
+        Maxima across given dimension
+    lags_maxs : 1d array
+        Values at the supplied lags values for the maxima
+
+
+    Raises
+    ------
+    Exception
+        Error when supplied dimension is not x or y.
     """
-
     if dim == "y":
         maxs = np.zeros(len(image[0, :]))
     elif dim == "x":
@@ -435,14 +532,21 @@ def axmax_2d(image, lags, dim):
 
 
 def array2ranges(array):
-    """Finds continuous sequences of integers in array and returns ranges
+    """
+    Finds continuous sequences of integers in array and returns ranges
     from start to stop of continuous sequences.
 
-    Args:
-        array (1d array of ints): Array that contains continuous ranges.
+    Parameters
+    ----------
+    array : 1d array of integers
+        Array with integers, some in a continuous range, e.g.:
+        [1,3,6,9, >> 11,12,13,14,15, << 23,28]
 
-    Returns:
-        List of touples: Containing start and stop value.
+    Returns
+    -------
+    list of touples
+        List of touples with the ranges, with respect to the example from above e.g.:
+        [(11,15)]
     """
     array = sorted(set(array))
     gaps = [[s, e] for s, e in zip(array, array[1:]) if s + 1 < e]
@@ -451,7 +555,21 @@ def array2ranges(array):
     return list(zip(edges, edges))
 
 
-def clean_ranges(ranges):
+def clean_ranges1(ranges):
+    """
+    Another way to combine ranges to get rid of overlap. This is experimental and may not work properly.
+
+    Parameters
+    ----------
+    input : list of arrays
+        List of arrays with ranges to combine when overlapping.
+
+    Returns
+    -------
+    list of arrays
+        combined ranges.
+    """
+
     """Takes a sorted list of sorted lists that contain ranges and returns a list of ranges with no overlap. I AM NOT SURE IF THIS ACTUALLY WORKS!
 
     Args:
@@ -476,8 +594,22 @@ def clean_ranges(ranges):
     return cleaned_ranges
 
 
-def list_magic(input):
-    """This is adapted from stackoverflow question https://stackoverflow.com/questions/55380743/finding-overlapping-lists-in-a-list-of-lists"""
+def clean_ranges(input):
+    """
+    Algorithm adapted from stackoverflow question https://stackoverflow.com/questions/55380743/finding-overlapping-lists-in-a-list-of-lists that combines ranges in a list of arrays containing ranges when they overlap.
+
+    Parameters
+    ----------
+    input : list of arrays
+        List of arrays with ranges to combine when overlapping.
+
+    Returns
+    -------
+    list of arrays
+        combined ranges.
+    """
+
+    """This is adapted from """
 
     def Find(id, P):
         if P[id] < 0:
@@ -551,7 +683,7 @@ def get_sign(x):
 
 
 def get_midpoint(x1, x2):
-    """Estimate closest integer midpoint between two index values."""
+    """Estimate closest integer midpoint between two iteger indices."""
     return int(round(x1 + x2) / 2)
 
 
@@ -604,6 +736,15 @@ def strfdelta(tdelta, fmt="{D:02}d {H:02}h {M:02}m {S:02}s", inputtype="timedelt
 
 
 def dir2datetime(folder):
+    """
+    Converts the name of a directory to a datetime object.
+
+    Returns
+    -------
+    string
+        path to a directory named by date and time.
+    """
+
     rec_year, rec_month, rec_day, rec_time = os.path.split(os.path.split(folder)[-1])[
         -1
     ].split("-")
@@ -628,6 +769,20 @@ def dir2datetime(folder):
 
 
 def simple_outputdir(path):
+    """
+    Creates a new directory where the path leads if it does not already exist.
+
+    Parameters
+    ----------
+    path : string
+        path to the new output directory
+
+    Returns
+    -------
+    string
+        path of the newly created output directory
+    """
+
     if os.path.isdir(path) == False:
         os.mkdir(path)
         print("new output directory created")
@@ -641,6 +796,25 @@ def simple_outputdir(path):
 
 
 def lowpass_filter(data, rate, cutoff, order=2):
+    """
+    lowpass filter
+
+    Parameters
+    ----------
+    data : 1d array
+        data to filter
+    rate : float
+        sampling rate of the data in Hz
+    cutoff : float
+        cutoff frequency of the filter in Hz
+    order : int, optional
+        order of the filter, by default 2
+
+    Returns
+    -------
+    1d array
+        filtered data
+    """
     sos = butter(order, cutoff, btype="low", fs=rate, output="sos")
     y = sosfiltfilt(sos, data)
     return y
@@ -649,9 +823,46 @@ def lowpass_filter(data, rate, cutoff, order=2):
 """2D position processing functions"""
 
 
+def velocity1d(t, d):
+    """
+    Compute velocity with padding at ends.
+
+    Parameters
+    ----------
+    t : array-like
+        array with time stamps, e.g. in seconds
+    d : array-like
+        array with distances
+
+    Returns
+    -------
+    velocity: numpy array
+        velocities at time points
+    """
+
+    times = t
+    dist = d
+
+    # make times
+    dt = np.array([x - x0 for x0, x in zip(times, times[2:])])
+
+    # compute distances
+    dx = np.array(
+        [(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(dist, dist[1:], dist[2:])]
+    )
+
+    # compute velocity, i.e. distance over time
+    v = dx / dt
+
+    # add nans to make same dimension as input
+    v = nanpad(v, position="center", padlen=1)
+
+    return v
+
+
 def velocity2d(t, x, y):
     """
-    Compute the velocity of an object in 2D space.
+    Compute the velocity of an object in 2D space from x and y coordinates over time.
 
     Parameters
     ----------
@@ -764,40 +975,6 @@ def aim_index(c1, c2):
     return aims, relangles
 
 
-def veloc(times, dist):
-    """
-    Compute velocity as distance over time.
-
-    Parameters
-    ----------
-    times : array-like
-        array with time stamps, e.g. in seconds
-    dist : array-like
-        array with distances
-
-    Returns
-    -------
-    velocity: numpy array
-        velocities at time points
-    """
-
-    # make times
-    dt = np.array([x - x0 for x0, x in zip(times, times[2:])])
-
-    # compute distances
-    dx = np.array(
-        [(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(dist, dist[1:], dist[2:])]
-    )
-
-    # compute velocity, i.e. distance over time
-    v = dx / dt
-
-    # add nans to make same dimension as input
-    v = nanpad(v, position="center", padlen=1)
-
-    return v
-
-
 def find_interactions(dyad, start, stop, maxd, peakprom, plot=False):
     """
     Uses fish trajectory, velocity and proximity to find interactions between two individuals.
@@ -873,7 +1050,7 @@ def find_interactions(dyad, start, stop, maxd, peakprom, plot=False):
     v2 = velocity2d(t, c2[0], c2[1])
 
     # compute relative velocities
-    vr = veloc(dyad.times[start:stop], dyad.dpos[start:stop])
+    vr = velocity1d(dyad.times[start:stop], dyad.dpos[start:stop])
 
     interact_index1 = v1 * aims1 * dist_index
     interact_index2 = v2 * aims2 * dist_index
