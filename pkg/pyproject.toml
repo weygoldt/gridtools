@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gridtools"
+version = "0.0.1"
+authors = [
+  { name="Patrick Weygoldt"},
+]
+description = "A small example package"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    "src/gridtools"
+]
+addopts = [
+    "--import-mode=importlib",
+]
