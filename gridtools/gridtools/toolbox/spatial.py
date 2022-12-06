@@ -78,3 +78,10 @@ def velocity2d(t, x, y):
     v = nanPad(v, position="center", padlen=1)
 
     return v
+
+def murks():
+    import os
+    import sys
+    pkgdir = sys.modules['gridtools'].__path__[0]
+    configfile = os.path.join(pkgdir, "data/datacleaner_conf.yml")
+    return configfile

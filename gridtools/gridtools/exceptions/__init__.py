@@ -1,3 +1,4 @@
-from .exceptions import GridDataMismatch, GridDataMissing, NotOnTimeError
+from .exceptions import (BadOutputDir, GridDataMismatch, GridDataMissing,
+                         NotOnTimeError)
 
-__all__ = ["GridDataMismatch", "GridDataMissing", "NotOnTimeError"]
+__all__ = ["GridDataMismatch", "GridDataMissing", "NotOnTimeError", "BadOutputDir"]

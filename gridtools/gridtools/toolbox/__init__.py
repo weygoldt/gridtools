@@ -1,3 +1,3 @@
-from . import datahandling, spatial
+from . import datahandling, filehandling, spatial
 
-__all__ = ["datahandling", "spatial"]
+__all__ = ["datahandling", "filehandling", "spatial"]
