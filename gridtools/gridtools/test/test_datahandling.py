@@ -1,5 +1,6 @@
-import modules.datahandling
 import numpy as np
+
+from ..toolbox import datahandling
 
 
 def test_findClosest_inrange() -> None:
@@ -10,7 +11,7 @@ def test_findClosest_inrange() -> None:
     solutions = [index[array == x][0] for x in np.round(targets)]
 
     for target, solution in zip(targets, solutions):
-        x = modules.datahandling.findClosest(array, target)
+        x = datahandling.findClosest(array, target)
         assert x == solution
 
 
@@ -21,7 +22,7 @@ def test_findClosest_outofrange() -> None:
     solutions = [0, 199]
 
     for target, solution in zip(targets, solutions):
-        x = modules.datahandling.findClosest(array, target)
+        x = datahandling.findClosest(array, target)
         assert x == solution
 
 
@@ -32,7 +33,7 @@ def test_findOnTime_inrange() -> None:
     solutions = [0, 75, 100, 1099]
 
     for target, solution in zip(targets, solutions):
-        x = modules.datahandling.findOnTime(time, target, limit=True)
+        x = datahandling.findOnTime(time, target, limit=True)
         assert x == solution
 
 
@@ -43,7 +44,7 @@ def test_findOnTime_outofrange() -> None:
 
     for target in targets:
         try:
-            x = modules.datahandling.findOnTime(time, target, limit=True)
+            x = datahandling.findOnTime(time, target, limit=True)
             assert False
         except Exception:
             assert True

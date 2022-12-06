@@ -1,7 +1,7 @@
 data
 env
-gridtools
 .vscode
+gridtools_old
 
 ### LaTeX ###
 ## Core latex/pdflatex auxiliary files:
