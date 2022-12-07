@@ -119,8 +119,10 @@ def clean(path: str) -> None:
         # smooth positions
         if conf.smth_pos: grid.smoothPositions(conf.smth_params)
 
+        # plot
         if conf.plot: plot_preview(grid)
-
+        
+        # save if not dry run
         if not conf.dry_run: grid.saveData(outpath)
 
 def main() -> None:

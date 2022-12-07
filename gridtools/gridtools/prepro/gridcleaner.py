@@ -5,6 +5,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from IPython import embed
 from scipy.signal import medfilt, savgol_filter
 from thunderfish import dataloader, powerspectrum
 from tqdm import tqdm
@@ -184,27 +185,45 @@ class GridCleaner:
         logger.info("Removing short tracks ...")
 
         counter = 0
-        for track_id in tqdm(self.ids):
+        index_ids = np.arange(len(self.ids))
+        index_ids_del = []
+        index_ident = np.arange(len(self.ident_v))
+        index_ident_del = []
+
+        for track_id in tqdm(self.ids, desc='Purging short   '):
+            
             times = self.times[self.idx_v[self.ident_v == track_id]]
             dur = times.max() - times.min()
 
             if dur < thresh:
-                self.idx_v = np.delete(self.idx_v, self.ident_v == track_id)
-                self.fund_v = np.delete(self.fund_v, self.ident_v == track_id)
-
-                try:
-                    self.sign_v = np.delete(
-                        self.sign_v, self.ident_v == track_id, axis=0
-                    )
-                except GridDataMismatch as error:
-                    logger.error(
-                        "The dimensions of sign_v do not match. Either sign_v is not recomputed (>> fillPowers) or the data is corrupted!")
-                    raise error
-
-                self.ident_v = np.delete(
-                    self.ident_v, self.ident_v == track_id)
-                self.ids = np.delete(self.ids, self.ids == track_id)
+                index_ids_del.extend(index_ids[self.ids == track_id])
+                index_ident_del.extend(index_ident[self.ident_v == track_id])
+#                self.idx_v = self.idx_v[self.ident_v != track_id]
+#                self.fund_v = self.fund_v[self.ident_v != track_id] 
+#
+#                try:
+#                    self.sign_v = self.sign_v[self.ident_v != track_id, :]
+#                except GridDataMismatch as error:
+#                    logger.error(
+#                        "The dimensions of sign_v do not match. Either sign_v is not recomputed (>> fillPowers) or the data is corrupted!")
+#                    raise error
+#
+#                self.ident_v = self.ident_v[self.ident_v != track_id]
+#                self.ids = self.ids[self.ids != track_id]
                 counter += 1
+
+        # make a mask from the delete indices
+        mask_ident = np.ones(len(self.ident_v), np.bool)
+        mask_ident[index_ident_del] = 0
+        mask_ids = np.ones(len(self.ids), np.bool)
+        mask_ids[index_ids_del] = 0
+
+        # take only data that is not masked
+        self.idx_v = self.idx_v[mask_ident]
+        self.fund_v = self.fund_v[mask_ident]
+        self.sign_v = self.sign_v[mask_ident, :]
+        self.ident_v = self.ident_v[mask_ident]
+        self.ids = self.ids[mask_ids]
 
         logger.info("Removed %i short frequency tracks.", counter)
         self.type.extend("purged short")
@@ -214,8 +233,8 @@ class GridCleaner:
         logger.info("Removing poorly tracked traces ...")
 
         counter = 1
-        for track_id in tqdm(self.ids):
-
+        for track_id in tqdm(self.ids, desc='Purging bad     '):
+            
             # get min and max sampled time
             tmin = np.min(self.times[self.idx_v[self.ident_v == track_id]])
             tmax = np.max(self.times[self.idx_v[self.ident_v == track_id]])
@@ -258,7 +277,7 @@ class GridCleaner:
             nfft = powerspectrum.nfft(samplingrate, freq_resolution=1)
 
             # update powers in signature vector
-            for track_id in tqdm(self.ids):
+            for track_id in tqdm(self.ids, desc='Filling powers  '):
 
                 # get id where signature vector has nans
                 id_powers = self.sign_v[:, 0][self.ident_v == track_id]
@@ -369,34 +388,33 @@ class GridCleaner:
             raise GridDataMismatch(msg)
 
         # create grid coordinates
-        num_el = np.prod(self.grid_grid)
         xdist = self.grid_spacings[0][0]
         ydist = self.grid_spacings[0][1]
         dims = self.grid_grid[0]
 
         # build distance constructors in x and y dimension
-        x_constr = np.linspace(0, xdist*dims[0]-1, dims[0])
-        y_vals = np.linspace(0, ydist*dims[1]-1, dims[0])
+        x_constr = np.arange(0, xdist*(dims[0]), xdist)
+        y_vals = np.arange(0, ydist*(dims[1]), ydist)
 
         # build grid of distances
         gridx = []
         gridy = []
         for x, y in zip(x_constr, y_vals):
             y_constr = np.ones(dims[1])*y
-            gridx.append(x_constr)
-            gridy.append(y_constr)
+            gridx.extend(x_constr)
+            gridy.extend(y_constr)
 
         # initialize empty arrays for data collection
         x_pos = np.zeros(np.shape(self.ident_v))
         y_pos = np.zeros(np.shape(self.ident_v))
 
         # also collect ident_v for positions for ordering them like the class data later
-        # ident_v_tmp = np.zeros(np.shape(self.ident_v))
+        ident_v_tmp = np.full(np.shape(self.ident_v), np.nan)
         
         index = 0 # to index in two nested for loops
 
         # interpolate for every fish
-        for track_id in tqdm(np.unique(self.ids)):
+        for track_id in tqdm(np.unique(self.ids), desc='Triangulating   '):
             
             # get powers across all electrodes for this frequency
             powers = self.sign_v[self.ident_v == track_id]
@@ -422,24 +440,24 @@ class GridCleaner:
                 # add to empty arrays
                 x_pos[index] = x_wm
                 y_pos[index] = y_wm
-                # ident_v_tmp[index] = track_id
+                ident_v_tmp[index] = track_id
                 index += 1
 
         # make empty class data arrays
-        # self.xpos = np.zeros(np.shape(self.ident_v))
-        # self.ypos = np.zeros(np.shape(self.ident_v))
+        self.xpos = np.zeros(np.shape(self.ident_v))
+        self.ypos = np.zeros(np.shape(self.ident_v))
 
-        self.xpos = x_pos
-        self.ypos = y_pos
+        # self.xpos = x_pos
+        # self.ypos = y_pos
         
         # append to class data in same order 
-        # for track_id in self.ids:
-        #     self.xpos[self.ident_v == int(track_id)] = x_pos[
-        #         ident_v_tmp == int(track_id)
-        #     ]
-        #     self.ypos[self.ident_v == int(track_id)] = y_pos[
-        #         ident_v_tmp == int(track_id)
-        #     ]
+        for track_id in tqdm(self.ids, desc='Reordering      '):
+            self.xpos[self.ident_v == int(track_id)] = x_pos[
+                ident_v_tmp == int(track_id)
+            ]
+            self.ypos[self.ident_v == int(track_id)] = y_pos[
+                ident_v_tmp == int(track_id)
+            ]
 
         self.type.extend("positions estimated")
 
@@ -448,7 +466,7 @@ class GridCleaner:
         logger.info("Interpolating all data ...")
 
         # check positions are already computed
-        if self.xpos == None:
+        if len(self.xpos) == 1:
             msg = "The current class instance has no position estimations! Compute positions before interpolation!"
             logger.error(msg)
             raise GridDataMissing(msg)
@@ -461,7 +479,7 @@ class GridCleaner:
         collect_xpos = []
         collect_ypos = []
 
-        for track_id in tqdm(self.ids):
+        for track_id in tqdm(self.ids, desc='Interpolating   '):
 
             # get min and max time for ID
             tmin = np.min(self.times[self.idx_v[self.ident_v == track_id]])
@@ -472,8 +490,8 @@ class GridCleaner:
             stop = findOnTime(self.times, tmax)
 
             # get true times including non-sampled
-            sam_times = self.times[start:stop]
-            tru_times = self.times[self.idx_v[self.ident_v == track_id]]
+            sam_times = self.times[start:stop] # all sampling points
+            tru_times = self.times[self.idx_v[self.ident_v == track_id]] # the points where data is available
 
             # get sampled data
             powers = self.sign_v[self.ident_v == track_id]
@@ -483,31 +501,32 @@ class GridCleaner:
 
             # interpolate signature matrix
             num_el = np.shape(powers)[1]
-            new_length = len(tru_times)
+            new_length = len(sam_times)
             powers_interp = np.zeros(shape=(new_length, num_el))
+            
             for el in range(num_el):
                 p = powers[:, el]
-                p_interp = np.interp(tru_times, sam_times, p)
+                p_interp = np.interp(sam_times, tru_times, p)
                 powers_interp[:, el] = p_interp
 
             # interpolate 1d arrays
-            fund_interp = np.interp(tru_times, sam_times, fund)
-            xpos_interp = np.interp(tru_times, sam_times, xpos)
-            ypos_interp = np.interp(tru_times, sam_times, ypos)
+            fund_interp = np.interp(sam_times, tru_times, fund)
+            xpos_interp = np.interp(sam_times, tru_times, xpos)
+            ypos_interp = np.interp(sam_times, tru_times, ypos)
 
             # build new index vector that includes the generated datapoints
-            idx_v = np.arange(start, start+len(tru_times))
+            idx_v = np.arange(start, start+len(sam_times))
 
             # build new ident_v that includes the generated datapoints
             ident_v = np.ones(len(idx_v), dtype=int) * int(track_id)
 
             # append it all to lists
-            collect_ident.append(ident_v)
-            collect_idx.append(idx_v)
-            collect_fund.append(fund_interp)
-            collect_xpos.append(xpos_interp)
-            collect_ypos.append(ypos_interp)
-            collect_sign.append(powers_interp)
+            collect_ident.extend(ident_v)
+            collect_idx.extend(idx_v)
+            collect_fund.extend(fund_interp)
+            collect_xpos.extend(xpos_interp)
+            collect_ypos.extend(ypos_interp)
+            collect_sign.extend(powers_interp)
 
         # overwrite old entries
         self.ident_v = np.asarray(np.ravel(collect_ident), dtype=int)
@@ -531,8 +550,8 @@ class GridCleaner:
         polyorder = params["smoothing_polyorder"]
 
         # iterate through all ids
-        for track_id in tqdm(self.ids):
-
+        for track_id in tqdm(self.ids, desc='Position cleanup'):
+            
             # get data
             times = self.times[self.idx_v[self.ident_v == track_id]]
             xpos = self.xpos[self.ident_v == track_id]
@@ -611,7 +630,7 @@ class GridCleaner:
 
             return sex
 
-        logger.debug("Estimating fish sex ...")
+        logger.info("Estimating fish sex ...")
 
         # check if instance has temp data
         if len(self.temp) == 1:

@@ -1,1 +1,3 @@
-__all__ = ["prepro"]
+from .gridcleaner import GridCleaner
+
+__all__ = ["prepro", "GridCleaner"]
