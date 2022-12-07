@@ -1,4 +1,5 @@
 import os
+import typing
 
 import yaml
 
@@ -9,7 +10,7 @@ logger = makeLogger(__name__)
 
 class ConfLoader:
     """
-    Opens a YAML file and unpacks it into the class namespace.
+    Opens a YAML file and unpacks dict keys to instance variables.
     """
     def __init__(self, path: str) -> None:
         
@@ -24,20 +25,24 @@ class ConfLoader:
                 logger.error("Failed to open yaml file!")
                 raise error
 
+
 class ListRecordings:
     """
     Lists subdiretories of data recordings in a given root directory to iterate over. Directory names specified as strings in the exclude list are ignored (e.g. directories containing metadata, etc.).
     """
 
-    def __init__(self, path, exclude=[], verbose=False) -> None:
+    def __init__(self, path: str, exclude: typing.Optional[list] = None) -> None:
 
         logger.debug("Listing recordings ...")
 
         # set correct paths and ids based on script setup parameters
-        self.verbose = verbose
         self.dataroot = path
-        self.exclude = exclude
         self.recordings = []
+
+        if exclude != None: 
+            self.exclude = exclude 
+        else: 
+            self.exclude = []
 
         # create list of recordings in dataroot
         for recording in os.listdir(self.dataroot):
@@ -45,19 +50,8 @@ class ListRecordings:
                 if recording not in self.exclude:
                     self.recordings.append(recording)
 
-# def loadYaml(path: str) -> dict:    
 
-#     with open(path) as file:
-#         try:
-#             conf = yaml.safe_load(file)
-#             return conf
-
-#         except yaml.YAMLError as error:
-#             logger.error("Failed to open yaml file!")
-#             raise error
-
-
-def makeOutputdir(path: str):
+def makeOutputdir(path: str) -> str:
     """
     Creates a new directory where the path leads if it does not already exist.
 

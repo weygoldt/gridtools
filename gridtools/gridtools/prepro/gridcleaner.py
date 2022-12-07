@@ -13,7 +13,7 @@ from tqdm import tqdm
 from ..exceptions import BadOutputDir, GridDataMismatch, GridDataMissing
 from ..logger import makeLogger
 from ..toolbox.datahandling import (estimateMode, findClosest, findOnTime,
-                                    normQ10)
+                                    normQ10, removeOutliers)
 from ..toolbox.spatial import velocity2d
 
 logger = makeLogger(__name__)
@@ -549,6 +549,11 @@ class GridCleaner:
         smth_window = params["smoothing_window"]
         polyorder = params["smoothing_polyorder"]
 
+        # check if median window is odd
+        if median_window % 2 == 0:
+            median_window += 1
+            logger.warning("Median filter kernel width is even! Changing to {median_window}. Consider changing the value in the config file!")
+
         # iterate through all ids
         for track_id in tqdm(self.ids, desc='Position cleanup'):
             
@@ -606,12 +611,6 @@ class GridCleaner:
         light = hobo["lux_filt"][start:stop]
         time = np.arange(len(hobo["date"][start:stop]))
 
-        # check if logger data was available for this recording
-        # if len(temp) < len(self.times)/2:
-        #     msg = "Hobologger data does not cover this recording!"
-        #     logger.error(msg)
-        #     raise GridDataMismatch(msg)
-
         # interpolate data to match sampling of frequency and positions
         self.temp = np.interp(self.times, time, temp)
         self.light = np.interp(self.times, time, light)
@@ -640,7 +639,6 @@ class GridCleaner:
 
         # iterate through all "individuals"        
         self.sex = []
-        embed()
         for track_id in tqdm(self.ids, desc='Estimate sex    '):
 
             # normalize by q10 value
@@ -659,8 +657,11 @@ class GridCleaner:
             # normalize by Q10
             normed = normQ10(data, temp, normtemp, q10)
 
+            # remove outliers 
+            cleaned = removeOutliers(normed, bar=1.5, fillnan=False)
+
             # estimate mode
-            mode = estimateMode(normed)
+            mode = estimateMode(cleaned)
 
             # decide sex
             sex = sexing(upper, thresh, mode)

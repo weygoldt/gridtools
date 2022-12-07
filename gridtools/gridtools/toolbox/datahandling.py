@@ -1,9 +1,7 @@
 
-import collections
 
 import numpy as np
-import scipy.stats as stat
-from scipy.optimize import minimize
+from scipy.optimize import shgo
 from scipy.stats import gaussian_kde, iqr
 
 from ..exceptions import NotOnTimeError
@@ -115,7 +113,36 @@ def findOnTime(array: np.ndarray, target: float, limit: bool = True) -> int:
         return idx
 
 
-def normQ10(data, temp, normtemp, q10) -> np.ndarray:
+
+def removeOutliers(x: np.ndarray, bar: float = 1.5, fillnan: bool =False) -> np.ndarray:
+
+    """
+    Removes outliers based on the interquartile range (i.e. datapoints that would
+    be considered outliers in a regular boxplot).
+
+    Returns
+    -------
+    np.ndarray
+        Data without outliers
+    """    
+
+    d_iqr = iqr(x)
+    d_q1 = np.percentile(x, 25)
+    d_q3 = np.percentile(x, 75)
+    iqr_distance = np.multiply(d_iqr, bar)
+    
+    upper_range = d_q3 + iqr_distance
+    lower_range = d_q1 - iqr_distance
+
+    if fillnan:
+        x[x<lower_range] = np.nan
+        x[x>upper_range] = np.nan
+        return x
+    else: 
+        return x[(x>lower_range)&(x<upper_range)]
+
+
+def normQ10(data: np.ndarray, temp: np.ndarray, normtemp: float, q10: float) -> np.ndarray:
     """
     normQ10 normalizes physiological time-series data to its Q10 value (temperature coefficient).
 
@@ -138,22 +165,15 @@ def normQ10(data, temp, normtemp, q10) -> np.ndarray:
     return data + (data * (q10 % 1 * ((normtemp - temp)/10)))
 
 
-def estimateMode(array: np.ndarray, cut_down: bool = True, bw_method: str = 'scott') -> float:
+def estimateMode(array: np.ndarray, bw_method: str = 'scott') -> float:
     """
     Estimates the "mode" of continuous data using a probability density function 
     estimated by a gaussian kernel convolution.
-
-    The cut-down option enables mode estimation on a subset of the data, 
-    making it faster. This method is highly data specific! For e.g. electrophysiological
-    recordings, it might be better to constrain the "search-window" between the minimum
-    and the median.
 
     Parameters
     ----------
     array : np.ndarray
         The data
-    cut_down : bool, optional
-        Enable to only use all data above the mean, by default False.
     bw_method : str, optional
         bandwidth estimation method, by default 'scott'
 
@@ -163,41 +183,33 @@ def estimateMode(array: np.ndarray, cut_down: bool = True, bw_method: str = 'sco
         The mode estimate
     """
 
-    # make kernel density estimate
-    def kde(array, cut_down=True, bw_method='scott'):
-
-        if cut_down:
-            bins, counts = np.unique(array, return_counts=True)
-            f_median = np.median(counts)
-            f_below_median = bins[counts < f_median]
-            bounds = [f_below_median.min(), f_below_median.max()]
-            array = array[np.bitwise_and(bounds[0] < array, array < bounds[1])]
-
-        return gaussian_kde(array, bw_method=bw_method)
-
-    # compute kde
-    kernel = kde(array, cut_down=cut_down, bw_method=bw_method)
-
-    # estimate pdf
-    height = kernel.pdf(array)
-
-    # make bounding box for mode search
-    x0 = array[np.argmax(height)]
-    span = array.max() - array.min()
-    dx = span / 4
-    bounds = np.array([[x0 - dx, x0 + dx]])
-    linear_constraint = [{'type': 'ineq', 'fun': lambda x:  x - 0.5}]
-
-    # find mode
-    results = minimize(lambda x: -kernel(x)
-                       [0], x0=x0, bounds=bounds, constraints=linear_constraint)
-
+    kernel = gaussian_kde(array, bw_method=bw_method)
+    bounds = np.array([[array.min(), array.max()]])
+    results = shgo(lambda x: -kernel(x)[0], bounds=bounds, n=100*len(array))
+    
     return results.x[0]
 
 
+def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1) -> np.ndarray:
+    """
+    nanPad adds a given number of NaNs to the start and/or end of an array.
 
+    Parameters
+    ----------
+    array : np.ndarray
+        The array to add NaNs
+    position : str, optional
+        Where to add NaNs, by default "center"
+    padlen : int, optional
+        Number of NaNs to add, by default 1
 
-def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1):
+    Returns
+    -------
+    np.ndarray
+        Output array
+    """    
+
+    assert position in ["center", "left", "right"] and isinstance(position, str), f"Position can only be `left`, `right` or `center`! Got {position}!"
 
     nans = np.full(padlen, np.nan)
     if position == "center":
@@ -208,34 +220,3 @@ def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1):
         array = np.concatenate([array, nans])
 
     return array
-
-
-def q1(x, axis = None):
-    return np.percentile(x, 25, axis = axis)
-
-def q3(x, axis = None):
-    return np.percentile(x, 75, axis = axis)
-
-def iqr_outlier(x, bar = 1.5, side = 'both'):
-    assert side in ['gt', 'lt', 'both'], 'Side should be `gt`, `lt` or `both`.'
-
-    d_iqr = iqr(x)
-    d_q1 = q1(x)
-    d_q3 = q3(x)
-    iqr_distance = np.multiply(d_iqr, bar)
-
-    stat_shape = list(x.shape)
-    
-    if side in ['gt', 'both']:
-        upper_range = d_q3 + iqr_distance
-        upper_outlier = np.greater(x - upper_range.reshape(stat_shape), 0)
-    if side in ['lt', 'both']:
-        lower_range = d_q1 - iqr_distance
-        lower_outlier = np.less(x - lower_range.reshape(stat_shape), 0)
-
-    if side == 'gt':
-        return upper_outlier
-    if side == 'lt':
-        return lower_outlier
-    if side == 'both':
-        return np.logical_or(upper_outlier, lower_outlier)

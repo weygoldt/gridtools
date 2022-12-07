@@ -3,26 +3,22 @@ import numpy as np
 from .datahandling import nanPad
 
 
-def velocity1d(t, d):
+def velocity1d(times: np.ndarray, dist: np.ndarray) -> np.ndarray:
     """
     Compute velocity with padding at ends.
 
     Parameters
     ----------
-    t : array-like
+    times : array-like
         array with time stamps, e.g. in seconds
-    d : array-like
+    dist : array-like
         array with distances
 
     Returns
     -------
-    velocity: numpy array
+    v: numpy array
         velocities at time points
     """
-
-    times = t
-    dist = d
-
     # make times
     dt = np.array([x - x0 for x0, x in zip(times, times[2:])])
 
@@ -40,7 +36,7 @@ def velocity1d(t, d):
     return v
 
 
-def velocity2d(t, x, y):
+def velocity2d(t: np.ndarray, x: np.ndarray, y:np.ndarray) -> np.ndarray:
     """
     Compute the velocity of an object in 2D space from x and y coordinates over time.
 

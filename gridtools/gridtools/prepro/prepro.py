@@ -25,6 +25,7 @@ import shutil
 import sys
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from ..logger import makeLogger
 from ..toolbox.filehandling import ConfLoader, ListRecordings, makeOutputdir
@@ -32,21 +33,31 @@ from .gridcleaner import GridCleaner
 
 logger = makeLogger(__name__)
 
-def plot_preview(grid: GridCleaner) -> None:
+def plotStatic(grid: GridCleaner) -> None:
 
     fig, ax = plt.subplots(1,2, constrained_layout=True)
 
-    for track_id in grid.ids:
+    for track_id, sex in zip(grid.ids, grid.sex):
         
         time = grid.times[grid.idx_v[grid.ident_v == track_id]]
         fund = grid.fund_v[grid.ident_v == track_id]
         
-        ax[0].plot(time, fund)
+        ax[0].plot(time, fund, alpha=0.5)
+        ax[0].annotate(f"{int(track_id)} {sex}", xy=(time[0], fund[0]))
 
         xpos = grid.xpos[grid.ident_v == track_id]
         ypos = grid.ypos[grid.ident_v == track_id]
 
-        ax[1].plot(xpos, ypos, alpha=0.5)
+        ax[1].plot(xpos, ypos, alpha=0.2)
+        ax[1].annotate(f"{int(track_id)} {sex}", xy=(xpos[0], ypos[0]))
+
+        # plot a random subset that is more visible
+        ndata = 10*60*3 # approx 10 min with 3 Hz sampling
+        index = np.arange(len(time))[ndata:-ndata] # possible indices to choose from
+        start = np.random.choice(index)
+        stop = start + ndata
+        ax[0].plot(time[start:stop], fund[start:stop])
+        ax[1].plot(xpos[start:stop], ypos[start:stop])
     
     ax[0].set_title("Frequency tracks")
     ax[1].set_title("Estimated positions")
@@ -65,6 +76,7 @@ def clean(path: str) -> None:
     try:
         confpath = os.path.join(path, "prepro_conf.yml")
         conf = ConfLoader(confpath)
+
     except FileNotFoundError as error:
         msg = "No prepro_conf.yml found in specified dir! Change dir or run datacleaner init!"
         logger.error(msg)
@@ -120,10 +132,11 @@ def clean(path: str) -> None:
         if conf.smth_pos: grid.smoothPositions(conf.smth_params)
 
         # plot
-        if conf.plot: plot_preview(grid)
+        if conf.plot: plotStatic(grid)
         
         # save if not dry run
         if not conf.dry_run: grid.saveData(outpath)
+
 
 def main() -> None:
 
@@ -162,13 +175,11 @@ def main() -> None:
 
     # run the datacleaner if "run"
     elif args.mode == "run":
-        clean(args.dir)
         print("------------------------")
         print("Starting preprocessing. This will take some time.")
         print("------------------------")
+        clean(args.dir)
+
 
 if __name__ == "__main__":
     main()
-
-
-
