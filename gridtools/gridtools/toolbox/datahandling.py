@@ -1,7 +1,10 @@
 
+import collections
+
 import numpy as np
+import scipy.stats as stat
 from scipy.optimize import minimize
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, iqr
 
 from ..exceptions import NotOnTimeError
 from ..logger import makeLogger
@@ -135,7 +138,7 @@ def normQ10(data, temp, normtemp, q10) -> np.ndarray:
     return data + (data * (q10 % 1 * ((normtemp - temp)/10)))
 
 
-def estimateMode(array: np.ndarray, cut_down: bool = False, bw_method: str = 'scott') -> float:
+def estimateMode(array: np.ndarray, cut_down: bool = True, bw_method: str = 'scott') -> float:
     """
     Estimates the "mode" of continuous data using a probability density function 
     estimated by a gaussian kernel convolution.
@@ -165,9 +168,9 @@ def estimateMode(array: np.ndarray, cut_down: bool = False, bw_method: str = 'sc
 
         if cut_down:
             bins, counts = np.unique(array, return_counts=True)
-            f_mean = counts.mean()
-            f_above_mean = bins[counts > f_mean]
-            bounds = [f_above_mean.min(), f_above_mean.max()]
+            f_median = np.median(counts)
+            f_below_median = bins[counts < f_median]
+            bounds = [f_below_median.min(), f_below_median.max()]
             array = array[np.bitwise_and(bounds[0] < array, array < bounds[1])]
 
         return gaussian_kde(array, bw_method=bw_method)
@@ -192,6 +195,8 @@ def estimateMode(array: np.ndarray, cut_down: bool = False, bw_method: str = 'sc
     return results.x[0]
 
 
+
+
 def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1):
 
     nans = np.full(padlen, np.nan)
@@ -203,3 +208,34 @@ def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1):
         array = np.concatenate([array, nans])
 
     return array
+
+
+def q1(x, axis = None):
+    return np.percentile(x, 25, axis = axis)
+
+def q3(x, axis = None):
+    return np.percentile(x, 75, axis = axis)
+
+def iqr_outlier(x, bar = 1.5, side = 'both'):
+    assert side in ['gt', 'lt', 'both'], 'Side should be `gt`, `lt` or `both`.'
+
+    d_iqr = iqr(x)
+    d_q1 = q1(x)
+    d_q3 = q3(x)
+    iqr_distance = np.multiply(d_iqr, bar)
+
+    stat_shape = list(x.shape)
+    
+    if side in ['gt', 'both']:
+        upper_range = d_q3 + iqr_distance
+        upper_outlier = np.greater(x - upper_range.reshape(stat_shape), 0)
+    if side in ['lt', 'both']:
+        lower_range = d_q1 - iqr_distance
+        lower_outlier = np.less(x - lower_range.reshape(stat_shape), 0)
+
+    if side == 'gt':
+        return upper_outlier
+    if side == 'lt':
+        return lower_outlier
+    if side == 'both':
+        return np.logical_or(upper_outlier, lower_outlier)

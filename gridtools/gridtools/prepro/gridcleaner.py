@@ -638,9 +638,10 @@ class GridCleaner:
             logger.error(msg)
             raise GridDataMissing(msg)
 
-        # iterate through all "individuals"
+        # iterate through all "individuals"        
         self.sex = []
-        for track_id in self.ids:
+        embed()
+        for track_id in tqdm(self.ids, desc='Estimate sex    '):
 
             # normalize by q10 value
             tmin = self.times[self.idx_v[self.ident_v == track_id]][0]
