@@ -1,16 +1,42 @@
-# GridTools
 
-... a suite to make grid-recording analyses of weakly electric fish painfree.
+
+# Gridtools 
+
+A toolbox for preprocssing and position estimation of weakly electric fish on an electrode grid based on the output of the [wavetracker](https://github.com/tillraab/wavetracker)).
+
+## Description
+
+An in-depth paragraph about your project and overview of use.
+
+## Getting Started
+
+### Dependencies
+
+* Describe any prerequisites, libraries, OS version, etc., needed before installing program.
+* ex. Windows 10
+
+### Installing
+
+* How/where to download your program
+* Any modifications needed to be made to files/folders
+
+### Executing program
+
+* How to run the program
+* Step-by-step bullets
+```
+code blocks for commands
+```
+
+## Roadmap
 
 This **new** version of my older [gridtools](https://github.com/weygoldt/gridtools) implementation is under development and not functional yet!
 The goal is to package all preprocessing steps from the raw file to an triangulated, interpolated and annotated dataset into a single suite, including some relevant analysis functions.
 Preprocessing is planned in three main steps: 
 
-- Frequency tracking (currently: [wavetracker](https://github.com/tillraab/wavetracker))
-- Triangulation & interpolation (currently: [gridtools](https://github.com/weygoldt/gridtools))
-- Annotation (detection & clustering of spatio-temporal behaviors and electrocommunication)
-
-## To do
+* Frequency tracking (currently: [wavetracker](https://github.com/tillraab/wavetracker))
+* Triangulation & interpolation (currently: [gridtools](https://github.com/weygoldt/gridtools))
+* Annotation (detection & clustering of spatio-temporal behaviors and electrocommunication), currently implemented in many scripts distributed on many computers, or in some cases not at all! 
 
 - [ ] Refactor stoptime property of GridCleaner
 - [ ] Create analysis module
@@ -18,3 +44,38 @@ Preprocessing is planned in three main steps:
 - [ ] Create mock dataset to test GridCleaner and prepro
 - [ ] Document GridCleaner methods in a notebook
 - [ ] Implement export to .nix instead of .npy files
+
+## Help
+
+Any advise for common problems or issues.
+```
+command to run if program contains helper info
+```
+
+## Authors
+
+Contributors names and contact info
+
+ex. Dominique Pizzie  
+ex. [@DomPizzie](https://twitter.com/dompizzie)
+
+## Version History
+
+* 0.2
+    * Various bug fixes and optimizations
+    * See [commit change]() or See [release history]()
+* 0.1
+    * Initial Release
+
+## License
+
+This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
+
+## Acknowledgments
+
+Inspiration, code snippets, etc.
+* [awesome-readme](https://github.com/matiassingers/awesome-readme)
+* [PurpleBooth](https://gist.github.com/PurpleBooth/109311bb0361f32d87a2)
+* [dbader](https://github.com/dbader/readme-template)
+* [zenorocha](https://gist.github.com/zenorocha/4526327)
+* [fvcproductions](https://gist.github.com/fvcproductions/1bfc2d4aecb01a834b46)

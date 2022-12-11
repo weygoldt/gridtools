@@ -65,12 +65,13 @@ class GridCleaner:
             idx_len = len(self.idx_v)
             uidx_len = len(np.unique(self.idx_v))
             fund_len = len(self.fund_v)
-            sign_len = np.shape(self.sign_v[:, 0])[0]
+            sign_len = len(self.sign_v)
             ident_len = len(self.ident_v)
-            sign_elno = np.shape(self.sign_v[0, :])[0]
+            sign_elno = np.shape(self.sign_v)[0]
             grid_elno = np.prod(self.grid_grid)
 
             # check idx and time match in len
+            """
             if time_len < uidx_len:
                 raise GridDataMismatch(
                     f"Index vector is longer than time vector! Time vector lenght: {time_len} Unique index vector length: {uidx_len}!")
@@ -99,10 +100,12 @@ class GridCleaner:
                     'Number of electrodes in sign_v does not match grid metadata!')
 
             logger.info('Grid initialized succesfully!')
-
+            """
+            
         except GridDataMismatch as error:
             logging.error(str(error))
             raise error
+        
 
     @ property
     def starttime(self) -> datetime.datetime:
@@ -416,8 +419,17 @@ class GridCleaner:
         # interpolate for every fish
         for track_id in tqdm(np.unique(self.ids), desc='Triangulating   '):
             
+            # get times
+            times = self.times[self.ident_v == track_id]
+            
             # get powers across all electrodes for this frequency
             powers = self.sign_v[self.ident_v == track_id]
+
+            # upsample powers 
+            newtime = np.arange(times.min(), times.max(), 0.001)
+
+            newpowers = np.interp(newtime, times, powers)
+
 
             # iterate through every single point in time for this fish
             for idx in range(len(powers[:,0])):
@@ -436,12 +448,14 @@ class GridCleaner:
                 # compute weighted mean
                 x_wm = sum(x_maxs * max_powers) / sum(max_powers)
                 y_wm = sum(y_maxs * max_powers) / sum(max_powers)
-
+                
                 # add to empty arrays
                 x_pos[index] = x_wm
                 y_pos[index] = y_wm
                 ident_v_tmp[index] = track_id
                 index += 1
+
+            embed()
 
         # make empty class data arrays
         self.xpos = np.zeros(np.shape(self.ident_v))
