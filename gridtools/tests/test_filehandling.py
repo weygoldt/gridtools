@@ -1,6 +1,6 @@
 import os
 
-from gridtools.toolbox import filehandling
+from gridtools.utils import filehandling
 
 datapath = "tests/testdata"
 

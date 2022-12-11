@@ -1,1 +1,1 @@
-from gridtools.toolbox import spatial
+from gridtools.utils import spatial

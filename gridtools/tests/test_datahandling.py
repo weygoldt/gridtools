@@ -1,6 +1,6 @@
 import numpy as np
 
-from gridtools.toolbox import datahandling
+from gridtools.utils import datahandling
 
 
 def test_findClosest_inrange() -> None:

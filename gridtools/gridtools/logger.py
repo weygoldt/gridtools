@@ -10,7 +10,7 @@ def makeLogger(name: str):
         "[ %(levelname)s ] in %(module)s.%(funcName)s: %(message)s")
 
     # create logging file if loglevel is debug
-    file_handler = logging.FileHandler(f"logfile.log", mode="w")
+    file_handler = logging.FileHandler(f"gridtools_log.log", mode="w")
     file_handler.setLevel(logging.WARN)
     file_handler.setFormatter(file_formatter)
 
@@ -28,8 +28,8 @@ def makeLogger(name: str):
     return logger
 
 
-def main():
-
+if __name__ == "__main__":
+    
     # initiate logger
     mylogger = makeLogger(__name__)
 
@@ -39,7 +39,3 @@ def main():
     mylogger.warning("This is a warning.")
     mylogger.error("This is an error.")
     mylogger.critical("This is a critical error!")
-
-
-if __name__ == "__main__":
-    main()
