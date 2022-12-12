@@ -39,6 +39,11 @@ Preprocessing is planned in three main steps:
 - [ ] Refactor stoptime property of GridCleaner
 - [ ] Create analysis module
 - [ ] Check position estimation, seems "gritty"
+  * Idea for better position estimates: Track the dataset well
+  * Iterate through tracks and bandpass filter each track around fish frequency
+  * Compute wavelet spectrogram of filtered track with higher time resolution
+  * Detect chirps and extract electrode powers, maybe just rerun wavetracker on single track, also gets better track resolution.
+  * But is extremely computationally expensive
 - [ ] Create mock dataset to test GridCleaner and prepro
 - [ ] Document GridCleaner methods in a notebook
 - [ ] Implement export to .nix instead of .npy files
