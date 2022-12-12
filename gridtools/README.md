@@ -42,6 +42,9 @@ Preprocessing is planned in three main steps:
 - [ ] Create mock dataset to test GridCleaner and prepro
 - [ ] Document GridCleaner methods in a notebook
 - [ ] Implement export to .nix instead of .npy files
+- [ ] Run a clustering algorith on a perfectly tracked dataset to get clusters of communication signals
+- [ ] Build a perfectly labeled dataset to train a neural network to detect signals on spectrogram snippets
+
 
 ## Help
 
@@ -58,14 +61,14 @@ Contributors names and contact info
 
 * 0.2
     * Various bug fixes and optimizations
-    * See [commit change]() or See [release history]()
-* 0.1
+* See [commit change]() or See [release history]()
+    * 0.1
     * Initial Release
 
 ## License
 
-This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
+    This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
 
 ## Acknowledgments
 
-Inspiration, code snippets, etc.
+    Inspiration, code snippets, etc.
