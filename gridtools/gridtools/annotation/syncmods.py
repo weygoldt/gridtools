@@ -120,4 +120,10 @@ class CovDetector:
         self.peakprom_l = conf.peakprom_l
 
         # initialize empty output arrays
-        
+        self.rec_out = []
+        self.id1_out = []
+        self.id2_out = []
+        self.initiator_out = []
+        self.start_out = []
+        self.stop_out = []
+

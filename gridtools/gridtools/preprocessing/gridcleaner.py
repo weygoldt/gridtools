@@ -2,6 +2,7 @@ import datetime
 import glob
 import logging
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -57,6 +58,7 @@ class GridCleaner:
 
         except FileNotFoundError as error:
             logger.error(error)
+            raise error
 
         # check if files are have no errors
         try:
@@ -216,9 +218,9 @@ class GridCleaner:
                 counter += 1
 
         # make a mask from the delete indices
-        mask_ident = np.ones(len(self.ident_v), np.bool)
+        mask_ident = np.ones(len(self.ident_v), bool)
         mask_ident[index_ident_del] = 0
-        mask_ids = np.ones(len(self.ids), np.bool)
+        mask_ids = np.ones(len(self.ids), bool)
         mask_ids[index_ids_del] = 0
 
         # take only data that is not masked
@@ -773,7 +775,7 @@ class GridCleaner:
                 logger.error(msg)
                 raise BadOutputDir(msg)
             
-            if outputpath == self._datapath: 
+            if Path(outputpath) is Path(self._datapath): 
                 msg = "Outputpath and datapath are the same! Run 'saveData' in overwrite mode if desired."
                 logger.error(msg)
                 raise BadOutputDir(msg)

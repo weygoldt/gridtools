@@ -33,7 +33,7 @@ from .gridcleaner import GridCleaner
 
 logger = makeLogger(__name__)
 
-def plotStatic(grid: GridCleaner) -> None:
+def plotGrid(grid: GridCleaner) -> None:
 
     fig, ax = plt.subplots(1,2, constrained_layout=True)
 
@@ -132,7 +132,7 @@ def clean(path: str) -> None:
         if conf.smth_pos: grid.smoothPositions(conf.smth_params)
 
         # plot
-        if conf.plot: plotStatic(grid)
+        if conf.plot: plotGrid(grid)
         
         # save if not dry run
         if not conf.dry_run: grid.saveData(outpath)

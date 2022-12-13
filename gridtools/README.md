@@ -38,6 +38,7 @@ Preprocessing is planned in three main steps:
 
 - [ ] Refactor stoptime property of GridCleaner
 - [ ] Create analysis module
+- [ ] Implement individual Q10 estimation and norming based on that
 - [ ] Check position estimation, seems "gritty"
   * Idea for better position estimates: Track the dataset well
   * Iterate through tracks and bandpass filter each track around fish frequency
