@@ -1,9 +1,11 @@
 from setuptools import find_packages, setup
 
-packages = ['gridtools',
-            'gridtools.utils',
-            'gridtools.preprocessing',
-            'gridtools.annotation']
+packages = [
+    "gridtools",
+    "gridtools.utils",
+    "gridtools.preprocessing",
+    "gridtools.annotation",
+]
 
 setup(
     name="gridtools",
@@ -12,7 +14,6 @@ setup(
     author_email="weygoldt@pm.me",
     description="",
     packages=find_packages(exclude=["tests*", "exceptions"]),
-    entry_points = {
-        'console_scripts': ['prepro=gridtools.preproprocessing.prepro:main']},
-    install_requires = ['sklearn', 'scipy', 'numpy', 'matplotlib', 'thunderfish'],
+    entry_points={"console_scripts": ["prepro=gridtools.preprocessing.prepro:main"]},
+    install_requires=["sklearn", "scipy", "numpy", "matplotlib", "thunderfish"],
 )

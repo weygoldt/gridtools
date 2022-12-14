@@ -13,14 +13,20 @@ from tqdm import tqdm
 
 from ..exceptions import BadOutputDir, GridDataMismatch, GridDataMissing
 from ..logger import makeLogger
-from ..utils.datahandling import (estimateMode, findClosest, findOnTime,
-                                  normQ10, removeOutliers)
+from ..utils.datahandling import (
+    estimateMode,
+    findClosest,
+    findOnTime,
+    normQ10,
+    removeOutliers,
+)
 from ..utils.spatial import velocity2d
 
 logger = makeLogger(__name__)
 
 
 class GridCleaner:
+    """this is a docstring"""
 
     def __init__(self, datapath: str) -> None:
 
@@ -32,7 +38,9 @@ class GridCleaner:
         self._dataroot = os.path.split(self._datapath[:-1])[0]
 
         # initialize list to track functions applied to dataset
-        self.type = ["raw wavetracker output", ]
+        self.type = [
+            "raw wavetracker output",
+        ]
 
         # initialize class data that is not loaded yet
         self.temp = None
@@ -103,13 +111,12 @@ class GridCleaner:
 
             logger.info('Grid initialized succesfully!')
             """
-            
+
         except GridDataMismatch as error:
             logging.error(str(error))
             raise error
-        
 
-    @ property
+    @property
     def starttime(self) -> datetime.datetime:
 
         logger.debug("Computing starttime ...")
@@ -124,7 +131,8 @@ class GridCleaner:
             )[-1].split("-")
         except ValueError:
             logger.error(
-                "The directory name does not match the datetime naming pattern!")
+                "The directory name does not match the datetime naming pattern!"
+            )
             return None
 
         # make them integers
@@ -147,8 +155,7 @@ class GridCleaner:
                     0,
                 ]
             except ValueError:
-                logger.error(
-                    "Time string of folder name does not contain '_' or ':' !")
+                logger.error("Time string of folder name does not contain '_' or ':' !")
 
             # combine all to datetime object
         starttime = datetime.datetime(
@@ -164,11 +171,10 @@ class GridCleaner:
 
     @property
     def stoptime(self) -> datetime.date:
-        
+
         logger.debug("Computing stoptime ...")
         stoptime = list(
-            map(lambda x: self.starttime +
-                datetime.timedelta(seconds=x), self.times)
+            map(lambda x: self.starttime + datetime.timedelta(seconds=x), self.times)
         )[-1]
 
         return stoptime
@@ -195,26 +201,26 @@ class GridCleaner:
         index_ident = np.arange(len(self.ident_v))
         index_ident_del = []
 
-        for track_id in tqdm(self.ids, desc='Purging short   '):
-            
+        for track_id in tqdm(self.ids, desc="Purging short   "):
+
             times = self.times[self.idx_v[self.ident_v == track_id]]
             dur = times.max() - times.min()
 
             if dur < thresh:
                 index_ids_del.extend(index_ids[self.ids == track_id])
                 index_ident_del.extend(index_ident[self.ident_v == track_id])
-#                self.idx_v = self.idx_v[self.ident_v != track_id]
-#                self.fund_v = self.fund_v[self.ident_v != track_id] 
-#
-#                try:
-#                    self.sign_v = self.sign_v[self.ident_v != track_id, :]
-#                except GridDataMismatch as error:
-#                    logger.error(
-#                        "The dimensions of sign_v do not match. Either sign_v is not recomputed (>> fillPowers) or the data is corrupted!")
-#                    raise error
-#
-#                self.ident_v = self.ident_v[self.ident_v != track_id]
-#                self.ids = self.ids[self.ids != track_id]
+                #                self.idx_v = self.idx_v[self.ident_v != track_id]
+                #                self.fund_v = self.fund_v[self.ident_v != track_id]
+                #
+                #                try:
+                #                    self.sign_v = self.sign_v[self.ident_v != track_id, :]
+                #                except GridDataMismatch as error:
+                #                    logger.error(
+                #                        "The dimensions of sign_v do not match. Either sign_v is not recomputed (>> fillPowers) or the data is corrupted!")
+                #                    raise error
+                #
+                #                self.ident_v = self.ident_v[self.ident_v != track_id]
+                #                self.ids = self.ids[self.ids != track_id]
                 counter += 1
 
         # make a mask from the delete indices
@@ -238,8 +244,8 @@ class GridCleaner:
         logger.info("Removing poorly tracked traces ...")
 
         counter = 1
-        for track_id in tqdm(self.ids, desc='Purging bad     '):
-            
+        for track_id in tqdm(self.ids, desc="Purging bad     "):
+
             # get min and max sampled time
             tmin = np.min(self.times[self.idx_v[self.ident_v == track_id]])
             tmax = np.max(self.times[self.idx_v[self.ident_v == track_id]])
@@ -255,24 +261,21 @@ class GridCleaner:
             sam_times = self.times[self.idx_v[self.ident_v == track_id]]
 
             # compute sampling coverage as proportion of times vs times sampled
-            perf = len(sam_times)/len(tru_times)
+            perf = len(sam_times) / len(tru_times)
 
             # delete data for IDs that fall below threshold
             if perf < thresh:
                 self.idx_v = np.delete(self.idx_v, self.ident_v == track_id)
                 self.fund_v = np.delete(self.fund_v, self.ident_v == track_id)
-                self.sign_v = np.delete(
-                    self.sign_v, self.ident_v == track_id, axis=0)
-                self.ident_v = np.delete(
-                    self.ident_v, self.ident_v == track_id)
+                self.sign_v = np.delete(self.sign_v, self.ident_v == track_id, axis=0)
+                self.ident_v = np.delete(self.ident_v, self.ident_v == track_id)
                 self.ids = np.delete(self.ids, self.ids == track_id)
                 counter += 1
 
         logger.info("Removed %i poorly tracked tracks", counter)
         self.type.extend("purged bad")
 
-    def fillPowers(self, filename: str = 'traces-grid1.raw') -> None:
-
+    def fillPowers(self, filename: str = "traces-grid1.raw") -> None:
         def recomputePowers() -> None:
 
             # parameters to recompute powerspectrum from raw grid file
@@ -282,7 +285,7 @@ class GridCleaner:
             nfft = powerspectrum.nfft(samplingrate, freq_resolution=1)
 
             # update powers in signature vector
-            for track_id in tqdm(self.ids, desc='Filling powers  '):
+            for track_id in tqdm(self.ids, desc="Filling powers  "):
 
                 # get id where signature vector has nans
                 id_powers = self.sign_v[:, 0][self.ident_v == track_id]
@@ -305,13 +308,13 @@ class GridCleaner:
 
                         # calculate power spectral density for channel at roi
                         freqs, powers = powerspectrum.psd(
-                            raw[int(ioi - nfft / 2): int(ioi + nfft / 2), channel],
+                            raw[int(ioi - nfft / 2) : int(ioi + nfft / 2), channel],
                             ratetime=samplingrate,
                             overlap_frac=0.9,
                             freq_resolution=1,
                             window="hann",
                         )
-                        
+
                         # select power for frequency that matches fundamental frequency of track id most closely
                         power_sel = powers[findClosest(freqs, freq)]
                         freq_sel = freqs[findClosest(freqs, freq)]
@@ -320,14 +323,13 @@ class GridCleaner:
                         power_sel_log = powerspectrum.decibel(power_sel)
 
                         # insert computed power into loaded signature vector
-                        insert_idx = np.arange(len(self.sign_v))[self.ident_v == track_id][
-                            idx
-                        ]
+                        insert_idx = np.arange(len(self.sign_v))[
+                            self.ident_v == track_id
+                        ][idx]
 
                         self.sign_v[insert_idx, channel] = power_sel_log
 
-            logger.debug(
-                "Finished computing the new powers, starting checks ...")
+            logger.debug("Finished computing the new powers, starting checks ...")
 
         def savePowers() -> None:
 
@@ -337,8 +339,7 @@ class GridCleaner:
 
             # Check if we already backed up the old signature vector
             if os.path.isfile(backup):
-                logger.info(
-                    "Backup signature vector found!")
+                logger.info("Backup signature vector found!")
 
             # if not, back it up!
             else:
@@ -348,15 +349,15 @@ class GridCleaner:
                     logger.warning("Backup sign_v.npy created succesfully!")
 
                 except OSError as error:
-                    logger.error(
-                        "Failed creating a backup sign_v.npy! Aborting ...")
+                    logger.error("Failed creating a backup sign_v.npy! Aborting ...")
                     raise error
 
             # check if we now have a backup and save new one to file if true.
             if os.path.isfile(backup):
                 np.save(current, self.sign_v)  # save sign_v to file
                 logger.info(
-                    "Backup signature vector exists, saving newly computed signature vector to disk!")
+                    "Backup signature vector exists, saving newly computed signature vector to disk!"
+                )
 
                 # load newly saved signature vector back into namespace to continue computation.
                 try:
@@ -364,14 +365,13 @@ class GridCleaner:
                     logger.info("New sign_v loaded into namespace")
 
                 except FileNotFoundError as error:
-                    logger.error(
-                        "Error loading newly generated sign_v into namespace!")
+                    logger.error("Error loading newly generated sign_v into namespace!")
                     raise error
             else:
                 logger.error("Backup signature vector not found! Aborting ...")
                 raise FileNotFoundError
 
-        logger.info('Updating power matrix ...')
+        logger.info("Updating power matrix ...")
 
         try:
             recomputePowers()
@@ -383,7 +383,7 @@ class GridCleaner:
         self.type.extend("powers recalculated")
 
     def triangPositions(self, electrode_number: int) -> None:
-        
+
         logger.info("Starting position triangulation ...")
 
         # check if current signature vector is usable
@@ -398,14 +398,14 @@ class GridCleaner:
         dims = self.grid_grid[0]
 
         # build distance constructors in x and y dimension
-        x_constr = np.arange(0, xdist*(dims[0]), xdist)
-        y_vals = np.arange(0, ydist*(dims[1]), ydist)
+        x_constr = np.arange(0, xdist * (dims[0]), xdist)
+        y_vals = np.arange(0, ydist * (dims[1]), ydist)
 
         # build grid of distances
         gridx = []
         gridy = []
         for x, y in zip(x_constr, y_vals):
-            y_constr = np.ones(dims[1])*y
+            y_constr = np.ones(dims[1]) * y
             gridx.extend(x_constr)
             gridy.extend(y_constr)
 
@@ -415,31 +415,40 @@ class GridCleaner:
 
         # also collect ident_v for positions for ordering them like the class data later
         ident_v_tmp = np.full(np.shape(self.ident_v), np.nan)
-        
-        index = 0 # to index in two nested for loops
+
+        index = 0  # to index in two nested for loops
 
         # interpolate for every fish
-        for track_id in tqdm(np.unique(self.ids), desc='Triangulating   '):
-            
+        for track_id in tqdm(np.unique(self.ids), desc="Triangulating   "):
+
             # get times
-            times = self.times[self.ident_v == track_id]
-            
+            times = self.times[self.idx_v[self.ident_v == track_id]]
+
             # get powers across all electrodes for this frequency
-            powers = self.sign_v[self.ident_v == track_id]
+            powers = self.sign_v[self.ident_v == track_id, :]
 
-            # upsample powers 
-            newtime = np.arange(times.min(), times.max(), 0.001)
+            # upsample powers
+            newtime = np.arange(times.min(), times.max(), 0.1)
+            print(np.shape(powers))
+            print(np.shape(self.sign_v))
 
-            newpowers = np.interp(newtime, times, powers)
-
+            # test if interpolated powers make positions legg gritty
+            # newpowers = np.asarray(
+            #     [
+            #         np.interp(newtime, times, powers[:, i])
+            #         for i in range(len(powers[0, :]))
+            #     ]
+            # )
 
             # iterate through every single point in time for this fish
-            for idx in range(len(powers[:,0])):
-                
+            for idx in range(len(powers[:, 0])):
+                # for idx in range(len(newpowers[:, 0])):
+
                 # extract momentary powers
                 mom_powers = powers[idx, :]
+                # mom_powers = newpowers[:, idx]
 
-                # calculate max n powers 
+                # calculate max n powers
                 ind = np.argpartition(mom_powers, -electrode_number)[-electrode_number:]
                 max_powers = mom_powers[ind]
 
@@ -450,14 +459,15 @@ class GridCleaner:
                 # compute weighted mean
                 x_wm = sum(x_maxs * max_powers) / sum(max_powers)
                 y_wm = sum(y_maxs * max_powers) / sum(max_powers)
-                
+
                 # add to empty arrays
                 x_pos[index] = x_wm
                 y_pos[index] = y_wm
                 ident_v_tmp[index] = track_id
                 index += 1
 
-            embed()
+            del powers
+            del mom_powers
 
         # make empty class data arrays
         self.xpos = np.zeros(np.shape(self.ident_v))
@@ -465,9 +475,9 @@ class GridCleaner:
 
         # self.xpos = x_pos
         # self.ypos = y_pos
-        
-        # append to class data in same order 
-        for track_id in tqdm(self.ids, desc='Reordering      '):
+
+        # append to class data in same order
+        for track_id in tqdm(self.ids, desc="Reordering      "):
             self.xpos[self.ident_v == int(track_id)] = x_pos[
                 ident_v_tmp == int(track_id)
             ]
@@ -495,7 +505,7 @@ class GridCleaner:
         collect_xpos = []
         collect_ypos = []
 
-        for track_id in tqdm(self.ids, desc='Interpolating   '):
+        for track_id in tqdm(self.ids, desc="Interpolating   "):
 
             # get min and max time for ID
             tmin = np.min(self.times[self.idx_v[self.ident_v == track_id]])
@@ -506,8 +516,10 @@ class GridCleaner:
             stop = findOnTime(self.times, tmax)
 
             # get true times including non-sampled
-            sam_times = self.times[start:stop] # all sampling points
-            tru_times = self.times[self.idx_v[self.ident_v == track_id]] # the points where data is available
+            sam_times = self.times[start:stop]  # all sampling points
+            tru_times = self.times[
+                self.idx_v[self.ident_v == track_id]
+            ]  # the points where data is available
 
             # get sampled data
             powers = self.sign_v[self.ident_v == track_id]
@@ -519,7 +531,7 @@ class GridCleaner:
             num_el = np.shape(powers)[1]
             new_length = len(sam_times)
             powers_interp = np.zeros(shape=(new_length, num_el))
-            
+
             for el in range(num_el):
                 p = powers[:, el]
                 p_interp = np.interp(sam_times, tru_times, p)
@@ -531,7 +543,7 @@ class GridCleaner:
             ypos_interp = np.interp(sam_times, tru_times, ypos)
 
             # build new index vector that includes the generated datapoints
-            idx_v = np.arange(start, start+len(sam_times))
+            idx_v = np.arange(start, start + len(sam_times))
 
             # build new ident_v that includes the generated datapoints
             ident_v = np.ones(len(idx_v), dtype=int) * int(track_id)
@@ -568,11 +580,13 @@ class GridCleaner:
         # check if median window is odd
         if median_window % 2 == 0:
             median_window += 1
-            logger.warning("Median filter kernel width is even! Changing to {median_window}. Consider changing the value in the config file!")
+            logger.warning(
+                "Median filter kernel width is even! Changing to {median_window}. Consider changing the value in the config file!"
+            )
 
         # iterate through all ids
-        for track_id in tqdm(self.ids, desc='Position cleanup'):
-            
+        for track_id in tqdm(self.ids, desc="Position cleanup"):
+
             # get data
             times = self.times[self.idx_v[self.ident_v == track_id]]
             xpos = self.xpos[self.ident_v == track_id]
@@ -604,7 +618,7 @@ class GridCleaner:
         logger.info("Smoothed positions!")
         self.type.extend("position estimates smoothed")
 
-    def loadLogger(self, filename: str = 'hobologger.csv') -> None:
+    def loadLogger(self, filename: str = "hobologger.csv") -> None:
 
         logger.info("Loading hobologger file ...")
 
@@ -630,12 +644,11 @@ class GridCleaner:
         # interpolate data to match sampling of frequency and positions
         self.temp = np.interp(self.times, time, temp)
         self.light = np.interp(self.times, time, light)
-        
+
         logger.info("Loaded hobologger successfully!")
         self.type.extend("temperature and light data loaded")
 
     def sexFish(self, upper="m", thresh=750, normtemp=25, q10=1.6) -> None:
-
         def sexing(upper: str, thresh: float, mode: float) -> str:
 
             if upper == "m":
@@ -653,9 +666,9 @@ class GridCleaner:
             logger.error(msg)
             raise GridDataMissing(msg)
 
-        # iterate through all "individuals"        
+        # iterate through all "individuals"
         self.sex = []
-        for track_id in tqdm(self.ids, desc='Estimate sex    '):
+        for track_id in tqdm(self.ids, desc="Estimate sex    "):
 
             # normalize by q10 value
             tmin = self.times[self.idx_v[self.ident_v == track_id]][0]
@@ -673,7 +686,7 @@ class GridCleaner:
             # normalize by Q10
             normed = normQ10(data, temp, normtemp, q10)
 
-            # remove outliers 
+            # remove outliers
             cleaned = removeOutliers(normed, bar=1.5, fillnan=False)
 
             # estimate mode
@@ -683,7 +696,7 @@ class GridCleaner:
             sex = sexing(upper, thresh, mode)
 
             self.sex.append(sex)
-        
+
         self.type.extend("sex estimated")
 
     def integrityCheck(self) -> bool:
@@ -701,8 +714,14 @@ class GridCleaner:
             len_time = len(self.times)
 
             # check data array dimensions
-            same_dim = [len_ident_v, len_idx_v,
-                        len_fund_v, len_xpos, len_ypos, len_sign_v]
+            same_dim = [
+                len_ident_v,
+                len_idx_v,
+                len_fund_v,
+                len_xpos,
+                len_ypos,
+                len_sign_v,
+            ]
             if len(np.unique(same_dim)) != 1:
                 msg = "Mismatch in main data arrays!"
                 logger.error(msg)
@@ -752,10 +771,12 @@ class GridCleaner:
             logger.error(msg)
             raise error
 
-    def saveData(self, outputpath: str, overwritable: bool = False, check: bool = True) -> None:
+    def saveData(
+        self, outputpath: str, overwritable: bool = False, check: bool = True
+    ) -> None:
 
         logger.info("Saving data ...")
-        
+
         def save(self, outputpath: str) -> None:
 
             np.save(outputpath + "/times.npy", self.times)
@@ -774,18 +795,18 @@ class GridCleaner:
                 msg = "The output path contains a raw file! Do not overwrite exisiting data! Run 'saveData' in overwrite mode if desired."
                 logger.error(msg)
                 raise BadOutputDir(msg)
-            
-            if Path(outputpath) is Path(self._datapath): 
+
+            if Path(outputpath) is Path(self._datapath):
                 msg = "Outputpath and datapath are the same! Run 'saveData' in overwrite mode if desired."
                 logger.error(msg)
                 raise BadOutputDir(msg)
-        
+
         if check:
             logger.info("Running integrity check before saving to disk ...")
             save(self, outputpath)
         else:
             logger.info("Saving data without checks ...")
             save(self, outputpath)
-        
+
         logger.info("Data saved!")
         self.type.extend("saved")
