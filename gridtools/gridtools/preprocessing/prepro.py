@@ -33,15 +33,16 @@ from .gridcleaner import GridCleaner
 
 logger = makeLogger(__name__)
 
+
 def plotGrid(grid: GridCleaner) -> None:
 
-    fig, ax = plt.subplots(1,2, constrained_layout=True)
+    fig, ax = plt.subplots(1, 2, constrained_layout=True)
 
     for track_id, sex in zip(grid.ids, grid.sex):
-        
+
         time = grid.times[grid.idx_v[grid.ident_v == track_id]]
         fund = grid.fund_v[grid.ident_v == track_id]
-        
+
         ax[0].plot(time, fund, alpha=0.5)
         ax[0].annotate(f"{int(track_id)} {sex}", xy=(time[0], fund[0]))
 
@@ -52,13 +53,13 @@ def plotGrid(grid: GridCleaner) -> None:
         ax[1].annotate(f"{int(track_id)} {sex}", xy=(xpos[0], ypos[0]))
 
         # plot a random subset that is more visible
-        ndata = 10*60*3 # approx 10 min with 3 Hz sampling
-        index = np.arange(len(time))[ndata:-ndata] # possible indices to choose from
+        ndata = 10 * 60 * 3  # approx 10 min with 3 Hz sampling
+        index = np.arange(len(time))[ndata:-ndata]  # possible indices to choose from
         start = np.random.choice(index)
         stop = start + ndata
         ax[0].plot(time[start:stop], fund[start:stop])
         ax[1].plot(xpos[start:stop], ypos[start:stop])
-    
+
     ax[0].set_title("Frequency tracks")
     ax[1].set_title("Estimated positions")
 
@@ -87,7 +88,8 @@ def clean(path: str) -> None:
 
     recs = ListRecordings(dataroot, exclude=exclude)
 
-    if len(conf.include_only) > 0: recs.recordings = conf.include_only
+    if len(conf.include_only) > 0:
+        recs.recordings = conf.include_only
 
     for recording in recs.recordings:
 
@@ -98,8 +100,8 @@ def clean(path: str) -> None:
         outpath = f"{conf.output}{recording}"
 
         # create output directory
-        makeOutputdir(conf.output) # make parent
-        makeOutputdir(outpath) # make rec dir
+        makeOutputdir(conf.output)  # make parent
+        makeOutputdir(outpath)  # make rec dir
 
         # load recording data
         grid = GridCleaner(datapath)
@@ -111,17 +113,20 @@ def clean(path: str) -> None:
         grid.loadLogger(conf.logger_name)
 
         # remove unassigned frequencies in dataset
-        if conf.purge_unassigned: grid.purgeUnassigned()
+        if conf.purge_unassigned:
+            grid.purgeUnassigned()
 
-        # remove short tracks 
-        if conf.purge_short: grid.purgeShort(conf.dur_thresh)
+        # remove short tracks
+        if conf.purge_short:
+            grid.purgeShort(conf.dur_thresh)
 
         # remove poorly tracked
-        if conf.purge_bad: grid.purgeBad(conf.perf_thresh)
+        if conf.purge_bad:
+            grid.purgeBad(conf.perf_thresh)
 
         # compute positions
         grid.triangPositions(conf.num_el)
-        
+
         # interpolate
         grid.interpolateAll()
 
@@ -129,13 +134,16 @@ def clean(path: str) -> None:
         grid.sexFish(*conf.sex_params.values())
 
         # smooth positions
-        if conf.smth_pos: grid.smoothPositions(conf.smth_params)
+        if conf.smth_pos:
+            grid.smoothPositions(conf.smth_params)
 
         # plot
-        if conf.plot: plotGrid(grid)
-        
+        if conf.plot:
+            plotGrid(grid)
+
         # save if not dry run
-        if not conf.dry_run: grid.saveData(outpath)
+        if not conf.dry_run:
+            grid.saveData(outpath)
 
 
 def main() -> None:
@@ -161,7 +169,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    pkgdir = os.path.dirname(sys.modules['gridtools'].__path__[0])
+    pkgdir = os.path.dirname(sys.modules["gridtools"].__path__[0])
     configfile = os.path.join(pkgdir, "data/prepro_conf.yml")
     destination = os.path.join(args.dir, "prepro_conf.yml")
 
@@ -170,7 +178,9 @@ def main() -> None:
         shutil.copy(configfile, destination)
         print("------------------------")
         print("prepro_config.yml copied to directory!")
-        print("Please add the nessecary data before running <prepro --mode run --dir .> to start preprocessing.")
+        print(
+            "Please add the nessecary data before running <prepro --mode run --dir .> to start preprocessing."
+        )
         print("------------------------")
 
     # run the datacleaner if "run"

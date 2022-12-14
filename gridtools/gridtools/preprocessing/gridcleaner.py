@@ -2,6 +2,7 @@ import datetime
 import glob
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -780,15 +781,33 @@ class GridCleaner:
         def save(self, outputpath: str) -> None:
 
             np.save(outputpath + "/times.npy", self.times)
-            np.save(outputpath + "/idx_v.npy", self.idx_v)
-            np.save(outputpath + "/fund_v.npy", self.fund_v)
-            np.save(outputpath + "/sign_v.npy", self.sign_v)
-            np.save(outputpath + "/ident_v.npy", self.ident_v)
+            np.save(outputpath + "/idx.npy", self.idx_v)
+            np.save(outputpath + "/fund.npy", self.fund_v)
+            np.save(outputpath + "/sign.npy", self.sign_v)
+            np.save(outputpath + "/ident.npy", self.ident_v)
             np.save(outputpath + "/xpos.npy", self.xpos)
             np.save(outputpath + "/ypos.npy", self.ypos)
             np.save(outputpath + "/temp.npy", self.temp)
             np.save(outputpath + "/light.npy", self.light)
             np.save(outputpath + "/sex.npy", self.sex)
+
+            logger.info("Transferring spectrograms to output directory ...")
+
+            shutil.copy(
+                f"{self._datapath}/fill_freqs.npy", f"{outputpath}/fill_freqs.npy"
+            )
+
+            shutil.copy(
+                f"{self._datapath}/fill_times.npy", f"{outputpath}/fill_times.npy"
+            )
+            shutil.copy(
+                f"{self._datapath}/fill_spec.npy", f"{outputpath}/fill_spec.npy"
+            )
+            shutil.copy(
+                f"{self._datapath}/fill_spec_shape.npy",
+                f"{outputpath}/fill_spec_shape.npy",
+            )
+            shutil.copy(f"{self._datapath}/spec.npy", f"{outputpath}/spec.npy")
 
         if not overwritable:
             if len(glob.glob(outputpath + "*.raw")) > 0:
