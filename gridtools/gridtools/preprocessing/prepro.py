@@ -34,20 +34,20 @@ from .gridcleaner import GridCleaner
 logger = makeLogger(__name__)
 
 
-def plotGrid(grid: GridCleaner) -> None:
+def plot_grid(grid: GridCleaner) -> None:
 
     fig, ax = plt.subplots(1, 2, constrained_layout=True)
 
     for track_id, sex in zip(grid.ids, grid.sex):
 
-        time = grid.times[grid.idx_v[grid.ident_v == track_id]]
-        fund = grid.fund_v[grid.ident_v == track_id]
+        time = grid.times[grid.indices[grid.identities == track_id]]
+        fund = grid.frequencies[grid.identities == track_id]
 
         ax[0].plot(time, fund, alpha=0.5)
         ax[0].annotate(f"{int(track_id)} {sex}", xy=(time[0], fund[0]))
 
-        xpos = grid.xpos[grid.ident_v == track_id]
-        ypos = grid.ypos[grid.ident_v == track_id]
+        xpos = grid.xpositions[grid.identities == track_id]
+        ypos = grid.ypositions[grid.identities == track_id]
 
         ax[1].plot(xpos, ypos, alpha=0.2)
         ax[1].annotate(f"{int(track_id)} {sex}", xy=(xpos[0], ypos[0]))
@@ -83,13 +83,13 @@ def clean(path: str) -> None:
         logger.error(msg)
         raise error(msg)
 
-    dataroot = conf.data
-    exclude = conf.exclude
+    dataroot = conf.data_path
+    exclude = conf.exclude_directories
 
     recs = ListRecordings(dataroot, exclude=exclude)
 
-    if len(conf.include_only) > 0:
-        recs.recordings = conf.include_only
+    if len(conf.include_only_directories) > 0:
+        recs.recordings = conf.include_only_directories
 
     for recording in recs.recordings:
 
@@ -97,53 +97,53 @@ def clean(path: str) -> None:
         datapath = f"{recs.dataroot}{recording}/"
 
         # read output path from config
-        outpath = f"{conf.output}{recording}"
+        outpath = f"{conf.output_path}output/{recording}/"
 
         # create output directory
-        makeOutputdir(conf.output)  # make parent
+        makeOutputdir(f"{conf.output_path}output/")  # make parent
         makeOutputdir(outpath)  # make rec dir
 
         # load recording data
         grid = GridCleaner(datapath)
 
         # recompute powers for tracks added manually using wavetracker GUI
-        grid.fillPowers()
+        grid.recompute_powers()
 
         # load hobologger
-        grid.loadLogger(conf.logger_name)
+        grid.load_logger(conf.logger_name)
 
         # remove unassigned frequencies in dataset
         if conf.purge_unassigned:
-            grid.purgeUnassigned()
+            grid.purge_unassigned()
 
         # remove short tracks
         if conf.purge_short:
-            grid.purgeShort(conf.dur_thresh)
+            grid.purge_short(conf.duration_threshold)
 
         # remove poorly tracked
         if conf.purge_bad:
-            grid.purgeBad(conf.perf_thresh)
+            grid.purge_bad(conf.performance_threshold)
 
         # compute positions
-        grid.triangPositions(conf.num_el)
+        grid.triangulate_positions(conf.number_electrodes)
 
         # interpolate
-        grid.interpolateAll()
+        grid.interpolate_all()
 
         # sex ids
-        grid.sexFish(*conf.sex_params.values())
+        grid.sex_fish(*conf.sexing_parameters.values())
 
         # smooth positions
-        if conf.smth_pos:
-            grid.smoothPositions(conf.smth_params)
+        if conf.smooth_positions:
+            grid.smooth_positions(conf.smoothing_parameters)
 
         # plot
         if conf.plot:
-            plotGrid(grid)
+            plot_grid(grid)
 
         # save if not dry run
         if not conf.dry_run:
-            grid.saveData(outpath)
+            grid.save_data(outpath)
 
 
 def main() -> None:

@@ -9,14 +9,15 @@ class FishLoader:
     def __repr__(self) -> str:
         return f"Fish"
 
+
 class GridLoader:
     def __init__(self, filepath, filemode: str = "ReadOnly") -> None:
-        
+
         if filemode == "ReadOnly":
             mode = nixio.FileMode.ReadOnly
         elif filemode == "ReadWrite":
             mode = nixio.FileMode.ReadWrite
-            
+
         data = nixio.File.open(filepath, mode)
 
         self.fish = []
@@ -24,5 +25,4 @@ class GridLoader:
             self.fish.append(FishLoader(block))
 
 
-grid = GridLoader("testfile.nix")
-            
+grid = GridLoader("testfile.nix", filemode="ReadWrite")
