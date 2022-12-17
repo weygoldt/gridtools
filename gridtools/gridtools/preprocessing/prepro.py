@@ -97,11 +97,10 @@ def clean(path: str) -> None:
         datapath = f"{recs.dataroot}{recording}/"
 
         # read output path from config
-        outpath = f"{conf.output_path}output/{recording}/"
+        outpath = f"{conf.output_path}output/"
 
         # create output directory
         makeOutputdir(f"{conf.output_path}output/")  # make parent
-        makeOutputdir(outpath)  # make rec dir
 
         # load recording data
         grid = GridCleaner(datapath)
@@ -113,16 +112,13 @@ def clean(path: str) -> None:
         grid.load_logger(conf.logger_name)
 
         # remove unassigned frequencies in dataset
-        if conf.purge_unassigned:
-            grid.purge_unassigned()
+        grid.purge_unassigned()
 
         # remove short tracks
-        if conf.purge_short:
-            grid.purge_short(conf.duration_threshold)
+        grid.purge_short(conf.duration_threshold)
 
         # remove poorly tracked
-        if conf.purge_bad:
-            grid.purge_bad(conf.performance_threshold)
+        grid.purge_bad(conf.performance_threshold)
 
         # compute positions
         grid.triangulate_positions(conf.number_electrodes)
@@ -134,8 +130,7 @@ def clean(path: str) -> None:
         grid.sex_fish(*conf.sexing_parameters.values())
 
         # smooth positions
-        if conf.smooth_positions:
-            grid.smooth_positions(conf.smoothing_parameters)
+        grid.smooth_positions(conf.smoothing_parameters)
 
         # plot
         if conf.plot:
@@ -143,7 +138,7 @@ def clean(path: str) -> None:
 
         # save if not dry run
         if not conf.dry_run:
-            grid.save_data(outpath)
+            grid.save_data(outpath, conf.filename)
 
 
 def main() -> None:

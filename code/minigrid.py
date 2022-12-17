@@ -70,7 +70,6 @@ class Grid:
         self.xpositions = np.asarray(self.xpositions)
         self.ypositions = np.asarray(self.ypositions)
 
-
 grid1 = Grid()
 grid2 = Grid()
 
@@ -91,3 +90,4 @@ def grid2block(file, grid1, number):
 
 grid2block(file, grid1, 1)
 grid2block(file, grid2, 2)
+file.close()

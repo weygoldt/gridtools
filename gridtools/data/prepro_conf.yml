@@ -1,9 +1,9 @@
-# Script setup
-dry_run: True
+dry_run: False # enable or disable dry run
 
-# System path setup
-data_path: "path/to/recordings" # where recordings are
-output_path: "path/to/output" # where processed recordigns go
+data_path: "/mnt/backups/@data/" # where recordings are
+
+output_path: "/mnt/backups/@data/" # where processed recordigns go
+
 exclude_directories:
   - "hobo_logger_data"
   - "gone_with_the_grid"
@@ -13,12 +13,8 @@ exclude_directories:
 include_only_directories:
   - "2016-04-20-18_49"
 
-purge_unassigned: True # remove all nans
-
-purge_short: True # discard track below duration thresh
 duration_threshold: 7200 # thresh in seconds
 
-purge_bad: True # discard poorly tracked tracks
 performance_threshold: 0.7 # performance thresh
 
 number_electrodes: 4 # use n electrodes for triangulation
@@ -31,11 +27,12 @@ sexing_parameters:
   normtemp: 25 # temperature to norm to
   q10: 1.6 # fish q10 value
 
-smooth_positions: True # tell datacleaner to smooth or not
 smoothing_parameters:
   vthresh: 70 # in [cm/s]
-  median_window: 21 # window for median filter
-  smoothing_window: 21 # window for savgol filter
-  smoothing_polyorder: 6 # order of smoothing polynome
+  median_window: 31 # window for median filter
+  smoothing_window: 51 # window for savgol filter
+  smoothing_polyorder: 8 # order of smoothing polynome
 
-plot: True # enable plot of output data
+plot: True # enable plot of output data after each recording is processed
+
+filename: "2016_colombia" # filename of out

@@ -5,6 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
+import nixio as nio
 import numpy as np
 import pandas as pd
 from IPython import embed
@@ -862,7 +863,11 @@ class GridCleaner:
             raise error
 
     def save_data(
-        self, outputpath: str, overwritable: bool = False, check: bool = True
+        self,
+        outputpath: str,
+        filename: str,
+        overwritable: bool = False,
+        check: bool = True,
     ) -> None:
         """
         save_data saves class instance data to disk.
@@ -886,34 +891,194 @@ class GridCleaner:
 
         def save(self, outputpath: str) -> None:
 
-            np.save(outputpath + "/times.npy", self.times)
-            np.save(outputpath + "/indices.npy", self.indices)
-            np.save(outputpath + "/frequencies.npy", self.frequencies)
-            np.save(outputpath + "/powers.npy", self.powers)
-            np.save(outputpath + "/identities.npy", self.identities)
-            np.save(outputpath + "/xpositions.npy", self.xpositions)
-            np.save(outputpath + "/ypositions.npy", self.ypositions)
-            np.save(outputpath + "/temperature.npy", self.temperature)
-            np.save(outputpath + "/light.npy", self.light)
-            np.save(outputpath + "/sex.npy", self.sex)
+            # check if specified output file already exists
+            target_path = f"{outputpath}/{filename}.nix"
+            files = os.listdir(outputpath)
+            nixfiles = [file for file in files if f"{filename}.nix" in file]
 
-            logger.info("Transferring spectrograms to output directory ...")
+            # create block for the current recording
+            blockname = str(self.starttime)
 
-            shutil.copy(
-                f"{self._datapath}/fill_freqs.npy", f"{outputpath}/fill_freqs.npy"
+            # open file in overwrite mode in both cases but supply logging messages
+            if len(nixfiles) != 0:
+                logger.warning("The file you specified already exists. Overwriting ...")
+                file = nio.File.open(target_path, nio.FileMode.ReadWrite)
+                del file.blocks[blockname]
+            else:
+                logger.info("Creating new {}.nix file ...".format(filename))
+                file = nio.File.open(target_path, nio.FileMode.Overwrite)
+
+            # delete block if it exists
+            block = file.create_block(blockname, f"Recording at {blockname}")
+
+            # write time array
+            block.create_data_array(
+                name="times",
+                array_type="nix.sampled",
+                data=self.times,
+                label="shared time array",
+                unit="s",
             )
 
-            shutil.copy(
-                f"{self._datapath}/fill_times.npy", f"{outputpath}/fill_times.npy"
+            # write data array in the current block
+            block.create_data_array(
+                name="frequencies",
+                array_type="nix.sampled",
+                data=self.frequencies,
+                label="fundamental frequencies",
+                unit="Hz",
             )
-            shutil.copy(
-                f"{self._datapath}/fill_spec.npy", f"{outputpath}/fill_spec.npy"
+
+            # write identity array
+            block.create_data_array(
+                name="identities",
+                array_type="nix.sampled",
+                data=self.identities,
+                label="frequency identities",
+                unit=None,
             )
-            shutil.copy(
-                f"{self._datapath}/fill_spec_shape.npy",
-                f"{outputpath}/fill_spec_shape.npy",
+
+            # write index to access time
+            block.create_data_array(
+                name="indices",
+                array_type="nix.sampled",
+                data=self.indices,
+                label="index on time",
+                unit=None,
             )
-            shutil.copy(f"{self._datapath}/spec.npy", f"{outputpath}/spec.npy")
+
+            # write powers
+            block.create_data_array(
+                name="powers",
+                array_type="nix.sampled",
+                data=self.powers,
+                label="powers for frequencies",
+                unit="dB",
+            )
+
+            # write positions
+            block.create_data_array(
+                name="xpositions",
+                array_type="nix.sampled",
+                data=self.xpositions,
+                label="x coordinates for ids",
+                unit="cm",
+            )
+
+            block.create_data_array(
+                name="ypositions",
+                array_type="nix.sampled",
+                data=self.ypositions,
+                label="y coordinates for ids",
+                unit="cm",
+            )
+
+            # write temperature
+            block.create_data_array(
+                name="temperature",
+                array_type="nix.sampled",
+                data=self.temperature,
+                label="water temperature",
+                unit="°C",
+            )
+
+            # write light
+            block.create_data_array(
+                name="light",
+                array_type="nix.sampled",
+                data=self.light,
+                label="ambient luminance",
+                unit="lx",
+            )
+
+            # add ids
+            block.create_data_array(
+                name="ids",
+                array_type="nix.sampled",
+                data=self.ids,
+                label="unique identities",
+                unit=None,
+            )
+
+            # write estimated sex
+            block.create_data_array(
+                name="sex",
+                array_type="nix.sampled",
+                dtype=nio.DataType.String,
+                data=self.sex,
+                label="sex of each identity",
+                unit=None,
+            )
+
+            logger.info("Loading and saving spectrograms ...")
+
+            # load spectrograms
+            self.coarse_spectrogram = np.load(
+                self._datapath + "spec.npy", allow_pickle=True
+            )
+            self.fine_spectrogram_frequencies = np.load(
+                self._datapath + "fill_freqs.npy", allow_pickle=True
+            )
+            self.fine_spectrogram_times = np.load(
+                self._datapath + "fill_times.npy", allow_pickle=True
+            )
+            self.fine_spectrogram_shape = np.load(
+                self._datapath + "fill_spec_shape.npy", allow_pickle=True
+            )
+            self.fine_spectrogram = np.memmap(
+                self._datapath + "fill_spec.npy",
+                dtype="float",
+                mode="r",
+                shape=(self.fine_spectrogram_shape[0], self.fine_spectrogram_shape[1]),
+                order="F",
+            )
+
+            # write spectrograms
+            # I think this does not work for some reason
+            # need to look into how I handle the memmap stuff
+            """
+            block.create_data_array(
+                name="coarse spectrogram",
+                array_type="nix.sampled",
+                data=self.coarse_spectrogram,
+                label="coarse grid spectrogram",
+                unit=None,
+            )
+
+            block.create_data_array(
+                name="fine spectrogram",
+                array_type="nix.sampled",
+                data=self.fine_spectrogram,
+                label="fine grid spectrogram",
+                unit=None,
+            )
+
+            block.create_data_array(
+                name="fine spectrogram shape",
+                array_type="nix.sampled",
+                data=self.fine_spectrogram_shape,
+                label="shape of fine spectrogram",
+                unit=None,
+            )
+
+            block.create_data_array(
+                name="fine spectrogram times",
+                array_type="nix.sampled",
+                data=self.fine_spectrogram_times,
+                label="times for fine spectrogram",
+                unit="s",
+            )
+
+            block.create_data_array(
+                name="fine spectrogram frequencies",
+                array_type="nix.sampled",
+                data=self.fine_spectrogram_frequencies,
+                label="frequencies for fine spectrogram",
+                unit="Hz",
+            )
+            """
+
+            file.close()
 
         if not overwritable:
             if len(glob.glob(outputpath + "*.raw")) > 0:
