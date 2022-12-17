@@ -9,6 +9,7 @@ import nixio as nio
 import numpy as np
 import pandas as pd
 from IPython import embed
+from scipy.ndimage import minimum_filter1d
 from scipy.signal import medfilt, savgol_filter
 from thunderfish import dataloader, powerspectrum
 from tqdm import tqdm
@@ -19,6 +20,7 @@ from ..utils.datahandling import (
     estimateMode,
     findClosest,
     findOnTime,
+    lowpass_filter,
     normQ10,
     removeOutliers,
 )
@@ -46,11 +48,12 @@ class GridCleaner:
         ]
 
         # initialize class data that is not loaded yet
-        self.temperature = None
-        self.light = None
-        self.sex = None
-        self.xpositions = None
-        self.ypositions = None
+        self.temperature = [None]
+        self.light = [None]
+        self.q10 = [None]
+        self.sex = [None]
+        self.xpositions = [None]
+        self.ypositions = [None]
 
         # try to load wavetracker output files
         try:
@@ -459,7 +462,7 @@ class GridCleaner:
         # build grid of distances
         gridx = []
         gridy = []
-        for x, y in zip(x_constr, y_vals):
+        for y in y_vals:
             y_constr = np.ones(dims[1]) * y
             gridx.extend(x_constr)
             gridy.extend(y_constr)
@@ -476,9 +479,6 @@ class GridCleaner:
         # interpolate for every fish
         for track_id in tqdm(np.unique(self.ids), desc="Triangulating   "):
 
-            # get times
-            times = self.times[self.indices[self.identities == track_id]]
-
             # get powers across all electrodes for this frequency
             powers = self.powers[self.identities == track_id, :]
 
@@ -489,7 +489,8 @@ class GridCleaner:
                 mom_powers = powers[idx, :]
 
                 # calculate max n powers
-                ind = np.argpartition(mom_powers, -electrode_number)[-electrode_number:]
+                # ind = np.argpartition(mom_powers, -electrode_number)[-electrode_number:]
+                ind = np.argsort(mom_powers)[-electrode_number:]
                 max_powers = mom_powers[ind]
 
                 # get respective coordinates on grid distance matrix
@@ -497,12 +498,13 @@ class GridCleaner:
                 y_maxs = np.array(gridy)[ind]
 
                 # compute weighted mean
-                x_wm = sum(x_maxs * max_powers) / sum(max_powers)
-                y_wm = sum(y_maxs * max_powers) / sum(max_powers)
+                x_wm = np.sum(x_maxs * max_powers) / np.sum(max_powers)
+                y_wm = np.sum(y_maxs * max_powers) / np.sum(max_powers)
 
                 # add to empty arrays
                 x_pos[index] = x_wm
                 y_pos[index] = y_wm
+
                 ident_v_tmp[index] = track_id
                 index += 1
 
@@ -628,8 +630,7 @@ class GridCleaner:
         # retrieve preprocessing parameters from config file
         veloc_thresh = params["vthresh"]
         median_window = params["median_window"]
-        smth_window = params["smoothing_window"]
-        polyorder = params["smoothing_polyorder"]
+        lowpass_cutoff = params["lowpass_cutoff"]
 
         # check if median window is odd
         if median_window % 2 == 0:
@@ -662,12 +663,18 @@ class GridCleaner:
             ypos_medfilt = medfilt(ypos_interp, kernel_size=median_window)
 
             # savitzky-golay filter
-            xpos_savgol = savgol_filter(xpos_medfilt, smth_window, polyorder)
-            ypos_savgol = savgol_filter(ypos_medfilt, smth_window, polyorder)
+            # xpos_savgol = savgol_filter(xpos_medfilt, smth_window, polyorder)
+            # ypos_savgol = savgol_filter(ypos_medfilt, smth_window, polyorder)
+
+            samplingrate = times[1] - times[0]
+            print(samplingrate)
+
+            xpos_lowpass = lowpass_filter(xpos, samplingrate, lowpass_cutoff)
+            ypos_lowpass = lowpass_filter(ypos, samplingrate, lowpass_cutoff)
 
             # overwrite class instance data
-            self.xpositions[self.identities == track_id] = xpos_savgol
-            self.ypositions[self.identities == track_id] = ypos_savgol
+            self.xpositions[self.identities == track_id] = xpos_lowpass
+            self.ypositions[self.identities == track_id] = ypos_lowpass
 
         logger.info("Smoothed positions!")
         self.type.extend("position estimates smoothed")
@@ -710,7 +717,50 @@ class GridCleaner:
         logger.info("Loaded hobologger successfully!")
         self.type.extend("temperature and light data loaded")
 
-    def sex_fish(self, upper="m", thresh=750, normtemp=25, q10=1.6) -> None:
+    def compute_q10(self) -> None:
+        """
+        compute_q10 calculates the q10 (temperature coefficient) for each invidual fish
+        using the temperature information from the logger.
+        """
+
+        logger.info("Computing individual Q10 values ...")
+
+        def temperature_coefficient(tmax, tmin, fmax, fmin):
+            return (fmax / fmin) ** (10 / (tmax - tmin))
+
+        # check if instance has temp data
+        if len(self.temperature) == 1:
+            msg = "This dataset has no temperature data! Aborting ..."
+            logger.error(msg)
+            raise GridDataMissing(msg)
+
+        q10 = []
+        for track_id in self.ids:
+
+            # load data
+            frequency = self.frequencies[self.identities == track_id]
+            temperature = self.temperature[self.indices[self.identities == track_id]]
+
+            # get index for min and max of temperature
+            indices = np.arange(len(temperature))
+            imin = indices[temperature == temperature.min()]
+            imax = indices[temperature == temperature.max()]
+
+            # filter signal to remove peaks
+            f_minima = minimum_filter1d(frequency, 801)
+            f_lowpass = lowpass_filter(f_minima, 3, 0.0005, 2)
+
+            q10.append(
+                temperature_coefficient(
+                    temperature[imax],
+                    temperature[imin],
+                    f_lowpass[imax],
+                    f_lowpass[imin],
+                )
+            )
+        self.q10 = np.asarray(q10)
+
+    def sex_fish(self, upper="m", thresh=750, normtemp=25) -> None:
         """
         sex_fish estimates fish sex based on fundamental frequency, temperature and Q10 value.
 
@@ -744,6 +794,12 @@ class GridCleaner:
             logger.error(msg)
             raise GridDataMissing(msg)
 
+        # check if instance has q10 data
+        if len(self.q10) == 1:
+            msg = "Instance has no Q10 values! Estimate them before sexing."
+            logger.error(msg)
+            raise GridDataMissing(msg)
+
         # iterate through all "individuals"
         self.sex = []
         for track_id in tqdm(self.ids, desc="Estimate sex    "):
@@ -760,6 +816,9 @@ class GridCleaner:
 
             temp = self.temperature[start:stop]
             data = self.frequencies[self.identities == track_id]
+
+            # get q10
+            q10 = self.q10[self.ids == track_id]
 
             # normalize by Q10
             normed = normQ10(data, temp, normtemp, q10)
@@ -827,6 +886,12 @@ class GridCleaner:
             # check sex to id match
             if len(self.sex) != len(self.ids):
                 msg = "Sex array does not match id array!"
+                logger.error(msg)
+                raise GridDataMismatch(msg)
+
+            # check Q10 to id match
+            if len(self.q10) != len(self.ids):
+                msg = "Q10 array does not match id array!"
                 logger.error(msg)
                 raise GridDataMismatch(msg)
 
@@ -1010,6 +1075,15 @@ class GridCleaner:
                 unit=None,
             )
 
+            # write estimated Q10 values
+            block.create_data_array(
+                name="q10",
+                array_type="nix.sampled",
+                data=self.q10,
+                label="Q10 of each identity",
+                unit=None,
+            )
+
             logger.info("Loading and saving spectrograms ...")
 
             # load spectrograms
@@ -1036,7 +1110,8 @@ class GridCleaner:
             # write spectrograms
             # I think this does not work for some reason
             # need to look into how I handle the memmap stuff
-            """
+
+            print("coarse spectrogram")
             block.create_data_array(
                 name="coarse spectrogram",
                 array_type="nix.sampled",
@@ -1045,6 +1120,8 @@ class GridCleaner:
                 unit=None,
             )
 
+            """
+            print("fine spectrogram")
             block.create_data_array(
                 name="fine spectrogram",
                 array_type="nix.sampled",
@@ -1052,7 +1129,9 @@ class GridCleaner:
                 label="fine grid spectrogram",
                 unit=None,
             )
+            """
 
+            print("fine spectrogram shape")
             block.create_data_array(
                 name="fine spectrogram shape",
                 array_type="nix.sampled",
@@ -1061,6 +1140,7 @@ class GridCleaner:
                 unit=None,
             )
 
+            print("fine spectrogram times")
             block.create_data_array(
                 name="fine spectrogram times",
                 array_type="nix.sampled",
@@ -1069,6 +1149,7 @@ class GridCleaner:
                 unit="s",
             )
 
+            print("fine spectrogram frequencies")
             block.create_data_array(
                 name="fine spectrogram frequencies",
                 array_type="nix.sampled",
@@ -1076,7 +1157,6 @@ class GridCleaner:
                 label="frequencies for fine spectrogram",
                 unit="Hz",
             )
-            """
 
             file.close()
 

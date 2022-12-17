@@ -43,22 +43,22 @@ def plot_grid(grid: GridCleaner) -> None:
         time = grid.times[grid.indices[grid.identities == track_id]]
         fund = grid.frequencies[grid.identities == track_id]
 
-        ax[0].plot(time, fund, alpha=0.5)
+        ax[0].plot(time, fund, alpha=1)
         ax[0].annotate(f"{int(track_id)} {sex}", xy=(time[0], fund[0]))
 
         xpos = grid.xpositions[grid.identities == track_id]
         ypos = grid.ypositions[grid.identities == track_id]
 
-        ax[1].plot(xpos, ypos, alpha=0.2)
+        ax[1].plot(xpos, ypos, alpha=1)
         ax[1].annotate(f"{int(track_id)} {sex}", xy=(xpos[0], ypos[0]))
 
         # plot a random subset that is more visible
-        ndata = 10 * 60 * 3  # approx 10 min with 3 Hz sampling
-        index = np.arange(len(time))[ndata:-ndata]  # possible indices to choose from
-        start = np.random.choice(index)
-        stop = start + ndata
-        ax[0].plot(time[start:stop], fund[start:stop])
-        ax[1].plot(xpos[start:stop], ypos[start:stop])
+        # ndata = 10 * 60 * 3  # approx 10 min with 3 Hz sampling
+        # index = np.arange(len(time))[ndata:-ndata]  # possible indices to choose from
+        # start = np.random.choice(index)
+        # stop = start + ndata
+        # ax[0].plot(time[start:stop], fund[start:stop])
+        # ax[1].plot(xpos[start:stop], ypos[start:stop])
 
     ax[0].set_title("Frequency tracks")
     ax[1].set_title("Estimated positions")
@@ -125,6 +125,9 @@ def clean(path: str) -> None:
 
         # interpolate
         grid.interpolate_all()
+
+        # compute individual q10 values
+        grid.compute_q10()
 
         # sex ids
         grid.sex_fish(*conf.sexing_parameters.values())

@@ -25,13 +25,11 @@ sexing_parameters:
   upper: "m" # sex of higher freqs
   thresh: 740 # freq threshold for sexing
   normtemp: 25 # temperature to norm to
-  q10: 1.6 # fish q10 value
 
 smoothing_parameters:
   vthresh: 70 # in [cm/s]
   median_window: 31 # window for median filter
-  smoothing_window: 51 # window for savgol filter
-  smoothing_polyorder: 8 # order of smoothing polynome
+  lowpass_cutoff: 0.01 # window for savgol filter
 
 plot: True # enable plot of output data after each recording is processed
 
