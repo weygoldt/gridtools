@@ -629,15 +629,7 @@ class GridCleaner:
 
         # retrieve preprocessing parameters from config file
         veloc_thresh = params["vthresh"]
-        median_window = params["median_window"]
         lowpass_cutoff = params["lowpass_cutoff"]
-
-        # check if median window is odd
-        if median_window % 2 == 0:
-            median_window += 1
-            logger.warning(
-                "Median filter kernel width is even! Changing to {median_window}. Consider changing the value in the config file!"
-            )
 
         # iterate through all ids
         for track_id in tqdm(self.ids, desc="Position cleanup"):
@@ -658,19 +650,10 @@ class GridCleaner:
             xpos_interp = np.interp(times, times[valid_data], xpos[valid_data])
             ypos_interp = np.interp(times, times[valid_data], ypos[valid_data])
 
-            # median filter to remove small scale outliers
-            xpos_medfilt = medfilt(xpos_interp, kernel_size=median_window)
-            ypos_medfilt = medfilt(ypos_interp, kernel_size=median_window)
-
-            # savitzky-golay filter
-            # xpos_savgol = savgol_filter(xpos_medfilt, smth_window, polyorder)
-            # ypos_savgol = savgol_filter(ypos_medfilt, smth_window, polyorder)
-
+            # lowpass filter position estimates
             samplingrate = times[1] - times[0]
-            print(samplingrate)
-
-            xpos_lowpass = lowpass_filter(xpos, samplingrate, lowpass_cutoff)
-            ypos_lowpass = lowpass_filter(ypos, samplingrate, lowpass_cutoff)
+            xpos_lowpass = lowpass_filter(xpos_interp, samplingrate, lowpass_cutoff)
+            ypos_lowpass = lowpass_filter(ypos_interp, samplingrate, lowpass_cutoff)
 
             # overwrite class instance data
             self.xpositions[self.identities == track_id] = xpos_lowpass
@@ -726,7 +709,7 @@ class GridCleaner:
         logger.info("Computing individual Q10 values ...")
 
         def temperature_coefficient(tmax, tmin, fmax, fmin):
-            return (fmax / fmin) ** (10 / (tmax - tmin))
+            return np.round(np.mean((fmax / fmin) ** (10 / (tmax - tmin))), 4)
 
         # check if instance has temp data
         if len(self.temperature) == 1:
@@ -968,10 +951,12 @@ class GridCleaner:
             if len(nixfiles) != 0:
                 logger.warning("The file you specified already exists. Overwriting ...")
                 file = nio.File.open(target_path, nio.FileMode.ReadWrite)
-                del file.blocks[blockname]
             else:
                 logger.info("Creating new {}.nix file ...".format(filename))
                 file = nio.File.open(target_path, nio.FileMode.Overwrite)
+
+            if blockname in file.blocks:
+                del file.blocks[blockname]
 
             # delete block if it exists
             block = file.create_block(blockname, f"Recording at {blockname}")
@@ -1158,6 +1143,7 @@ class GridCleaner:
                 unit="Hz",
             )
 
+            file.flush()
             file.close()
 
         if not overwritable:

@@ -50,7 +50,13 @@ Preprocessing is planned in three main steps:
 - [ ] Implement export to .nix instead of .npy files
 - [ ] Run a clustering algorith on a perfectly tracked dataset to get clusters of communication signals
 - [ ] Build a perfectly labeled dataset to train a neural network to detect signals on spectrogram snippets
+- [ ] Rebuild Q10 estimates to compute by binning to make it more robust
 
+
+## Open questions
+
+* What does file.flush() on nix files do?
+* How do I store a np.memmap into a nix file (i.e. spectrogram)
 
 ## Help
 

@@ -22,14 +22,13 @@ number_electrodes: 4 # use n electrodes for triangulation
 logger_name: "hobologger.csv" # logger file must be in dataroot.
 
 sexing_parameters:
-  upper: "m" # sex of higher freqs
-  thresh: 740 # freq threshold for sexing
-  normtemp: 25 # temperature to norm to
+  upper: "m" # sex of higher frequency fish
+  thresh: 740 # frequency threshold for sexing
+  normtemp: 25 # temperature to normalize to
 
 smoothing_parameters:
-  vthresh: 70 # in [cm/s]
-  median_window: 31 # window for median filter
-  lowpass_cutoff: 0.01 # window for savgol filter
+  vthresh: 70 # velocity threshold in [cm/s]
+  lowpass_cutoff: 0.01 # lowpass filter cutoff frequency
 
 plot: True # enable plot of output data after each recording is processed
 

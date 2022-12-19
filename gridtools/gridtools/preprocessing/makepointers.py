@@ -1,6 +1,10 @@
 import datetime
 
 import nixio as nio
+import numpy as np
+from IPython import embed
+
+from gridtools.utils.datahandling import estimateMode
 
 
 class NixGridRecording:
@@ -24,6 +28,8 @@ class NixGridRecording:
         self.ids = block.data_arrays["ids"][:]
         self.sex = block.data_arrays["sex"][:]
         self.q10 = block.data_arrays["q10"][:]
+        self.samplingrate = np.mean(np.diff(self.times))
+        self.name = block.name
 
     def __repr__(self) -> str:
         return "NixGridRecording({})".format(
@@ -36,7 +42,7 @@ class NixGridRecording:
         )
 
 
-class NixGrid:
+class ConnectFish:
     """
     Loads data arrays of all recordings from a .nix grid recording file. Utilized
     to create pointers between recordings that group frequency tracks into the same fish.
@@ -65,12 +71,150 @@ class NixGrid:
         for block in file.blocks:
             self.recordings.append(NixGridRecording(block))
 
+        self.samplingrate = np.round(
+            np.mean([rec.samplingrate for rec in self.recordings]), 4
+        )
+
     def __repr__(self) -> str:
         return "NixGrid({})".format(self._filepath)
 
     def __str__(self) -> str:
         return "Grid recording set at {}".format(self._filepath)
 
-    def create_pointers(self):
-        pass
+    def create_pointers(self) -> None:
+        def get_pairs(matrix):
+
+            # get indices of pairs sorted by difference in ascending order
+            pairs = np.unravel_index(np.argsort(matrix, axis=None), np.shape(matrix))
+
+            # build matrix to store used indices to not use the same twice
+            done = np.ones_like(matrix, dtype=bool)
+
+            # go through pairs and append pairs if not used already
+            track_rec1 = []
+            track_rec2 = []
+
+            for i in range(len(pairs[0])):
+
+                pair_idx = np.asarray([pairs[0][i], pairs[1][i]])
+
+                if done[pair_idx[0], pair_idx[1]] == True:
+
+                    print(pair_idx)
+                    print(done)
+
+                    track_rec1.append(pair_idx[0])
+                    track_rec2.append(pair_idx[1])
+
+                    done[pair_idx[0], :] = False
+                    done[:, pair_idx[1]] = False
+
+                else:
+                    print(done)
+                    continue
+
+            return track_rec1, track_rec2
+
+        # set thresholds
+        dt_between_recordings = int(15 * 60)  # gap threshold between recordings
+        dt_to_end = int(120)  # threshold for gap between track end and recording end
+        dt_baseline = int(
+            np.round(1800 * self.samplingrate)
+        )  # window to compute baseline for pointing
+
         # Get start and end points of all recordings
+        for rec1, rec2 in zip(self.recordings[:-1], self.recordings[1:]):
+
+            # get time distance between recordings
+            stop1 = datetime.timedelta(0, rec1.times[-1]) + rec1.starttime
+            start2 = rec2.starttime
+            gap = (start2 - stop1).total_seconds()
+
+            # check if time gap is small enough
+            if gap > dt_between_recordings:
+                continue
+
+            # get stops of rec1
+            ids1 = []
+            baseline1 = []
+
+            for track_id in rec1.ids:
+
+                track_id = int(track_id)
+
+                # check if id has data at end of recording
+                track_stoptime = rec1.times[rec1.indices[rec1.identities == track_id]][
+                    -1
+                ]
+                abs_stoptime = rec1.times[-1]
+                diff_time = abs_stoptime - track_stoptime
+                if diff_time < dt_to_end:
+                    continue
+
+                # get data at end of recording
+                ids1.append(int(track_id))
+                baseline1.append(
+                    estimateMode(
+                        rec1.frequencies[rec1.identities == track_id][-dt_baseline:]
+                    )
+                )
+
+            # get starts of rec2
+            ids2 = []
+            baseline2 = []
+
+            for track_id in rec2.ids:
+
+                track_id = int(track_id)
+
+                # check if id has data at end of recording
+                track_stoptime = rec2.times[rec2.indices[rec2.identities == track_id]][
+                    -1
+                ]
+                abs_stoptime = rec2.times[-1]
+                diff_time = abs_stoptime - track_stoptime
+                if diff_time < dt_to_end:
+                    continue
+
+                # get data at start of recording
+                ids2.append(track_id)
+                baseline2.append(
+                    estimateMode(
+                        rec2.frequencies[rec2.identities == track_id][-dt_baseline:]
+                    )
+                )
+
+            # convert to numpy arrays
+            ids1 = np.asarray(ids1)
+            baseline1 = np.asarray(baseline1)
+            ids2 = np.asarray(ids2)
+            baseline2 = np.asarray(baseline2)
+
+            # compute difference matrix
+            diff_matrix = np.asarray([baseline1 - x for x in baseline2])
+
+            # get indices for unique pairs with minimum difference frequency
+            idxs1, idxs2 = get_pairs(diff_matrix)
+
+            # get ids for these indices
+            matches_rec1 = ids1[idxs2]
+            matches_rec2 = ids2[idxs1]
+
+            # create new meta ids
+            meta_ids = np.arange(len(matches_rec1))
+
+            # reshape matching ids
+            matches = [[x, y] for x, y in zip(matches_rec1, matches_rec2)]
+
+            # make recording references
+            recording_ref = [[rec1.name, rec2.name] for i in range(len(matches))]
+
+            if len(recording_ref) != 0:
+                embed()
+
+
+if __name__ == "__main__":
+
+    datapath = "/mnt/backups/@data/output/2016_colombia.nix"
+    grid = ConnectFish(datapath, "ReadWrite")
+    grid.create_pointers()
