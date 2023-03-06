@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "gridtools"
+version = "0.1.0"
+description = ""
+authors = ["weygoldt <88969563+weygoldt@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+numpy = "^1.24.2"
+matplotlib = "^3.7.1"
+scipy = "^1.10.1"
+tqdm = "^4.65.0"
+pyaml = "^21.10.1"
+
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.0.254"
+pytest = "^7.2.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
