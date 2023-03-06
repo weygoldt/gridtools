@@ -45,3 +45,4 @@ def get_pairs(matrix):
 
 
 pair_indices = get_pairs(diffm)
+print(pair_indices)

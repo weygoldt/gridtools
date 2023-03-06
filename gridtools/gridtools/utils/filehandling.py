@@ -12,15 +12,16 @@ class ConfLoader:
     """
     Opens a YAML file and unpacks dict keys to instance variables.
     """
+
     def __init__(self, path: str) -> None:
-        
+
         with open(path) as file:
-            
+
             try:
                 conf = yaml.safe_load(file)
                 for key in conf:
                     setattr(self, key, conf[key])
-            
+
             except yaml.YAMLError as error:
                 logger.error("Failed to open yaml file!")
                 raise error
@@ -39,9 +40,9 @@ class ListRecordings:
         self.dataroot = path
         self.recordings = []
 
-        if exclude != None: 
-            self.exclude = exclude 
-        else: 
+        if exclude != None:
+            self.exclude = exclude
+        else:
             self.exclude = []
 
         # create list of recordings in dataroot
