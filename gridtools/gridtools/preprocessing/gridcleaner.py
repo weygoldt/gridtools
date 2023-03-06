@@ -2,17 +2,18 @@ import datetime
 import glob
 import logging
 import os
-import shutil
 from pathlib import Path
+import shutil
 
-import nixio as nio
+from IPython import embed
 import numpy as np
 import pandas as pd
-from IPython import embed
 from scipy.ndimage import minimum_filter1d
 from scipy.signal import medfilt, savgol_filter
 from thunderfish import dataloader, powerspectrum
 from tqdm import tqdm
+
+import nixio as nio
 
 from ..exceptions import BadOutputDir, GridDataMismatch, GridDataMissing
 from ..logger import makeLogger
@@ -25,6 +26,7 @@ from ..utils.datahandling import (
     removeOutliers,
 )
 from ..utils.spatial import velocity2d
+
 
 logger = makeLogger(__name__)
 
@@ -60,9 +62,11 @@ class GridCleaner:
             # the wavetracker output
             self.times = np.load(datapath + "times.npy", allow_pickle=True)
             self.indices = np.load(datapath + "idx_v.npy", allow_pickle=True)
-            self.frequencies = np.load(datapath + "fund_v.npy", allow_pickle=True)
+            self.frequencies = np.load(
+                datapath + "fund_v.npy", allow_pickle=True)
             self.powers = np.load(datapath + "sign_v.npy", allow_pickle=True)
-            self.identities = np.load(datapath + "ident_v.npy", allow_pickle=True)
+            self.identities = np.load(
+                datapath + "ident_v.npy", allow_pickle=True)
             self.ids = np.unique(self.identities[~np.isnan(self.identities)])
 
             # some grid metadata
@@ -171,7 +175,8 @@ class GridCleaner:
                     0,
                 ]
             except ValueError:
-                logger.error("Time string of folder name does not contain '_' or ':' !")
+                logger.error(
+                    "Time string of folder name does not contain '_' or ':' !")
 
             # combine all to datetime object
         starttime = datetime.datetime(
@@ -197,7 +202,8 @@ class GridCleaner:
         """
         logger.debug("Computing stoptime ...")
         stoptime = list(
-            map(lambda x: self.starttime + datetime.timedelta(seconds=x), self.times)
+            map(lambda x: self.starttime +
+                datetime.timedelta(seconds=x), self.times)
         )[-1]
 
         return stoptime
@@ -210,7 +216,8 @@ class GridCleaner:
         logger.info("Removing all unassigned frequencies (NaNs in ident_v) ...")
 
         self.indices = np.delete(self.indices, np.isnan(self.identities))
-        self.frequencies = np.delete(self.frequencies, np.isnan(self.identities))
+        self.frequencies = np.delete(
+            self.frequencies, np.isnan(self.identities))
         self.powers = np.delete(self.powers, np.isnan(self.identities), axis=0)
         self.identities = np.delete(self.identities, np.isnan(self.identities))
         self.ids = np.delete(self.ids, np.isnan(self.ids))
@@ -242,7 +249,8 @@ class GridCleaner:
 
             if dur < thresh:
                 index_ids_del.extend(index_ids[self.ids == track_id])
-                index_ident_del.extend(index_ident[self.identities == track_id])
+                index_ident_del.extend(
+                    index_ident[self.identities == track_id])
                 counter += 1
 
         # make a mask from the delete indices
@@ -277,8 +285,10 @@ class GridCleaner:
         for track_id in tqdm(self.ids, desc="Purging bad     "):
 
             # get min and max sampled time
-            tmin = np.min(self.times[self.indices[self.identities == track_id]])
-            tmax = np.max(self.times[self.indices[self.identities == track_id]])
+            tmin = np.min(
+                self.times[self.indices[self.identities == track_id]])
+            tmax = np.max(
+                self.times[self.indices[self.identities == track_id]])
 
             # get index for those on time
             start = findOnTime(self.times, tmin)
@@ -295,7 +305,8 @@ class GridCleaner:
 
             # delete data for IDs that fall below threshold
             if perf < thresh:
-                self.indices = np.delete(self.indices, self.identities == track_id)
+                self.indices = np.delete(
+                    self.indices, self.identities == track_id)
                 self.frequencies = np.delete(
                     self.frequencies, self.identities == track_id
                 )
@@ -354,7 +365,7 @@ class GridCleaner:
 
                         # calculate power spectral density for channel at roi
                         freqs, powers = powerspectrum.psd(
-                            raw[int(ioi - nfft / 2) : int(ioi + nfft / 2), channel],
+                            raw[int(ioi - nfft / 2): int(ioi + nfft / 2), channel],
                             ratetime=samplingrate,
                             overlap_frac=0.9,
                             freq_resolution=1,
@@ -374,7 +385,8 @@ class GridCleaner:
 
                         self.powers[insert_idx, channel] = power_sel_log
 
-            logger.debug("Finished computing the new powers, starting checks ...")
+            logger.debug(
+                "Finished computing the new powers, starting checks ...")
 
         def save_powers() -> None:
 
@@ -394,7 +406,8 @@ class GridCleaner:
                     logger.warning("Backup sign_v.npy created succesfully!")
 
                 except OSError as error:
-                    logger.error("Failed creating a backup sign_v.npy! Aborting ...")
+                    logger.error(
+                        "Failed creating a backup sign_v.npy! Aborting ...")
                     raise error
 
             # check if we now have a backup and save new one to file if true.
@@ -410,7 +423,8 @@ class GridCleaner:
                     logger.info("New sign_v loaded into namespace")
 
                 except FileNotFoundError as error:
-                    logger.error("Error loading newly generated sign_v into namespace!")
+                    logger.error(
+                        "Error loading newly generated sign_v into namespace!")
                     raise error
             else:
                 logger.error("Backup signature vector not found! Aborting ...")
@@ -555,8 +569,10 @@ class GridCleaner:
         for track_id in tqdm(self.ids, desc="Interpolating   "):
 
             # get min and max time for ID
-            tmin = np.min(self.times[self.indices[self.identities == track_id]])
-            tmax = np.max(self.times[self.indices[self.identities == track_id]])
+            tmin = np.min(
+                self.times[self.indices[self.identities == track_id]])
+            tmax = np.max(
+                self.times[self.indices[self.identities == track_id]])
 
             # get time index for tmin and tmax
             start = findOnTime(self.times, tmin)
@@ -652,8 +668,10 @@ class GridCleaner:
 
             # lowpass filter position estimates
             samplingrate = times[1] - times[0]
-            xpos_lowpass = lowpass_filter(xpos_interp, samplingrate, lowpass_cutoff)
-            ypos_lowpass = lowpass_filter(ypos_interp, samplingrate, lowpass_cutoff)
+            xpos_lowpass = lowpass_filter(
+                xpos_interp, samplingrate, lowpass_cutoff)
+            ypos_lowpass = lowpass_filter(
+                ypos_interp, samplingrate, lowpass_cutoff)
 
             # overwrite class instance data
             self.xpositions[self.identities == track_id] = xpos_lowpass
@@ -949,7 +967,8 @@ class GridCleaner:
 
             # open file in overwrite mode in both cases but supply logging messages
             if len(nixfiles) != 0:
-                logger.warning("The file you specified already exists. Overwriting ...")
+                logger.warning(
+                    "The file you specified already exists. Overwriting ...")
                 file = nio.File.open(target_path, nio.FileMode.ReadWrite)
             else:
                 logger.info("Creating new {}.nix file ...".format(filename))
@@ -1088,7 +1107,8 @@ class GridCleaner:
                 self._datapath + "fill_spec.npy",
                 dtype="float",
                 mode="r",
-                shape=(self.fine_spectrogram_shape[0], self.fine_spectrogram_shape[1]),
+                shape=(
+                    self.fine_spectrogram_shape[0], self.fine_spectrogram_shape[1]),
                 order="F",
             )
 

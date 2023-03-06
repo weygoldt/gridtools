@@ -1,5 +1,4 @@
 import random
-
 import matplotlib.pyplot as plt
 import nixio as nio
 import numpy as np

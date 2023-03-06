@@ -29,7 +29,7 @@ def makeLogger(name: str):
 
 
 if __name__ == "__main__":
-    
+
     # initiate logger
     mylogger = makeLogger(__name__)
 

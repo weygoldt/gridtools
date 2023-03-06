@@ -15,7 +15,7 @@
     ├── recording1/
     │       fund_v.npu
     │       temp.npy
-    │       xpos.npy ... 
+    │       xpos.npy ...
     ├── recording2/
     └── ...
 """
@@ -51,14 +51,6 @@ def plot_grid(grid: GridCleaner) -> None:
 
         ax[1].plot(xpos, ypos, alpha=1)
         ax[1].annotate(f"{int(track_id)} {sex}", xy=(xpos[0], ypos[0]))
-
-        # plot a random subset that is more visible
-        # ndata = 10 * 60 * 3  # approx 10 min with 3 Hz sampling
-        # index = np.arange(len(time))[ndata:-ndata]  # possible indices to choose from
-        # start = np.random.choice(index)
-        # stop = start + ndata
-        # ax[0].plot(time[start:stop], fund[start:stop])
-        # ax[1].plot(xpos[start:stop], ypos[start:stop])
 
     ax[0].set_title("Frequency tracks")
     ax[1].set_title("Estimated positions")
