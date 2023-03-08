@@ -36,7 +36,7 @@ def velocity1d(times: np.ndarray, dist: np.ndarray) -> np.ndarray:
     return v
 
 
-def velocity2d(t: np.ndarray, x: np.ndarray, y:np.ndarray) -> np.ndarray:
+def velocity2d(t: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """
     Compute the velocity of an object in 2D space from x and y coordinates over time.
 
@@ -59,10 +59,12 @@ def velocity2d(t: np.ndarray, x: np.ndarray, y:np.ndarray) -> np.ndarray:
     dt = np.array([x - x0 for x0, x in zip(t, t[2:])])
 
     # delta d x and y
-    dx = np.array([(x2 - x1) + (x1 - x0)
-                  for x0, x1, x2 in zip(x, x[1:], x[2:])])
-    dy = np.array([(x2 - x1) + (x1 - x0)
-                  for x0, x1, x2 in zip(y, y[1:], y[2:])])
+    dx = np.array(
+        [(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(x, x[1:], x[2:])]
+    )
+    dy = np.array(
+        [(x2 - x1) + (x1 - x0) for x0, x1, x2 in zip(y, y[1:], y[2:])]
+    )
 
     # delta d tot. (pythagoras)
     dd = np.sqrt(dx**2 + dy**2)

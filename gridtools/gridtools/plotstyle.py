@@ -4,17 +4,14 @@ import os
 import cmocean
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import numpy as np
 import plottools.colors as c
 import seaborn as sns
-from cmocean import cm
 from matplotlib.colors import ListedColormap
 
 
 def PlotStyle(darkmode=False):
     class s:
-
         lightcmap = cmocean.tools.lighten(cmocean.cm.haline, 0.8)
         specmap = sns.color_palette("Spectral_r", as_cmap=True)
         colors = c.colors_muted
@@ -60,10 +57,13 @@ def PlotStyle(darkmode=False):
             if " " in title:
                 split_title = title.split(" ", 1)
                 axis.set(
-                    title=r"$\bf{{{}}}$".format(split_title[0]) + f" {split_title[1]}"
+                    title=r"$\bf{{{}}}$".format(split_title[0])
+                    + f" {split_title[1]}"
                 )
             else:
-                axis.set_title(r"$\bf{{{}}}$".format(title.replace(" ", r"\;")), pad=8)
+                axis.set_title(
+                    r"$\bf{{{}}}$".format(title.replace(" ", r"\;")), pad=8
+                )
 
         @classmethod
         def fancy_suptitle(cls, fig, title):
@@ -84,13 +84,15 @@ def PlotStyle(darkmode=False):
                 va="center",
                 zorder=1000,
                 bbox=dict(
-                    boxstyle=f"circle, pad={padding}", fc="white", ec="black", lw=1
+                    boxstyle=f"circle, pad={padding}",
+                    fc="white",
+                    ec="black",
+                    lw=1,
                 ),
             )
 
         @classmethod
         def fade_cmap(cls, cmap):
-
             my_cmap = cmap(np.arange(cmap.N))
             my_cmap[:, -1] = np.linspace(0, 1, cmap.N)
             my_cmap = ListedColormap(my_cmap)
@@ -158,12 +160,17 @@ def PlotStyle(darkmode=False):
 
                 if dx > 1200:
                     if rec_datetime.minute % int(res / 60) != 0:
-                        dmin = int(res / 60) - rec_datetime.minute % int(res / 60)
+                        dmin = int(res / 60) - rec_datetime.minute % int(
+                            res / 60
+                        )
                         label_idx0 = dmin * 60
 
                 xtick = np.arange(label_idx0, times[-1], res)
                 datetime_xlabels = list(
-                    map(lambda x: rec_datetime + datetime.timedelta(seconds=x), xtick)
+                    map(
+                        lambda x: rec_datetime + datetime.timedelta(seconds=x),
+                        xtick,
+                    )
                 )
 
                 if dx > 120:
@@ -188,7 +195,9 @@ def PlotStyle(darkmode=False):
                     )
                     rotation = 45
                 # ToDo: create mask
-                mask = np.arange(len(xtick))[(xtick > xlim[0]) & (xtick < xlim[1])]
+                mask = np.arange(len(xtick))[
+                    (xtick > xlim[0]) & (xtick < xlim[1])
+                ]
                 axis.set_xticks(xtick[mask])
                 axis.set_xticklabels(np.array(xlabels)[mask], rotation=rotation)
                 axis.set_xlim(xlim)

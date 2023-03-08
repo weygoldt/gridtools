@@ -2,15 +2,16 @@ import logging
 
 
 def makeLogger(name: str):
-
     # create logger formats for file and terminal
     file_formatter = logging.Formatter(
-        "[ %(levelname)s ] ~ %(asctime)s ~ %(module)s.%(funcName)s: %(message)s")
+        "[ %(levelname)s ] ~ %(asctime)s ~ %(module)s.%(funcName)s: %(message)s"
+    )
     console_formatter = logging.Formatter(
-        "[ %(levelname)s ] in %(module)s.%(funcName)s: %(message)s")
+        "[ %(levelname)s ] in %(module)s.%(funcName)s: %(message)s"
+    )
 
     # create logging file if loglevel is debug
-    file_handler = logging.FileHandler(f"gridtools_log.log", mode="w")
+    file_handler = logging.FileHandler("gridtools_log.log", mode="w")
     file_handler.setLevel(logging.WARN)
     file_handler.setFormatter(file_formatter)
 
@@ -29,7 +30,6 @@ def makeLogger(name: str):
 
 
 if __name__ == "__main__":
-
     # initiate logger
     mylogger = makeLogger(__name__)
 

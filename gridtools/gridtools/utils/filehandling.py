@@ -14,9 +14,7 @@ class ConfLoader:
     """
 
     def __init__(self, path: str) -> None:
-
         with open(path) as file:
-
             try:
                 conf = yaml.safe_load(file)
                 for key in conf:
@@ -32,15 +30,16 @@ class ListRecordings:
     Lists subdiretories of data recordings in a given root directory to iterate over. Directory names specified as strings in the exclude list are ignored (e.g. directories containing metadata, etc.).
     """
 
-    def __init__(self, path: str, exclude: typing.Optional[list] = None) -> None:
-
+    def __init__(
+        self, path: str, exclude: typing.Optional[list] = None
+    ) -> None:
         logger.debug("Listing recordings ...")
 
         # set correct paths and ids based on script setup parameters
         self.dataroot = path
         self.recordings = []
 
-        if exclude != None:
+        if exclude is not None:
             self.exclude = exclude
         else:
             self.exclude = []
@@ -67,7 +66,7 @@ def makeOutputdir(path: str) -> str:
         path of the newly created output directory
     """
 
-    if os.path.isdir(path) == False:
+    if os.path.isdir(path) is False:
         os.mkdir(path)
         print("new output directory created")
     else:

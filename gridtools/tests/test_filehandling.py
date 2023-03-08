@@ -6,10 +6,9 @@ datapath = "tests/testdata"
 
 
 def test_ConfLoader() -> None:
-
     conf = filehandling.ConfLoader(f"{datapath}/confloader_test.yml")
 
-    assert isinstance(conf.var1, bool) and conf.var1 == True 
+    assert isinstance(conf.var1, bool) and conf.var1 is True
     assert isinstance(conf.var2, list) and conf.var2[0] == "string1"
     assert isinstance(conf.var3, float) and conf.var3 == 1.5
     assert isinstance(conf.var4, dict) and conf.var4["subvar3"] == 5
@@ -17,10 +16,9 @@ def test_ConfLoader() -> None:
 
 
 def test_ListRecordings() -> None:
+    path = f"{datapath}/mockgrid"
+    exclude = ["2022-04-20-18_49"]
 
-    path=f"{datapath}/mockgrid"
-    exclude=["2022-04-20-18_49"]
-    
     recs = filehandling.ListRecordings(path=path, exclude=exclude)
 
     assert recs.dataroot == path and isinstance(recs.dataroot, str)
@@ -29,7 +27,6 @@ def test_ListRecordings() -> None:
 
 
 def test_makeOutputdir() -> None:
-
     path = filehandling.makeOutputdir(path=f"{datapath}/testdir")
     assert os.path.isdir(path)
     os.rmdir(path)
