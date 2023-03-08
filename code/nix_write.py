@@ -1,8 +1,5 @@
-import datetime
-import datetime as dt
 from dataclasses import dataclass
 
-import h5py
 import nixio
 import numpy as np
 
@@ -30,7 +27,11 @@ f = fish(ident, eod, pos, start_time, stop_time)
 print(f)
 
 # open new nix file
-d = nixio.File.open("testfile.nix", nixio.FileMode.Overwrite, compression=nixio.Compression.DeflateNormal)
+d = nixio.File.open(
+    "testfile.nix",
+    nixio.FileMode.Overwrite,
+    compression=nixio.Compression.DeflateNormal,
+)
 
 # create a block
 block = d.create_block("fish", "grid fish")
@@ -50,7 +51,6 @@ data = block.create_data_array("pos", "x, y position estimates", data=f.pos)
 data.label = "Position"
 data.unit = "cm"
 data.append_sampled_dimension(0.3, label="time", unit="s")
-
 
 
 d.close()

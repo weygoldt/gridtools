@@ -75,7 +75,9 @@ def findOnTime(array: np.ndarray, target: float, limit: bool = True) -> int:
                         "The data point (target) is not on the time array!"
                     )
 
-                logger.warning("The data point (target) is not on the time array!")
+                logger.warning(
+                    "The data point (target) is not on the time array!"
+                )
 
         if target > array[0] and target < array[-1]:
             if dt_target >= 0:
@@ -90,7 +92,9 @@ def findOnTime(array: np.ndarray, target: float, limit: bool = True) -> int:
                         "The data point (target) is not on the time array!"
                     )
 
-                logger.warning("The data point (target) is not on the time array!")
+                logger.warning(
+                    "The data point (target) is not on the time array!"
+                )
 
         if target >= array[-1]:
             dt_sampled = array[idx] - array[idx - 1]
@@ -102,7 +106,9 @@ def findOnTime(array: np.ndarray, target: float, limit: bool = True) -> int:
                         "The data point (target) is not on the time array!"
                     )
 
-                logger.warning("The data point (target) is not on the time array!")
+                logger.warning(
+                    "The data point (target) is not on the time array!"
+                )
 
     except NotOnTimeError as error:
         logger.error("Supplied time stamp could not be found on time array!")
@@ -115,7 +121,6 @@ def findOnTime(array: np.ndarray, target: float, limit: bool = True) -> int:
 def removeOutliers(
     x: np.ndarray, bar: float = 1.5, fillnan: bool = False
 ) -> np.ndarray:
-
     """
     Removes outliers based on the interquartile range (i.e. datapoints that would
     be considered outliers in a regular boxplot).
@@ -192,7 +197,9 @@ def estimateMode(array: np.ndarray, bw_method: str = "scott") -> float:
     return results.x[0]
 
 
-def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1) -> np.ndarray:
+def nanPad(
+    array: np.ndarray, position: str = "center", padlen: int = 1
+) -> np.ndarray:
     """
     nanPad adds a given number of NaNs to the start and/or end of an array.
 
@@ -229,7 +236,6 @@ def nanPad(array: np.ndarray, position: str = "center", padlen: int = 1) -> np.n
 def crossCov(
     data1: np.ndarray, data2: np.ndarray, maxlag: int
 ) -> tuple[np.ndarray, np.ndarray]:
-
     # check if arrays are the same length
     if len(data1) != len(data2):
         msg = f"Data arrays are not the same shape! data1 has length {len(data1)} and data2 {len(data2)}."
@@ -238,7 +244,7 @@ def crossCov(
 
     # check if maxlag fits data length
     if maxlag >= len(data1) / 2:
-        msg = f"Provided lag is equal or less than half the length of the data array! Use a smaller lag or provide more data!"
+        msg = "Provided lag is equal or less than half the length of the data array! Use a smaller lag or provide more data!"
         logger.error(msg)
         raise TypeError(msg)
 
@@ -254,7 +260,9 @@ def crossCov(
     )
 
     # compute covariances
-    covs = T.dot(data1_pad) / data1_pad.size - (T.mean(axis=1) * data1_pad.mean())
+    covs = T.dot(data1_pad) / data1_pad.size - (
+        T.mean(axis=1) * data1_pad.mean()
+    )
 
     # make lags vector to return
     lags = np.arange(-maxlag, maxlag + 1, dtype=int)

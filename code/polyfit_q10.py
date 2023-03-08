@@ -1,11 +1,9 @@
-from collections import deque
-from itertools import islice
-
 import matplotlib.pyplot as plt
 import nixio as nio
 import numpy as np
-from gridtools.utils.datahandling import lowpass_filter, removeOutliers
 from scipy.ndimage import minimum_filter1d
+
+from gridtools.utils.datahandling import lowpass_filter
 
 datapath = "/mnt/backups/@data/output/2016_colombia.nix"
 file = nio.File.open(datapath, nio.FileMode.ReadOnly)
@@ -20,7 +18,6 @@ ids = rec.data_arrays["ids"][:]
 
 
 for fish in ids:
-
     # get frequency, time and temp
     f = freqs[ident == fish]
     t = times[idx[ident == fish]]

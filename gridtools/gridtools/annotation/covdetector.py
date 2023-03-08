@@ -1,28 +1,27 @@
 import datetime
 import os
-import string
-from inspect import FrameInfo
 
-import gridtools as gt
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import thunderfish as tf
 import yaml
-from gridtools import utils as fs
 from matplotlib.colorbar import Colorbar
+from plotstyle import PlotStyle
 from scipy.signal import find_peaks
 from tabulate import tabulate
+from termcolors import TermColor as tc
 from tqdm import tqdm
 
-from plotstyle import PlotStyle
-from termcolors import TermColor as tc
+import gridtools as gt
+from gridtools import utils as fs
 
 
 class SWXCov:
-    def __init__(self, data_1, data_2, time, bin_width, maxlag, step, verbose=False):
-
+    def __init__(
+        self, data_1, data_2, time, bin_width, maxlag, step, verbose=False
+    ):
         # intialize private variables
         self.__verbose = verbose
         self.__tqdm_disable = True if self.__verbose is False else False
@@ -81,7 +80,6 @@ class SWXCov:
         maxlag,
         step=1,
     ):
-
         cov_radius = int((bin_width - 1) / 2)  # area left and right of center
         covs_times = []  # times at covs
         covs_m = []  # times at covs# covariance matrix
@@ -111,11 +109,14 @@ class SWXCov:
         return covs, covs_t, covs_lags
 
     def maxima(self):
-        maxcovs = np.zeros(len(self.covs[0, :]), dtype=np.float_)  # maximum covariances
-        maxlags = np.zeros(len(self.covs[0, :]), dtype=np.int_)  # lags at max cov
+        maxcovs = np.zeros(
+            len(self.covs[0, :]), dtype=np.float_
+        )  # maximum covariances
+        maxlags = np.zeros(
+            len(self.covs[0, :]), dtype=np.int_
+        )  # lags at max cov
 
         for index in range(len(maxcovs)):
-
             # get max covariances at time point
             maxcovs[index] = np.max(self.covs[:, index])
 
@@ -137,7 +138,6 @@ class SWXCov:
 
 class CovDetector:
     def __init__(self, datapath, config, ids="all", verbose=False):
-
         # private variables
         self.__verbose = verbose  # set verbosity of functions and classes
         self.__tqdm_disable = True if self.__verbose is False else True
@@ -180,8 +180,12 @@ class CovDetector:
         # get data
         self.grid = gt.GridTracks(self.datapath, finespec=True)  # raw grid
         self.grid_p = gt.GridTracks(self.datapath, finespec=False)  # normalized
-        self.grid_h = gt.GridTracks(self.datapath, finespec=False)  # filtered higher
-        self.grid_l = gt.GridTracks(self.datapath, finespec=False)  # filtered lower
+        self.grid_h = gt.GridTracks(
+            self.datapath, finespec=False
+        )  # filtered higher
+        self.grid_l = gt.GridTracks(
+            self.datapath, finespec=False
+        )  # filtered lower
 
         # normalize p grid for sexing
         self.grid_p.q10_norm()
@@ -227,7 +231,6 @@ class CovDetector:
 
     def run_detection(self):
         def detector(self, dyad_h, dyad_l):
-
             # compute sliding window cross covariances
             covs_h = SWXCov(
                 data_1=dyad_h.fund_id1,
@@ -259,8 +262,17 @@ class CovDetector:
             peaks_l, _ = find_peaks(covs_l.maxcovs, prominence=self.peakprom_l)
 
             # find simultaneously cooccurring peaks
-            event_indices, event_peaks_l, event_peaks_h = fs.combine_cooccurences(
-                peaks_l, peaks_h, int_times, self.radius, merge=False, crop=False
+            (
+                event_indices,
+                event_peaks_l,
+                event_peaks_h,
+            ) = fs.combine_cooccurences(
+                peaks_l,
+                peaks_h,
+                int_times,
+                self.radius,
+                merge=False,
+                crop=False,
             )
 
             # convert indices of cov time vector to timestamps
@@ -270,9 +282,10 @@ class CovDetector:
             for event_idxs, peaks_l_idxs, peaks_h_idxs in zip(
                 event_indices, event_peaks_l, event_peaks_h
             ):
-
                 # convert indices on shared dyad time array to timestamps
-                start, stop = np.min(times[event_idxs]), np.max(times[event_idxs])
+                start, stop = np.min(times[event_idxs]), np.max(
+                    times[event_idxs]
+                )
                 event = [start, stop]
                 peak_h = times[peaks_h_idxs]
                 peak_l = times[peaks_l_idxs]
@@ -284,12 +297,13 @@ class CovDetector:
             return covs_h, covs_l, events, peaks_h, peaks_l
 
         for id_dyad in tqdm(self.id_dyads, disable=self.__tqdm_disable):
-
             # initialize dyads for loaded datasets
             dyad = gt.Dyad(
                 self.grid, id_dyad, verbose=False
             )  # raw data for spectrogram
-            dyad_p = gt.Dyad(self.grid_p, id_dyad, verbose=False)  # normalized for GUI
+            dyad_p = gt.Dyad(
+                self.grid_p, id_dyad, verbose=False
+            )  # normalized for GUI
             dyad_h = gt.Dyad(
                 self.grid_h, id_dyad, verbose=False
             )  # higher bp for detect.
@@ -318,17 +332,23 @@ class CovDetector:
                 )
                 continue
 
-            print(tc.succ("[ CovDetector.detect_events ]") + f" {id1}, {id2} loaded.")
+            print(
+                tc.succ("[ CovDetector.detect_events ]")
+                + f" {id1}, {id2} loaded."
+            )
 
             # run detector
-            covs_h, covs_l, events, peaks_h, peaks_l = detector(self, dyad_h, dyad_l)
+            covs_h, covs_l, events, peaks_h, peaks_l = detector(
+                self, dyad_h, dyad_l
+            )
 
             # sort events in gui
             for event, peak_h, peak_l in zip(events, peaks_h, peaks_l):
-
                 print(event)
 
-                self.__split_event = True  # to start while loop for single event
+                self.__split_event = (
+                    True  # to start while loop for single event
+                )
 
                 # while repeats for same event if gui input enables split
                 while self.__split_event:
@@ -443,7 +463,9 @@ class CovDetector:
         if event.key == "?":
             print("--------------------------------------------")
             print("Welcome to the CovDetector!")
-            print("Mark event on- and offset by using the zoom function and then:")
+            print(
+                "Mark event on- and offset by using the zoom function and then:"
+            )
             print(
                 "Enter "
                 + tc.succ("[ 1/2 ]")
@@ -482,7 +504,9 @@ class CovDetector:
                 print("variables reset!")
                 self.__plotoutput = {}
             elif event.key == "w":
-                print(f"Finish input before saving. Current input: {self.__plotoutput}")
+                print(
+                    f"Finish input before saving. Current input: {self.__plotoutput}"
+                )
             else:
                 print("Invalid input, try again!")
 
@@ -500,7 +524,9 @@ class CovDetector:
                 print("variables reset!")
                 self.__plotoutput = {}
             elif event.key == "w":
-                print(f"Finish input before saving. Current input: {self.__plotoutput}")
+                print(
+                    f"Finish input before saving. Current input: {self.__plotoutput}"
+                )
             else:
                 print("Invalid input, try again!")
 
@@ -529,7 +555,9 @@ class CovDetector:
                 print("variables reset!")
                 self.__plotoutput = {}
 
-    def backend_plot(self, dyad, dyad_h, dyad_l, covs_h, covs_l, peak_h, peak_l):
+    def backend_plot(
+        self, dyad, dyad_h, dyad_l, covs_h, covs_l, peak_h, peak_l
+    ):
         def get_xlims(t, tstart, tstop, padding=0.4):
             dt = tstop - tstart
             xlims = [0, 0]
@@ -584,15 +612,18 @@ class CovDetector:
 
             xtick = np.arange(label_idx0, times[-1], res)
             datetime_xlabels = list(
-                map(lambda x: rec_datetime + datetime.timedelta(seconds=x), xtick)
+                map(
+                    lambda x: rec_datetime + datetime.timedelta(seconds=x),
+                    xtick,
+                )
             )
 
             if dx > 120:
                 xlabels = list(
                     map(
-                        lambda x: ("%2s:%2s" % (str(x.hour), str(x.minute))).replace(
-                            " ", "0"
-                        ),
+                        lambda x: (
+                            "%2s:%2s" % (str(x.hour), str(x.minute))
+                        ).replace(" ", "0"),
                         datetime_xlabels,
                     )
                 )
@@ -601,7 +632,8 @@ class CovDetector:
                 xlabels = list(
                     map(
                         lambda x: (
-                            "%2s:%2s:%2s" % (str(x.hour), str(x.minute), str(x.second))
+                            "%2s:%2s:%2s"
+                            % (str(x.hour), str(x.minute), str(x.second))
                         ).replace(" ", "0"),
                         datetime_xlabels,
                     )
@@ -615,7 +647,6 @@ class CovDetector:
             axis.set_xlim(xlim)
 
         def plot_spec(grid, dyad, axis, style, xlims):
-
             # get y limits for spectrogram
             ylims = fs.get_ylims(
                 dyad.fund_id1, dyad.fund_id2, dyad.times, xlims[0], xlims[1]
@@ -636,7 +667,9 @@ class CovDetector:
             # plot spectrogram
             axis.imshow(
                 tf.powerspectrum.decibel(
-                    grid.fill_spec[f_mask[0] : f_mask[-1], t_mask[0] : t_mask[-1]][::-1]
+                    grid.fill_spec[
+                        f_mask[0] : f_mask[-1], t_mask[0] : t_mask[-1]
+                    ][::-1]
                 ),
                 extent=[t0, t1, f0, f1],
                 vmin=-100,
@@ -663,7 +696,6 @@ class CovDetector:
             # leg.get_texts()[1].set_text(f"ID 2 [{int(dyad.id2)}]")
 
         def plot_tracks(dyad, axis, style, xlims):
-
             # get y limits for spectrogram
             ylims = fs.get_ylims(
                 dyad.fund_id1, dyad.fund_id2, dyad.times, xlims[0], xlims[1]
@@ -676,7 +708,6 @@ class CovDetector:
             axis.set_ylim(ylims[0], ylims[1])
 
         def plot_covs(covs, xlims, maxlag, axis, cbar_axis, style):
-
             indices = np.arange(len(covs.times), dtype=int)
             start, stop = (
                 indices[covs.times == xlims[0]][0],
@@ -695,7 +726,9 @@ class CovDetector:
             )
 
             # add a center line
-            axis.plot(covs.times, np.zeros(len(covs.times)), **style.center_line)
+            axis.plot(
+                covs.times, np.zeros(len(covs.times)), **style.center_line
+            )
 
             # plot maxlags
             axis.plot(covs.times, covs.maxlags / self.rate_bp, **style.lags)
@@ -714,7 +747,6 @@ class CovDetector:
             axis.set_xlim(xlims[0], xlims[1])
 
         def plot_maxcovs(covs_h, covs_l, peaks_h, peaks_l, xlims, axis, style):
-
             # get maxcovs in xlims for normalization
             times = covs_h.times
             indices = np.arange(len(covs_h.maxcovs))
@@ -774,11 +806,17 @@ class CovDetector:
         nx = len(wr)
 
         # init fig
-        fig = plt.figure(figsize=(180 * s.mm, 150 * s.mm), constrained_layout=False)
+        fig = plt.figure(
+            figsize=(180 * s.mm, 150 * s.mm), constrained_layout=False
+        )
 
         # init gridspec
-        gs = gridspec.GridSpec(ny, nx, figure=fig, height_ratios=hr, width_ratios=wr)
-        gs.update(left=0.1, right=0.99, bottom=0.09, top=0.93, wspace=0.4, hspace=0.8)
+        gs = gridspec.GridSpec(
+            ny, nx, figure=fig, height_ratios=hr, width_ratios=wr
+        )
+        gs.update(
+            left=0.1, right=0.99, bottom=0.09, top=0.93, wspace=0.4, hspace=0.8
+        )
 
         # make axes
         ax_spec = fig.add_subplot(gs[0:6, 0])
@@ -818,7 +856,9 @@ class CovDetector:
         ax_bph.text(
             -0.28, 1.22, "B", transform=ax_bph.transAxes, size=16, weight="bold"
         )
-        ax_ch.text(-0.26, 1.22, "C", transform=ax_ch.transAxes, size=16, weight="bold")
+        ax_ch.text(
+            -0.26, 1.22, "C", transform=ax_ch.transAxes, size=16, weight="bold"
+        )
         ax_mcs.text(
             -0.265, 1.1, "D", transform=ax_mcs.transAxes, size=16, weight="bold"
         )
@@ -877,11 +917,11 @@ class CovDetector:
                 print("Invalid input, try again!")
                 var = promt()
             elif var in "q":
-                print(f"Ok bye!")
+                print("Ok bye!")
                 quit()
             elif var in "s":
                 save = True
-                print(f"Saving ...")
+                print("Saving ...")
 
             return save
 
@@ -904,14 +944,20 @@ class CovDetector:
                 if save:
                     df = pd.DataFrame(table_out)
                     df.to_csv(
-                        self.datapath + "events.csv", encoding="utf-8", index=False
+                        self.datapath + "events.csv",
+                        encoding="utf-8",
+                        index=False,
                     )
                     print(
                         "\n"
-                        + tc.rainb("Yay! Data saved succesfully! Here's a preview:")
+                        + tc.rainb(
+                            "Yay! Data saved succesfully! Here's a preview:"
+                        )
                     )
                     print(
-                        tabulate(df, headers="keys", tablefmt="psql", showindex=False)
+                        tabulate(
+                            df, headers="keys", tablefmt="psql", showindex=False
+                        )
                     )
             except ValueError:
                 print(
@@ -928,7 +974,9 @@ def main():
 
     def interface():
         def promt():
-            var = input("Pause detection [b] or continue to next recording [c]? ")
+            var = input(
+                "Pause detection [b] or continue to next recording [c]? "
+            )
             return var
 
         var = promt()
@@ -937,10 +985,10 @@ def main():
             print("Invalid input, try again!")
             var = promt()
         elif var in "b":
-            print(f"Ok bye!")
+            print("Ok bye!")
             cont = False
         elif var in "c":
-            print(f"Here you go!")
+            print("Here you go!")
 
         return cont
 
@@ -966,14 +1014,15 @@ def main():
 
     # check what is already processed
     processed_recs = tmp["processed"]
-    unprocessed_recs = list(set(recs.recordings).difference(set(processed_recs)))
+    unprocessed_recs = list(
+        set(recs.recordings).difference(set(processed_recs))
+    )
 
     if len(unprocessed_recs) == 0:
         print("Nothing to to, all recordings processed!")
     else:
         # iterate trough unprocessed recs list
         for recording in unprocessed_recs:
-
             # construct path to recording
             datapath = recs.dataroot + recording + "/"
 

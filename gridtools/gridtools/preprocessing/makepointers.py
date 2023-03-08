@@ -1,9 +1,8 @@
 import datetime
-import matplotlib.pyplot as plt
 
+import matplotlib.pyplot as plt
 import nixio as nio
 import numpy as np
-from IPython import embed
 
 from gridtools.utils.datahandling import estimateMode
 
@@ -14,7 +13,6 @@ class NixGridRecording:
     """
 
     def __init__(self, block: nio.Block) -> None:
-
         # read data arrays
         dt_format = "%Y-%m-%d %H:%M:%S"
         self.starttime = datetime.datetime.strptime(block.name, dt_format)
@@ -50,7 +48,6 @@ class ConnectFish:
     """
 
     def __init__(self, filepath: str, filemode: str = "ReadOnly") -> None:
-
         # check if filemode is usable
         assert filemode in [
             "ReadOnly",
@@ -87,12 +84,11 @@ class ConnectFish:
         return "Grid recording set at {}".format(self._filepath)
 
     def create_pointers(self) -> None:
-
         def get_pairs(matrix):
-
             # get indices of pairs sorted by difference in ascending order
-            pairs = np.unravel_index(np.argsort(
-                matrix, axis=None), np.shape(matrix))
+            pairs = np.unravel_index(
+                np.argsort(matrix, axis=None), np.shape(matrix)
+            )
 
             # build matrix to store used indices to not use the same twice
             done = np.ones_like(matrix, dtype=bool)
@@ -102,11 +98,9 @@ class ConnectFish:
             track_rec2 = []
 
             for i in range(len(pairs[0])):
-
                 pair_idx = np.asarray([pairs[0][i], pairs[1][i]])
 
-                if done[pair_idx[0], pair_idx[1]] == True:
-
+                if done[pair_idx[0], pair_idx[1]] is True:
                     track_rec1.append(pair_idx[0])
                     track_rec2.append(pair_idx[1])
 
@@ -140,8 +134,9 @@ class ConnectFish:
         identities = []
         indices = []
 
-        for it, (rec1, rec2) in enumerate(zip(self.recordings[:-1], self.recordings[1:])):
-
+        for it, (rec1, rec2) in enumerate(
+            zip(self.recordings[:-1], self.recordings[1:])
+        ):
             # get time distance between recordings
             stop1 = datetime.timedelta(0, rec1.times[-1]) + rec1.starttime
             start2 = rec2.starttime
@@ -174,13 +169,12 @@ class ConnectFish:
             ids1 = []
             baseline1 = []
             for track_id in rec1.ids:
-
                 track_id = int(track_id)
 
                 # check if id has data at end of recording
-                track_stoptime = rec1.times[rec1.indices[rec1.identities == track_id]][
-                    -1
-                ]
+                track_stoptime = rec1.times[
+                    rec1.indices[rec1.identities == track_id]
+                ][-1]
                 abs_stoptime = rec1.times[-1]
                 diff_time = abs_stoptime - track_stoptime
                 if diff_time > dt_to_end:
@@ -190,8 +184,9 @@ class ConnectFish:
                 ids1.append(int(track_id))
                 baseline1.append(
                     estimateMode(
-                        rec1.frequencies[rec1.identities ==
-                                         track_id][-dt_baseline:]
+                        rec1.frequencies[rec1.identities == track_id][
+                            -dt_baseline:
+                        ]
                     )
                 )
 
@@ -200,11 +195,12 @@ class ConnectFish:
             baseline2 = []
 
             for track_id in rec2.ids:
-
                 track_id = int(track_id)
 
                 # check if id has data at beginning of recording
-                track_starttime = rec2.times[rec2.indices[rec2.identities == track_id]][0]
+                track_starttime = rec2.times[
+                    rec2.indices[rec2.identities == track_id]
+                ][0]
 
                 abs_starttime = rec2.times[0]
                 diff_time = abs(abs_starttime - track_starttime)
@@ -215,8 +211,9 @@ class ConnectFish:
                 ids2.append(track_id)
                 baseline2.append(
                     estimateMode(
-                        rec2.frequencies[rec2.identities ==
-                                         track_id][-dt_baseline:]
+                        rec2.frequencies[rec2.identities == track_id][
+                            -dt_baseline:
+                        ]
                     )
                 )
 
@@ -241,32 +238,38 @@ class ConnectFish:
             if len(np.ravel(previous_pointers)) != 0:
                 lastmax = np.max(np.ravel(previous_pointers))
             pointers_tmp = np.arange(
-                lastmax + 1, lastmax+len(matches_rec1) + 1)
+                lastmax + 1, lastmax + len(matches_rec1) + 1
+            )
 
             # reshape matching ids
             matches = [[x, y] for x, y in zip(matches_rec1, matches_rec2)]
 
             # make recording references
-            recording_ref = [[it, it+1] for i in range(len(matches))]
+            recording_ref = [[it, it + 1] for i in range(len(matches))]
 
             # check if track ids from currently first recording are already referenced in the previously last recording
 
             # step 1: get ids in current rec1 that where already in previous rec2
             repeated_matches = [
-                x for x in matches_rec1 if x in previous_matches_rec2]  # get repeated
+                x for x in matches_rec1 if x in previous_matches_rec2
+            ]  # get repeated
 
             if len(repeated_matches) != 0:
-
                 # step 2: find pointers of these cases
                 indices = np.arange(len(previous_matches_rec2))
                 rep_indices = np.asarray(
-                    [indices[previous_matches_rec2 == x] for x in repeated_matches])
+                    [
+                        indices[previous_matches_rec2 == x]
+                        for x in repeated_matches
+                    ]
+                )
                 rep_pointers = np.asarray(previous_pointers)[rep_indices]
 
                 # step 3: swap the newly created pointers for the previous pointers
                 indices = np.arange(len(matches_rec1))
                 rep_indices = np.asarray(
-                    [indices[matches_rec1 == x] for x in repeated_matches])
+                    [indices[matches_rec1 == x] for x in repeated_matches]
+                )
                 np.asarray(pointers_tmp)[rep_indices] = rep_pointers
 
             # step 4: append all to lists
@@ -297,13 +300,11 @@ class ConnectFish:
                 print(ypos)
 
     def apply_pointers(self) -> None:
-
         times = []
         frequencies = []
         identities = []
         indices = []
         for it, rec in enumerate(self.recordings):
-
             # Get pointers that point to this recording
             rec_pointer_idx = np.where(self.pointer_recs == it)[0]
             rec_pointer = self.pointers[rec_pointer_idx]
@@ -314,7 +315,6 @@ class ConnectFish:
 
             # iterate through pointed ids and reassign ids in current rec
             for track_id in rec_pointer_tracks:
-
                 # get pointer that points to this track id
                 pointer = rec_pointer[rec_pointer_tracks == track_id]
 
@@ -345,7 +345,6 @@ class ConnectFish:
 
 
 if __name__ == "__main__":
-
     datapath = "/mnt/backups/@data/output/2016_colombia.nix"
     grid = ConnectFish(datapath, "ReadWrite")
     grid.create_pointers()

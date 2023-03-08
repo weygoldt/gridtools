@@ -25,7 +25,6 @@ import shutil
 import sys
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 from ..logger import makeLogger
 from ..utils.filehandling import ConfLoader, ListRecordings, makeOutputdir
@@ -35,11 +34,9 @@ logger = makeLogger(__name__)
 
 
 def plot_grid(grid: GridCleaner) -> None:
-
     fig, ax = plt.subplots(1, 2, constrained_layout=True)
 
     for track_id, sex in zip(grid.ids, grid.sex):
-
         time = grid.times[grid.indices[grid.identities == track_id]]
         fund = grid.frequencies[grid.identities == track_id]
 
@@ -65,7 +62,6 @@ def plot_grid(grid: GridCleaner) -> None:
 
 
 def clean(path: str) -> None:
-
     try:
         confpath = os.path.join(path, "prepro_conf.yml")
         conf = ConfLoader(confpath)
@@ -84,7 +80,6 @@ def clean(path: str) -> None:
         recs.recordings = conf.include_only_directories
 
     for recording in recs.recordings:
-
         # create path to recording
         datapath = f"{recs.dataroot}{recording}/"
 
@@ -137,7 +132,6 @@ def clean(path: str) -> None:
 
 
 def main() -> None:
-
     parser = argparse.ArgumentParser(
         prog="prepro",
         description="Terminal interface to preprocess tracked electrode grid recordings.",

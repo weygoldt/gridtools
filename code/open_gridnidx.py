@@ -9,7 +9,6 @@ class NixGridRecording:
     """
 
     def __init__(self, block: nio.Block) -> None:
-
         # read data arrays
         dt_format = "%Y-%m-%d %H:%M:%S"
         self.starttime = datetime.datetime.strptime(block.name, dt_format)
@@ -41,7 +40,6 @@ class NixGrid:
     """
 
     def __init__(self, filepath: str, filemode: str = "ReadOnly") -> None:
-
         # check if filemode is usable
         assert filemode in [
             "ReadOnly",
