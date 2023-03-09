@@ -63,13 +63,15 @@ kw = dict(wavelet=('morlet', {'mu': 230}), nv=150 )
 Tx, Wx, ssq_freqs, *_ = ssq_cwt(x=signal, t=time, **kw)
 
 # create frequency boundary to invert the synchrosqueezed transform
-band = np.ones_like(ssq_freqs) * 100.0
+band = np.ones_like(ssq_freqs) * 10.0
 center_freqs, band_freqs = trace2index(rise_trace, band, ssq_freqs)
 
-embed()
-
 # invert synchrosqueezed transform
-xrec = issq_cwt(Tx, kw['wavelet'], center_freqs, band_freqs)[0]
+try:
+    xrec = issq_cwt(Tx, kw['wavelet'], center_freqs, band_freqs)[0]
+except: 
+    pass
+
 
 fig, ax = plt.subplots(5,1, figsize=(10,5), constrained_layout=True)
 
@@ -86,7 +88,11 @@ ax[2].imshow(np.abs(Wx), origin='upper', aspect='auto', cmap='viridis')
 ax[3].imshow(np.abs(Tx), origin='upper', aspect='auto', cmap='viridis')
 ax[3].plot(center_freqs-band_freqs/2, c='white', lw=1, ls='--')
 ax[3].plot(center_freqs+band_freqs/2, c='white', lw=1, ls='--')
-ax[4].plot(time, xrec)
+
+try:
+    ax[4].plot(time, xrec)
+except:
+    pass
 
 ax[2].set_ylim(index[-1], index[0])
 ax[3].set_ylim(index[-1], index[0])
