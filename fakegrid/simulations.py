@@ -59,12 +59,12 @@ class Recording:
 
     def __init__(self, fishcount: int, duration: int, grid: Tuple[int, int], electrode_spacing: int, step_size: float):
 
-        self.samplerate = 10000
+        self.samplerate = 20000
 
         # EOD parameters
         mineodf = 500
         maxeodf = 1000
-        maxchirprate = 0.1
+        maxchirprate = 1
         maxriserate = 0.01
         nmaxchirps = int(np.floor(duration*maxchirprate))
         nmaxrises = int(np.floor(duration*maxriserate))
