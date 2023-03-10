@@ -49,8 +49,6 @@ imshow(_Tx, norm=(0, 4e-1), **pkw)
 bw, slope, offset = .035, -.46, -1.8
 Cs, freqband = lin_band(Tx, slope, offset, bw, norm=(0, 4e-1))
 
-embed()
-
 #%%###########################################################################
 xrec = issq_cwt(Tx, kw['wavelet'], Cs, freqband)[0]
 plot(xo)
