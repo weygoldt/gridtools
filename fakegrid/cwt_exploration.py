@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from ssqueezepy import ssq_cwt
+from ssqueezepy import ssq_cwt, ssq_stft
 from ssqueezepy.visuals import plot, imshow
 from simulations import Recording
 
@@ -27,12 +27,16 @@ def Scalogram(x,t, kw):
 	imshow(Wx, yticks=scales, abs=1, title="abs(CWT) | Morlet wavelet", ylabel="scales", xlabel="samples")
 	imshow(Tx, yticks=scales, abs=1, title="abs(SSQ-CWT) | Morlet wavelet", ylabel="scales", xlabel="samples")
 
+def Spectrogram(x, kw):
+    Tx, Sx, Tfreqs, Sfreqs, *_ = ssq_stft(x, **kw)
+    imshow(Sx, yticks=Sfreqs, abs=1, ylabel="scales", xlabel="samples")
+    imshow(Tx, yticks=Tfreqs, abs=1, ylabel="scales", xlabel="samples")
 
-# x, t = make_signal([500, 1000], 3, 20)
+x, t = make_signal([500, 1000], 3, 20)
 
-rec = Recording(fishcount=3, duration=20, grid=(1, 1), electrode_spacing=0.5, step_size=0.001)
-x = rec.signal[:, 0]
-t = rec.time
+# rec = Recording(fishcount=3, duration=20, grid=(1, 1), electrode_spacing=0.5, step_size=0.001)
+# x = rec.signal[:, 0]
+# t = rec.time
 
 # Plot signal in time domain
 fig, ax = plt.subplots()
@@ -42,7 +46,10 @@ ax.set_ylabel('Amplitude')
 ax.set_title('Signal in time domain')
 plt.show()
 
-kw = dict(wavelet=('morlet', {'mu': 323}), nv= 86, scales='log-piecewise')
-kw = dict(wavelet=('morlet'))
-Scalogram(x,t, kw)
+# kw = dict(wavelet=('morlet', {'mu': 323}), nv= 86, scales='log-piecewise')
+# kw = dict(wavelet=('morlet'))
+# Scalogram(x,t, kw)
+
+kw = dict(hop_len=1, n_fft=3024) 
+Spectrogram(x, kw)
 
