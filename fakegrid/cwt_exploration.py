@@ -1,4 +1,6 @@
 import numpy as np
+from numpy.fft import rfft
+
 import matplotlib.pyplot as plt
 from ssqueezepy import ssq_cwt, ssq_stft
 from ssqueezepy.visuals import plot, imshow
@@ -8,7 +10,7 @@ np.random.seed(2)
 
 def make_signal(frange, npairs, pairdiff):
     fs = 20000
-    duration = 5
+    duration = 30
     t = np.arange(0, duration, 1/fs)
     for i in range(npairs):
         f1 = np.random.randint(frange[0], frange[1])
@@ -50,6 +52,6 @@ plt.show()
 # kw = dict(wavelet=('morlet'))
 # Scalogram(x,t, kw)
 
-kw = dict(hop_len=1, n_fft=3024) 
+kw = dict(win_len=20000//8, hop_len=100, n_fft=40000)
 Spectrogram(x, kw)
 
