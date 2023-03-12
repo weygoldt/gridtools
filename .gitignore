@@ -3,6 +3,7 @@ env
 gridtools_old
 *.log
 wavetracker
+*.temp
 
 ### LaTeX ###
 ## Core latex/pdflatex auxiliary files:
