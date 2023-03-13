@@ -4,11 +4,13 @@ import matplotlib.pyplot as plt
 from IPython import embed
 
 from ssqueezepy import ssq_stft, issq_stft, extract_ridges
-from ssqueezepy.toolkit import cos_f
+from ssqueezepy.toolkit import cos_f, mad_rms
+
+
 
 def echirp(N):
     t = np.linspace(0, 10, N, False)
-    return np.cos(2 * np.pi * np.exp(t / 2)), t
+    return np.cos(2 * np.pi * np.exp(t / 3)), t
 
 N = 2048
 noise_var = 4  # noise variance; compare error against = 12
@@ -60,16 +62,18 @@ fig.supylabel('Frequency')
 plt.show() 
 
 # invert noisy synchrosqueezed transform by ridge
-pad = 10
+pad = 2
 ix = issq_stft(Tx, cc=ridge, cw=np.ones_like(ridge)*pad)[0]
 
 # compute Fourier transform of whole signal
-axof   = np.abs(rfft(xo))
-axrecf = np.abs(rfft(ix))
+axo   = np.abs(rfft(xo))
+axi = np.abs(rfft(ix))
 
 fig, ax = plt.subplots(2,1)
-ax[0].plot(xo/np.max(xo))
+ax[0].plot(xo)
 ax[0].plot(ix/np.max(ix), lw=1, ls='--', color='black')
-ax[1].plot(axof/np.max(axof))
-ax[1].plot(axrecf/np.max(axrecf), lw=1, ls='--', color='black')
+ax[1].plot(axo/np.max(axo))
+ax[1].plot(axi, lw=1, ls='--', color='black')
 plt.show()
+
+print("signal   MAD/RMS: %.6f" % mad_rms(xo, ix))
