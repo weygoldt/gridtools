@@ -30,7 +30,7 @@
 """
 
 import sys
-
+from IPython import embed
 import numpy as np
 
 species_name = dict(
@@ -372,10 +372,10 @@ def chirps(
     samplerate=44100.0,
     duration=1.0,
     chirp_times=[0.5],
-    chirp_size=100.0,
-    chirp_width=0.01,
-    chirp_kurtosis=1.0,
-    chirp_contrast=0.05,
+    chirp_size=[100.0],
+    chirp_width=[0.01],
+    chirp_kurtosis=[1.0],
+    chirp_contrast=[0.05],
 ):
     """Simulate frequency trace with chirps.
 
@@ -390,16 +390,16 @@ def chirps(
         Sampling rate in Hertz.
     duration: float
         Duration of the generated data in seconds.
-    chirp_freq: float
-        Frequency of occurance of chirps in Hertz.
-    chirp_size: float
-        Size of the chirp (maximum frequency increase above eodf) in Hertz.
-    chirp_width: float
-        Width of the chirp at 10% height in seconds.
-    chirp_kurtosis: float:
-        Shape of the chirp. =1: Gaussian, >1: more rectangular, <1: more peaked.
+    chirp_times: float
+        Timestamps of every single chirp in seconds.
+    chirp_size: list
+        Size of each chirp (maximum frequency increase above eodf) in Hertz.
+    chirp_width: list
+        Width of every single chirp at 10% height in seconds.
+    chirp_kurtosis: list:
+        Shape of every single chirp. =1: Gaussian, >1: more rectangular, <1: more peaked.
     chirp_contrast: float
-        Maximum amplitude reduction of EOD during chirp.
+        Maximum amplitude reduction of EOD during every respective chirp.
 
     Returns
     -------
@@ -413,15 +413,19 @@ def chirps(
     n = len(np.arange(0, duration, 1.0 / samplerate))
     frequency = eodf * np.ones(n)
     am = np.ones(n)
-    # chirp frequency waveform:
-    chirp_t = np.arange(-2.0 * chirp_width, 2.0 * chirp_width, 1.0 / samplerate)
-    chirp_sig = (
-        0.5 * chirp_width / (2.0 * np.log(10.0)) ** (0.5 / chirp_kurtosis)
-    )
-    gauss = np.exp(-0.5 * ((chirp_t / chirp_sig) ** 2.0) ** chirp_kurtosis)
-    # add chirps on baseline eodf:
-    for ct in chirp_times:
-        index = int(ct * samplerate)
+
+    for time, width, size, kurtosis, contrast in zip(chirp_times, chirp_width, chirp_size, chirp_kurtosis, chirp_contrast):
+
+        # chirp frequency waveform:
+        chirp_t = np.arange(-2.0 * width, 2.0 * width, 1.0 / samplerate)
+        chirp_sig = (
+            0.5 * width / (2.0 * np.log(10.0)) ** (0.5 / kurtosis)
+        )
+        gauss = np.exp(-0.5 * ((chirp_t / chirp_sig) ** 2.0) ** kurtosis)
+
+
+        # add chirps on baseline eodf:
+        index = int(time * samplerate)
         i0 = index - len(gauss) // 2
         i1 = i0 + len(gauss)
         gi0 = 0
@@ -432,19 +436,20 @@ def chirps(
         if i1 >= len(frequency):
             gi1 -= i1 - len(frequency)
             i1 = len(frequency)
-        frequency[i0:i1] += chirp_size * gauss[gi0:gi1]
-        am[i0:i1] -= chirp_contrast * gauss[gi0:gi1]
+        frequency[i0:i1] += size * gauss[gi0:gi1]
+        am[i0:i1] -= contrast * gauss[gi0:gi1]
+
     return frequency, am
 
 
 def rises(
-    eodf=100.0,
-    samplerate=44100.0,
-    duration=1.0,
-    rise_times=[0.5],
-    rise_size=10.0,
-    rise_tau=1.0,
-    decay_tau=10.0,
+    eodf,
+    samplerate,
+    duration,
+    rise_times,
+    rise_size,
+    rise_tau,
+    decay_tau,
 ):
     """Simulate frequency trace with rises.
 
@@ -458,33 +463,37 @@ def rises(
         Sampling rate in Hertz.
     duration: float
         Duration of the generated data in seconds.
-    rise_freq: float
-        Frequency of occurance of rises in Hertz.
-    rise_size: float
-        Size of the rise (frequency increase above eodf) in Hertz.
-    rise_tau: float
-        Time constant of the frequency increase of the rise in seconds.
-    decay_tau: float
-        Time constant of the frequency decay of the rise in seconds.
+    rise_times: list 
+        Timestamp of each of the rises in seconds.
+    rise_size: list
+        Size of the respective rise (frequency increase above eodf) in Hertz.
+    rise_tau: list
+        Time constant of the frequency increase of the respective rise in seconds.
+    decay_tau: list
+        Time constant of the frequency decay of the respective rise in seconds.
 
     Returns
     -------
     data: array of floats
-        Generated frequency trace that can be passed on to wavefish_eods().
+        Generate frequency trace that can be passed on to wavefish_eods().
     """
     n = len(np.arange(0, duration, 1.0 / samplerate))
+
     # baseline eod frequency:
     frequency = eodf * np.ones(n)
-    # rise frequency waveform:
-    rise_t = np.arange(0.0, 5.0 * decay_tau, 1.0 / samplerate)
-    rise = (
-        rise_size
-        * (1.0 - np.exp(-rise_t / rise_tau))
-        * np.exp(-rise_t / decay_tau)
-    )
-    # add rises on baseline eodf:
-    for r in rise_times:
-        index = int(r * samplerate)
+
+    for time, size, riset, decayt in zip(rise_times, rise_size, rise_tau, decay_tau):  
+
+        # rise frequency waveform:
+        rise_t = np.arange(0.0, 5.0 * decayt, 1.0 / samplerate)
+        rise = (
+            size
+            * (1.0 - np.exp(-rise_t / riset))
+            * np.exp(-rise_t / decayt)
+        )
+
+        # add rises on baseline eodf:
+        index = int(time * samplerate)
         if index + len(rise) > len(frequency):
             rise_index = len(frequency) - index
             frequency[index : index + rise_index] += rise[:rise_index]
