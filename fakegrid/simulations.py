@@ -3,6 +3,8 @@ from IPython import embed
 import numpy as np
 from typing import Tuple
 from scipy.signal import savgol_filter
+from scipy.stats import norm
+from movement import make_positions
 
 np.random.seed(13)
 
@@ -14,16 +16,27 @@ def make_fish(
     chirp_times = np.random.uniform(0, duration, nchirps)
     rise_times = np.random.uniform(0, duration, nrises)
 
+    # pick random parameters for chirps 
+    chirp_size = np.random.uniform(60, 300, nchirps)
+    chirp_width = np.random.uniform(0.01, 0.1, nchirps)
+    chirp_kurtosis = np.random.uniform(1, 1, nchirps)
+    chirp_contrast = np.random.uniform(0.1, 0.5, nchirps)
+
+    # pick random parameters for rises
+    rise_size = np.random.uniform(10, 100, nrises)
+    rise_tau = np.random.uniform(0.5, 1.5, nrises)
+    decay_tau = np.random.uniform(5, 15, nrises)
+
     # generate frequency trace with chirps
     chirp_trace, chirp_amp = ff.chirps(
         eodf=0.0,
         samplerate=samplerate,
         duration=duration,
         chirp_times=chirp_times,
-        chirp_size=100.0,
-        chirp_width=0.01,
-        chirp_kurtosis=1.0,
-        chirp_contrast=0.2,
+        chirp_size=chirp_size,
+        chirp_width=chirp_width,
+        chirp_kurtosis=chirp_kurtosis,
+        chirp_contrast=chirp_contrast,
     )
 
     # generate frequency trace with rises
@@ -32,9 +45,9 @@ def make_fish(
         samplerate=samplerate,
         duration=duration,
         rise_times=rise_times,
-        rise_size=100.0,
-        rise_tau=1.0,
-        decay_tau=10.0,
+        rise_size=rise_size,
+        rise_tau=rise_tau,
+        decay_tau=decay_tau,
     )
 
     # combine traces to one
@@ -50,9 +63,9 @@ def make_fish(
         noise_std=0.05,
     )
 
-    fish = fish * chirp_amp
+    signal = fish * chirp_amp
 
-    return rise_trace, time, fish
+    return full_trace, time, signal
 
 
 class Recording:
@@ -64,8 +77,8 @@ class Recording:
         # EOD parameters
         mineodf = 500
         maxeodf = 1000
-        maxchirprate = 1
-        maxriserate = 0.01
+        maxchirprate = 0.2
+        maxriserate = 0.1
         nmaxchirps = int(np.floor(duration*maxchirprate))
         nmaxrises = int(np.floor(duration*maxriserate))
 
@@ -84,30 +97,52 @@ class Recording:
         # shift every second row to mage a hexagonal grid
         electrode_y[1::2] += electrode_spacing / 2
         
-        # position parameters
-        step_count = (self.samplerate * duration) - 1
-        step_set = [-step_size, 0, step_size]
-        step_shape = (step_count, 2)
-        origin = np.array([(center_x, center_y)])
-        
         self.traces = []
         self.x = []
         self.y = []
 
         for i in range(fishcount):
 
-            # make a random walk for the fish
-            steps = np.random.choice(a=step_set, size=step_shape)
-            path = np.concatenate([origin, steps]).cumsum(axis=0)
-            fish_x = savgol_filter(path[:, 0], 500, 6)
-            fish_y = savgol_filter(path[:, 1], 500, 6)
+            fs = 30  # sampling frequency in Hz
+            tmax = duration # duration in seconds
+            time = np.arange(0, tmax, 1/fs) # time vector
+            peak_veloc = 0.2 # most common velocity in m/s
+            directions = np.arange(0, 2*np.pi, 0.001) # directions vector in radians
+            origin = [0, 0] # starting point
+            boundaries = [(0, 10), (0, 10)] # boundaries of the arena
+
+            # make probablitiy distribution of directions
+            sigma = 7/fs
+            p1 = norm.pdf(directions, 0, sigma) 
+            p2 = norm.pdf(directions, np.max(directions), sigma)
+            probabilities = (p1 + p2)
+            probabilities = probabilities / np.sum(probabilities)
+
+            # make random step lengths according to a gamma distribution
+            step_lengths = np.random.default_rng().gamma(peak_veloc*100, 1, tmax*fs)/100
+            
+            # remove outliers
+            step_lengths[step_lengths > 1] = 1
+
+            # normalize to sampling rate
+            step_lengths = step_lengths / fs
+            
+            # draw random directions according to the probability distribution
+            trajectories = np.random.choice(directions, size = (tmax*fs), p = probabilities)
+
+            # make positions
+            x, y = make_positions(origin, boundaries, trajectories, step_lengths)
+
+            # resample positions to 20000 Hz
+            xi = np.interp(np.arange(0, tmax, 1/20000), time, x)
+            yi = np.interp(np.arange(0, tmax, 1/20000), time, y)
 
             # save the position data
-            self.x.append(fish_x)
-            self.y.append(fish_y)
+            self.x.append(x)
+            self.y.append(y)
 
             # calculate the distance to every electrode
-            distances = np.sqrt((fish_x[:, None] - electrode_x[None, :]) ** 2 + (fish_y[:, None] - electrode_y[None, :]) ** 2)
+            distances = np.sqrt((xi[:, None] - electrode_x[None, :]) ** 2 + (yi[:, None] - electrode_y[None, :]) ** 2)
 
             # make the distance squared and invert it
             distances = distances ** 2
@@ -151,7 +186,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import thunderfish.powerspectrum as ps
     
-    rec = Recording(fishcount=2, duration=300, grid=(1, 1), electrode_spacing=0.5, step_size=0.001)
+    rec = Recording(fishcount=2, duration=60, grid=(1, 1), electrode_spacing=0.5, step_size=0.001)
 
     # set electrode and fish of interest
     eoi = 0
