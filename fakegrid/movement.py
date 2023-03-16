@@ -1,6 +1,7 @@
 import numpy as np
 from IPython import embed
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from scipy.stats import norm
 
 
@@ -48,57 +49,77 @@ def make_positions(origin, boundaries, trajectories, steps):
 
     return x, y
 
+class FishMovement:
+
+    def __init__(self, duration, target_fs, origin, boundaries):
+
+        self.duration = duration
+        self.fs = target_fs
+        self.origin = origin
+        self.boundaries = boundaries
+
+        fs = 30  # sampling frequency in Hz
+        peak_veloc = 0.2 # most common velocity in m/s
+        self.directions = np.arange(0, 2*np.pi, 0.0001) # directions vector in radians
+
+        # make probablitiy distribution of directions
+        sigma = 7/fs
+        p1 = norm.pdf(self.directions, 0, sigma) 
+        p2 = norm.pdf(self.directions, np.max(self.directions), sigma)
+        probabilities = (p1 + p2)
+        self.probabilities = probabilities / np.sum(probabilities)
+
+        # make random step lengths according to a gamma distribution
+        step_lengths = np.random.default_rng().gamma(peak_veloc*100, 1, (self.duration*fs)-1)/100
+        
+        # remove outliers
+        step_lengths[step_lengths > 1] = 1
+
+        # normalize to sampling rate
+        self.step_lengths = step_lengths / fs
+        
+        # draw random directions according to the probability distribution
+        self.trajectories = np.random.choice(self.directions, size = (self.duration*fs)-1, p = self.probabilities)
+
+        # make positions
+        self._x, self._y = make_positions(self.origin, self.boundaries, self.trajectories, self.step_lengths)
+
+        # resample to target sampling rate
+        self.x = np.interp(np.arange(0, duration, 1/target_fs), np.arange(0, duration, 1/fs), self._x)
+        self.y = np.interp(np.arange(0, duration, 1/target_fs), np.arange(0, duration, 1/fs), self._y)
+        self.original_fs = fs
+
+    def vizualize(self):
+
+        fig = plt.figure(layout='constrained')
+        gs0 = gridspec.GridSpec(1, 2, figure=fig)
+        gs00 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs0[0])
+        ax1 = fig.add_subplot(gs00[0])
+        ax2 = fig.add_subplot(gs00[1], projection='polar')
+        ax3 = fig.add_subplot(gs0[1])
+        ax3.set_aspect('equal')
+
+        ax1.hist(self.step_lengths * self.original_fs, bins = 100)
+        ax1.set_xlabel('Velocities (m/s)')
+        ax1.set_ylabel('Count')
+        ax1.set_title('Velocity distribution')
+ 
+        ax2.set_theta_zero_location("N")
+        ax2.plot(self.directions, self.probabilities)
+        ax2.set_rlabel_position(-22.5)  # Move radial labels away from plotted line
+        ax2.set_title(f'Probability distribution of possible heading directions for an average {np.mean(self.step_lengths*100)} cm step')
+
+        ax3.plot(self._x, self._y)
+        ax3.set_xlabel('x (m)')
+        ax3.set_ylabel('y (m)')
+        ax3.set_title(f'Simulated positions over {self.duration} seconds at {self.original_fs} Hz converted to {self.fs} Hz')
+        plt.show()
+
 
 if __name__ == "__main__":
 
-    np.random.seed(0)
-
-    fs = 30  # sampling frequency in Hz
-    tmax = 10000 # duration in seconds
-    time = np.arange(0, tmax, 1/fs) # time vector
-    peak_veloc = 0.2 # most common velocity in m/s
-    directions = np.arange(0, 2*np.pi, 0.001) # directions vector in radians
+    tmax = 6000 # duration in seconds
     origin = [0, 0] # starting point
     boundaries = [(0, 10), (0, 10)] # boundaries of the arena
-
-    # make probablitiy distribution of directions
-    sigma = 7/fs
-    p1 = norm.pdf(directions, 0, sigma) 
-    p2 = norm.pdf(directions, np.max(directions), sigma)
-    probabilities = (p1 + p2)
-    probabilities = probabilities / np.sum(probabilities)
-
-    # make random step lengths according to a gamma distribution
-    step_lengths = np.random.default_rng().gamma(peak_veloc*100, 1, tmax*fs)/100
-    
-    # remove outliers
-    step_lengths[step_lengths > 1] = 1
-
-    # normalize to sampling rate
-    step_lengths = step_lengths / fs
-    
-    # draw random directions according to the probability distribution
-    trajectories = np.random.choice(directions, size = (tmax*fs), p = probabilities)
-
-    # make positions
-    x, y = make_positions(origin, boundaries, trajectories, step_lengths)
-
-    fig = plt.figure()
-    ax1 = plt.subplot(211, projection='polar')
-    ax2 = plt.subplot(212)
-    ax1.set_theta_zero_location("N")
-    ax1.plot(directions, probabilities)
-    ax1.set_rlabel_position(-22.5)  # Move radial labels away from plotted line
-    ax1.set_title('Probability distribution of possible heading directions')
-    ax2.hist(step_lengths * fs)
-    ax2.set_title('Distribution of step lengths')
-    ax2.set_xlabel('Step length (m)')
-    ax2.set_ylabel('Count')
-    plt.show()
-
-    fig, ax = plt.subplots()
-    ax.plot(x, y, zorder=-10)
-    ax.set_xlim(boundaries[0])
-    ax.set_ylim(boundaries[1])
-    ax.set_aspect('equal')
-    plt.show()
+    m = FishMovement(tmax, 100, origin, boundaries)
+    m.vizualize()
