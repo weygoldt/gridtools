@@ -4,6 +4,7 @@ from typing import Tuple
 from fish_movement import FishMovement
 from fish_signal import FishSignal
 from plotstyle import PlotStyle
+from thunderfish.efield import efish_monopoles, epotential_meshgrid
 
 s = PlotStyle()
 np.random.seed(0)
@@ -43,6 +44,9 @@ class Recording:
         nmaxchirps = int(np.floor(duration*maxchirprate))
         nmaxrises = int(np.floor(duration*maxriserate))
 
+        # dipole model parameters
+        minsize, maxsize = 6, 18
+
         # save the electrode positions
         n_electrodes = grid_shape[0] * grid_shape[1]
         self.ex, self.ey = grid(origin=[0, 0], shape=grid_shape, spacing=electrode_spacing, type='hex') 
@@ -53,12 +57,21 @@ class Recording:
 
         for i in range(fishcount):
 
+            print('simulating fish ', i+1, ' of ', fishcount)
+
             tmax = duration # duration in seconds
             origin = [0, 0] # starting point
             boundaries = [(-2, 2), (-2, 2)] # boundaries of the arena
             mov = FishMovement(tmax, self.samplerate, origin, boundaries) # movement object
 
             x, y = mov.x, mov.y # get the position data
+            traj_v = np.array([np.cos(mov.trajectories), np.sin(mov.trajectories)]).T
+            tail_bend = 0
+            size = np.random.randint(minsize, maxsize)
+
+            # make the dipole matrix for every time step 
+            dipole_matrix = [efish_monopoles((xi, yi), (tu, tv), size, tail_bend) for xi, yi, tu, tv in zip(x, y, traj_v[:, 0], traj_v[:, 1])] 
+            print('dipole matrix len: ', len(dipole_matrix))
 
             # save the position data
             self.x.append(x)

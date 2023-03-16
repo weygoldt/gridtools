@@ -49,6 +49,7 @@ def make_positions(origin, boundaries, trajectories, steps):
 
     return x, y
 
+
 class FishMovement:
 
     def __init__(self, duration, target_fs, origin, boundaries):
