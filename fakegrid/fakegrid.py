@@ -136,7 +136,7 @@ class Recording:
             else:
                 summed_spec += spec
 
-        fig = plt.figure()
+        fig = plt.figure(figsize=(12, 6))
         gs0 = gridspec.GridSpec(1, 2, figure=fig)
         gs00 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs0[0], height_ratios=[1, 4])
         ax1 = fig.add_subplot(gs00[0])

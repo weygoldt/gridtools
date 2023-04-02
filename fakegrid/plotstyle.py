@@ -17,6 +17,7 @@ def PlotStyle() -> None:
 
         # colors
         black = "#111116"
+        black = "#000000"
         white = "#e0e4f7"
         gray = "#6c6e7d"
         blue = "#89b4fa"
@@ -218,6 +219,7 @@ def PlotStyle() -> None:
     MEDIUM_SIZE = 14
     BIGGER_SIZE = 16
     black = "#111116"
+    black = "#000000"
     white = "#e0e4f7"
     gray = "#6c6e7d"
     dark_gray = "#2a2a32"
