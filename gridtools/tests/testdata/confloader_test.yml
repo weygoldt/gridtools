@@ -1,9 +1,0 @@
-var1: True
-var2:
-  - "string1"
-  - "string2"
-var3: 1.5
-var4:
-  subvar1: "str"
-  subvar2: 1.5
-  subvar3: 5
