@@ -56,9 +56,12 @@ class WTData:
         self.track_idents = np.load(self.path / "ident_v.npy")
         self.track_indices = np.load(self.path / "idx_v.npy")
         self.ids = np.unique(self.track_idents[~np.isnan(self.track_idents)])
-        self.grid_rate = dataloader.fishgrid_samplerate(self.path)
-        self.grid_spacing = dataloader.fishgrid_spacings(self.path)
-        self.grid_shape = dataloader.fishgrid_grids(self.path)
+        try:
+            self.grid_rate = dataloader.fishgrid_samplerate(self.path)
+            self.grid_spacing = dataloader.fishgrid_spacings(self.path)
+            self.grid_shape = dataloader.fishgrid_grids(self.path)
+        except FileNotFoundError:
+            logger.warning("Grid information missing!")
 
         logger.info("Dataset loaded from %s", self.path)
 
