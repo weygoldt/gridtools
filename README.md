@@ -1,2 +1,2 @@
-# Preprocessing electrode grid data
-... for comprehensive analyses of the behavior of weakly electric fish in their natural habitat
+# Gridtools 
+A collection of tools for working with electrode grid recordings of weakly electric fish in Python.
