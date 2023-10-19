@@ -1,6 +1,15 @@
+[tool.poetry]
+name = "gridtools"
+version = "0.1.0"
+description = "A toolbox to work with electrode grid recordings of wave-type weakly electric fish more efficiently."
+authors = ["weygoldt <88969563+weygoldt@users.noreply.github.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
 [build-system]
-requires = [
-    "setuptools",
-    "wheel"
-]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
