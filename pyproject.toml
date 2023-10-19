@@ -1,13 +1,18 @@
 [tool.poetry]
 name = "gridtools"
-version = "0.1.0"
+version = "0.0.1"
 description = "A toolbox to work with electrode grid recordings of wave-type weakly electric fish more efficiently."
 authors = ["weygoldt <88969563+weygoldt@users.noreply.github.com>"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11, <3.13"
+numpy = "^1.26.1"
+rich = "^13.6.0"
+argparse = "^1.4.0"
+matplotlib = "^3.8.0"
+scipy = "^1.11.3"
 
 
 [build-system]
