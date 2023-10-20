@@ -37,7 +37,9 @@ def instantaneous_frequency(
     # calculate instantaneous frequency with zero crossings
     roll_signal = np.roll(signal, shift=1)
     time_signal = np.arange(len(signal)) / samplerate
-    period_index = np.arange(len(signal))[(roll_signal < 0) & (signal >= 0)][1:-1]
+    period_index = np.arange(len(signal))[(roll_signal < 0) & (signal >= 0)][
+        1:-1
+    ]
 
     upper_bound = np.abs(signal[period_index])
     lower_bound = np.abs(signal[period_index - 1])
@@ -55,7 +57,9 @@ def instantaneous_frequency(
     instantaneous_frequency_time = true_zero[:-1] + 0.5 * np.diff(true_zero)
 
     # compute frequency
-    instantaneous_frequency = gaussian_filter1d(1 / np.diff(true_zero), smoothing_window)
+    instantaneous_frequency = gaussian_filter1d(
+        1 / np.diff(true_zero), smoothing_window
+    )
 
     # Resample the frequency using specified interpolation method to match the dimensions of the input array
     orig_len = len(signal)

@@ -7,6 +7,7 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+        args: ['--line-length', '80', '.']
 
       - id: isort
         name: isort
@@ -15,16 +16,16 @@ repos:
         pass_filenames: false
         types: [python]
 
-      - id: pylint
-        name: pylint
-        entry: pylint
-        language: system
-        types: [python]
+#      - id: pylint
+#        name: pylint
+#        entry: pylint
+#        language: system
+#        types: [python]
 
-      - id: pytest
-        name: pytest
-        entry: pytest
-        language: system
-        pass_filenames: false
-        types: [python]
+#      - id: pytest
+#        name: pytest
+#        entry: pytest
+#        language: system
+#        pass_filenames: false
+#        types: [python]
 

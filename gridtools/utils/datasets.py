@@ -44,7 +44,9 @@ class WTData:
 
     @property
     def stop_time(self):
-        return self.start_time + datetime.timedelta(seconds=self.track_times[-1])
+        return self.start_time + datetime.timedelta(
+            seconds=self.track_times[-1]
+        )
 
     def _load_dataset(self):
         """
@@ -81,7 +83,9 @@ class WTData:
         if time_length < unique_index_length:
             raise GridDataMismatch("Index vector is longer than time vector!.")
         else:
-            logger.info("Passed check: Index vector is not longer than time vector.")
+            logger.info(
+                "Passed check: Index vector is not longer than time vector."
+            )
 
         if time_length < np.max(self.track_indices):
             raise GridDataMismatch(
@@ -93,9 +97,13 @@ class WTData:
             )
 
         if index_length == freq_length == power_length == ident_length:
-            logger.info("Passed check: All tracked vectors have the same length.")
+            logger.info(
+                "Passed check: All tracked vectors have the same length."
+            )
         else:
-            raise GridDataMismatch("Not all tracked vectors have the same length!")
+            raise GridDataMismatch(
+                "Not all tracked vectors have the same length!"
+            )
 
         if power_electrode_count == grid_electrode_count:
             logger.info(
@@ -138,7 +146,9 @@ class WTRaw(WTData):
                 "Raw data has not the same number of electrodes as power vector!"
             )
         else:
-            logger.info("Passed check: Raw data has the same length as power vector.")
+            logger.info(
+                "Passed check: Raw data has the same length as power vector."
+            )
         return super()._check_health()
 
     def __repr__(self):
@@ -167,10 +177,16 @@ class WTPreprocessing(WTData):
         self.y = None
 
     def __repr__(self):
-        return super().__repr__() + f"\nPreprocessing data: {self.temperature.shape}"
+        return (
+            super().__repr__()
+            + f"\nPreprocessing data: {self.temperature.shape}"
+        )
 
     def __str__(self):
-        return super().__str__() + f"\nPreprocessing data: {self.temperature.shape}"
+        return (
+            super().__str__()
+            + f"\nPreprocessing data: {self.temperature.shape}"
+        )
 
 
 class WTProcessed(WTData):
@@ -200,9 +216,13 @@ class WTProcessed(WTData):
                 "Passed check: Temperature vector has the same length as light vector."
             )
         if self.ids.shape[0] == self.q10.shape[0] == self.sex.shape[0]:
-            logger.info("Passed check: All metadata vectors have the same length.")
+            logger.info(
+                "Passed check: All metadata vectors have the same length."
+            )
         else:
-            raise GridDataMismatch("Not all metadata vectors have the same length!")
+            raise GridDataMismatch(
+                "Not all metadata vectors have the same length!"
+            )
         if self.x.shape[0] == self.y.shape[0] == self.track_freqs:
             logger.info(
                 "Passed check: All positions have the same length as tracked vectors."
@@ -214,7 +234,9 @@ class WTProcessed(WTData):
         return super()._check_health()
 
     def __repr__(self):
-        return super().__repr__() + f"\nProcessed data: {self.temperature.shape}"
+        return (
+            super().__repr__() + f"\nProcessed data: {self.temperature.shape}"
+        )
 
     def __str__(self):
         return super().__str__() + f"\nProcessed data: {self.temperature.shape}"
