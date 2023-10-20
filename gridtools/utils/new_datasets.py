@@ -146,9 +146,13 @@ class Dataset:
             self.track, WavetrackerData
         ), "track must be a WavetrackerData object."
         if self.rec is not None:
-            assert isinstance(self.rec, RawData), "raw must be a RawData object."
+            assert isinstance(
+                self.rec, RawData
+            ), "raw must be a RawData object."
         if self.chirp is not None:
-            assert isinstance(self.chirp, ChirpData), "chirp must be a ChirpData object."
+            assert isinstance(
+                self.chirp, ChirpData
+            ), "chirp must be a ChirpData object."
 
     def __repr__(self) -> str:
         return f"Dataset({self.track}, {self.rec}, {self.chirp})"

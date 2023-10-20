@@ -59,7 +59,9 @@ def highpass_filter(
     return filtered_signal
 
 
-def lowpass_filter(signal: np.ndarray, samplerate: float, cutoff: float) -> np.ndarray:
+def lowpass_filter(
+    signal: np.ndarray, samplerate: float, cutoff: float
+) -> np.ndarray:
     """Lowpass filter a signal.
 
     Parameters
