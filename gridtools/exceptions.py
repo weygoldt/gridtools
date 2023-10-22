@@ -1,3 +1,8 @@
+"""
+Specific exceptions for the gridtools package.
+"""
+
+
 class GridDataMismatch(Exception):
     """
     GridDataMismatchError to raise an exception if
@@ -22,7 +27,8 @@ class GridDataMissing(Exception):
 
 class NotOnTimeError(Exception):
     """
-    Error is called when the time point that is searched for is not on the supplied time array.
+    Error is called when the time point that is searched for is not on the
+    supplied time array.
     """
 
     def __init__(self, message: str) -> None:
@@ -32,7 +38,9 @@ class NotOnTimeError(Exception):
 
 class BadOutputDir(Exception):
     """
-    Error is called when the save directory either contains raw data or is the directory from which the function is called. This prevents accidentally overwriting data.
+    Error is called when the save directory either contains raw data or is the
+    directory from which the function is called. This prevents accidentally
+    overwriting data.
     """
 
     def __init__(self, message: str) -> None:
