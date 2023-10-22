@@ -6,7 +6,7 @@ Some common transforms for use with time series data.
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
-from scipy.signal import butter, gaussian, sosfiltfilt
+from scipy.signal import butter, sosfiltfilt
 
 
 def instantaneous_frequency(
@@ -24,11 +24,6 @@ def instantaneous_frequency(
         Signal to compute the instantaneous frequency from.
     samplerate : int
         Samplerate of the signal.
-    smoothing_window : int
-        Window size for the gaussian filter.
-    interpolation : str, optional
-        Interpolation method to use during resampling. Should be either 'linear' or 'cubic'. Default is 'linear'.
-
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
@@ -41,33 +36,25 @@ def instantaneous_frequency(
         1:-1
     ]
 
-    upper_bound = np.abs(signal[period_index])
-    lower_bound = np.abs(signal[period_index - 1])
     upper_time = np.abs(time_signal[period_index])
     lower_time = np.abs(time_signal[period_index - 1])
 
     # create ratio
-    lower_ratio = lower_bound / (lower_bound + upper_bound)
-
-    # appy to time delta
-    time_delta = upper_time - lower_time
-    true_zero = lower_time + lower_ratio * time_delta
-
-    # create new time array
-    instantaneous_frequency_time = true_zero[:-1] + 0.5 * np.diff(true_zero)
-
-    # compute frequency
-    instantaneous_frequency = gaussian_filter1d(
-        1 / np.diff(true_zero), smoothing_window
+    lower_ratio = np.abs(signal[period_index - 1]) / (
+        np.abs(signal[period_index - 1]) + np.abs(signal[period_index])
     )
 
-    # Resample the frequency using specified interpolation method to match the dimensions of the input array
-    orig_len = len(signal)
-    old_len = len(instantaneous_frequency)
-    old_x = np.arange(0, old_len)
-    new_x = np.linspace(0, old_len, orig_len)
+    # apply to time delta
+    true_zero = lower_time + lower_ratio * (upper_time - lower_time)
 
-    freq = np.interp(new_x, old_x, instantaneous_frequency)
+    # compute frequency
+    inst_freq = gaussian_filter1d(1 / np.diff(true_zero), smoothing_window)
+
+    # Resample the frequency using specified interpolation method to match the
+    # dimensions of the input array
+    old_x = np.arange(0, len(inst_freq))
+    new_x = np.linspace(0, len(inst_freq), len(signal))
+    freq = np.interp(new_x, old_x, inst_freq)
 
     return freq
 
@@ -92,10 +79,10 @@ def envelope(
         The envelope of the signal
     """
     sos = butter(2, cutoff_frequency, "lowpass", fs=samplerate, output="sos")
-    envelope = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
+    env = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
 
     old_x = np.arange(0, len(envelope))
     new_x = np.linspace(0, len(envelope), len(signal))
-    envelope = np.interp(new_x, old_x, envelope)
+    env = np.interp(new_x, old_x, env)
 
-    return envelope
+    return env

@@ -1,7 +1,15 @@
+"""
+A simple logger for the gridtools package.
+"""
+
 import logging
 
 
 def make_logger(name: str):
+    """
+    Create a logger for the gridtools package.
+    """
+
     # create logger formats for file and terminal
     file_formatter = logging.Formatter(
         "[ %(levelname)s ] ~ %(asctime)s ~ %(module)s.%(funcName)s: %(message)s"
@@ -29,10 +37,7 @@ def make_logger(name: str):
 
 
 if __name__ == "__main__":
-    # initiate logger
     mylogger = make_logger(__name__)
-
-    # test logger levels
     mylogger.debug("This is for debugging!")
     mylogger.info("This is an info.")
     mylogger.warning("This is a warning.")

@@ -1,3 +1,7 @@
+"""
+A collection of functions for filtering signals.
+"""
+
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
@@ -104,6 +108,6 @@ def envelope(
         The envelope of the signal
     """
     sos = butter(2, cutoff_frequency, "lowpass", fs=samplerate, output="sos")
-    envelope = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
+    env = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
 
-    return envelope
+    return env
