@@ -12,7 +12,7 @@ extensible to other data types, e.g. rises or behaviour data.
 
 import pathlib
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional
 
 from numpy import isnan, load, ndarray, unique
 from rich import print as rprint
@@ -36,7 +36,7 @@ class WavetrackerData:
         self._load_data()
         self._check_health()
 
-    def get_fish(self, fish: Union[int, list, ndarray]) -> ndarray:
+    def get_fish(self, fish: int) -> ndarray:
         """
         Function to extract a single fish or a subset of individuals from the
         dataset.
@@ -44,8 +44,7 @@ class WavetrackerData:
         Parameters
         ----------
         fish : Union[int, list, ndarray]
-            The IDs of the fish to extract. Can be a single integer, a list of
-            integers, or a numpy array of integers.
+            The IDs of the fish to extract.
 
         Returns
         -------
@@ -117,7 +116,7 @@ class RawData:
             self.samplerate = 20000
             self.channels = self.raw.shape[1]
         elif pathlib.Path(self.path / "traces-grid1.raw").exists():
-            self.raw = DataLoader(self.path, 60)
+            self.raw = DataLoader(str(self.path) + "/traces-grid1.raw", 60)
             self.samplerate = self.raw.samplerate
             self.channels = self.raw.shape[1]
         else:
