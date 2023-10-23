@@ -14,11 +14,168 @@ import pathlib
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 from numpy import isnan, load, ndarray, unique
 from rich import print as rprint
 from thunderfish.dataloader import DataLoader
 
 from .exceptions import GridDataMismatch
+
+
+def save(dataset, output_path: pathlib.Path) -> None:
+    """Save a Dataset object to disk
+
+    Parameters
+    ----------
+    dataset : Dataset
+        Dataset to save to file.
+    output_path : pathlib.Path
+        Path where to save the dataset.
+
+    Raises
+    ------
+    FileExistsError
+        When there already is a dataset.
+    """
+    output_dir = output_path / dataset.path.name
+
+    if output_dir.exists():
+        raise FileExistsError(f"Output directory {output_dir} already exists.")
+
+    output_dir.mkdir(parents=True)
+
+    np.save(output_dir / "fund_v.npy", dataset.track.freqs)
+    np.save(output_dir / "sign_v.npy", dataset.track.powers)
+    np.save(output_dir / "ident_v.npy", dataset.track.idents)
+    np.save(output_dir / "idx_v.npy", dataset.track.indices)
+    np.save(output_dir / "times.npy", dataset.track.times)
+
+    np.save(output_dir / "raw.npy", dataset.rec.raw)
+
+    if dataset.chirp is not None:
+        np.save(output_dir / "chirp_times_gt.npy", dataset.chirp.times)
+        np.save(output_dir / "chirp_ids_gt.npy", dataset.chirp.idents)
+    if dataset.rise is not None:
+        np.save(output_dir / "rise_times_gt.npy", dataset.rise.times)
+        np.save(output_dir / "rise_ids_gt.npy", dataset.rise.idents)
+
+
+def subset(
+    input_path: pathlib.Path,
+    output_path: pathlib.Path,
+    start: float,
+    stop: float,
+):
+    """Creates and saves a subset of a dataset.
+
+    Parameters
+    ----------
+    input_path : pathlib.Path
+        Where the original dataset is
+    output_path : pathlib.Path
+        Where the subset should go
+    start : float
+        Where to start the subset in seconds
+    stop : float
+        Where to stop the subset in seconds
+
+    Raises
+    ------
+    GridDataMismatch
+        When the start and stop times are not in the dataset.
+    """
+    assert start < stop, "Start time must be smaller than stop time."
+
+    wt = WavetrackerData(input_path)
+    raw = RawData(input_path)
+
+    assert start > wt.times[0], "Start time must be larger than the beginning."
+    assert stop < wt.times[-1], "Stop time must be smaller than the end."
+
+    # check if there are chirps and use ground truth (gt) if available
+    if len(list(input_path.glob("chirp_times_*"))) > 0:
+        if (input_path / "chirp_times_gt.npy").exists():
+            chirps = ChirpData(input_path, "gt")
+        else:
+            chirps = ChirpData(input_path, "cnn")
+    else:
+        chirps = None
+
+    # check for rise times and use ground truth if available
+    if len(list(input_path.glob("rise_times_*"))) > 0:
+        if (input_path / "rise_times_gt.npy").exists():
+            rises = RiseData(input_path, "gt")
+        else:
+            rises = RiseData(input_path, "pd")
+    else:
+        rises = None
+
+    # construct dataset object
+    ds = Dataset(wt, raw, chirps, rises)
+
+    # estimate the start and stop as indices to get the raw data
+    start_idx = int(start * ds.rec.samplerate)
+    stop_idx = int(stop * ds.rec.samplerate)
+    raw = ds.rec.raw[start_idx:stop_idx, :]
+
+    tracks = []
+    powers = []
+    indices = []
+    idents = []
+
+    for track_id in np.unique(ds.track.idents[~np.isnan(ds.track.idents)]):
+        track = ds.track.freqs[ds.track.idents == track_id]
+        power = ds.track.powers[ds.track.idents == track_id]
+        time = ds.track.times[ds.track.indices[ds.track.idents == track_id]]
+        index = ds.track.indices[ds.track.idents == track_id]
+
+        track = track[(time >= start) & (time <= stop)]
+        power = power[(time >= start) & (time <= stop)]
+        index = index[(time >= start) & (time <= stop)]
+        ident = np.repeat(track_id, len(track))
+
+        tracks.append(track)
+        powers.append(power)
+        indices.append(index)
+        idents.append(ident)
+
+    tracks = np.concatenate(tracks)
+    powers = np.concatenate(powers)
+    indices = np.concatenate(indices)
+    idents = np.concatenate(idents)
+    time = ds.track.times[ds.track.times >= start & ds.track.times <= stop]
+
+    if len(indices) == 0:
+        raise GridDataMismatch("No data in the specified time range.")
+    else:
+        indices -= indices[0]
+
+    # reconstruct dataset
+    ds.track.freqs = tracks
+    ds.track.powers = powers
+    ds.track.times = time
+    ds.track.indices = indices
+    ds.track.idents = idents
+    ds.track.ids = np.unique(idents)
+    ds.rec.raw = raw
+
+    # extract chirps
+    if chirps is not None:
+        chirp_ids = chirps.idents[
+            (chirps.times >= start) & (chirps.times <= stop)
+        ]
+        chirp_times = chirps.times[
+            (chirps.times >= start) & (chirps.times <= stop)
+        ]
+        ds.chirp.times = chirp_times
+        ds.chirp.idents = chirp_ids
+    if rises is not None:
+        rise_ids = rises.idents[(rises.times >= start) & (rises.times <= stop)]
+        rise_times = rises.times[(rises.times >= start) & (rises.times <= stop)]
+        ds.rise.times = rise_times
+        ds.rise.idents = rise_ids
+
+    save(ds, output_path)
 
 
 class WavetrackerData:
@@ -191,6 +348,62 @@ class ChirpData:
         return f"ChirpData({self.path})"
 
 
+class RiseData:
+    """
+    Loads rise times and rise identities into an easy to use class format.
+    The rise times are the times at which the rises were detected, and the
+    rise ids are the fish that were detected at that time. Files must have the
+    format `rise_times_{detector}.npy` and `rise_ids_{detector}.npy` where
+    `detector` is either `pd` (peakdetection) or `gt` (ground truth).
+    """
+
+    def __init__(self, path: pathlib.Path, detector: str) -> None:
+        assert detector in [
+            "pd",
+            "gt",
+        ], "Detector must be one of 'pd' or 'gt'"
+        self.path = path
+        self.detector = detector
+        if not self.path.exists():
+            raise FileNotFoundError(f"Path {self.path} does not exist.")
+
+        self._load_data()
+        self._check_health()
+
+    def get_fish(self, fish: int) -> ndarray:
+        """
+        Returns the rise times for a single fish.
+
+        Parameters
+        ----------
+        fish : int
+            The ID of the fish to extract.
+
+        Returns
+        -------
+        ndarray
+            The rise times for the fish specified.
+        """
+        times = self.times[self.idents == fish]
+        return times
+
+    def _load_data(self) -> None:
+        self.times = load(self.path / f"rise_times_{self.detector}.npy")
+        self.idents = load(self.path / f"rise_ids_{self.detector}.npy")
+
+    def _check_health(self) -> None:
+        if self.times.shape[0] != self.idents.shape[0]:
+            raise GridDataMismatch(
+                f"Times and idents do not match: {self.times.shape[0]}, {self.idents.shape[0]}"
+            )
+
+    def __repr__(self) -> str:
+        return f"RiseData({self.path})"
+
+    def __str__(self) -> str:
+        return f"RiseData({self.path})"
+
+
 @dataclass
 class Dataset:
     """
@@ -205,6 +418,7 @@ class Dataset:
     track: WavetrackerData
     rec: Optional[RawData] = None
     chirp: Optional[ChirpData] = None
+    rise: Optional[RiseData] = None
 
     def __post_init__(self) -> None:
         self._check_type()

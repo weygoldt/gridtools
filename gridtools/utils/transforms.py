@@ -81,8 +81,8 @@ def envelope(
     sos = butter(2, cutoff_frequency, "lowpass", fs=samplerate, output="sos")
     env = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
 
-    old_x = np.arange(0, len(envelope))
-    new_x = np.linspace(0, len(envelope), len(signal))
+    old_x = np.arange(0, len(env))
+    new_x = np.linspace(0, len(env), len(signal))
     env = np.interp(new_x, old_x, env)
 
     return env

@@ -14,14 +14,14 @@ repos:
       - id: black
         args: ["--line-length", "80"]
 
-  - repo: local
-    hooks:
-      - id: pylint
-        name: pylint
-        entry: pylint
-        language: system
-        types: [python]
-        require_serial: true
+#  - repo: local
+#    hooks:
+#      - id: pylint
+#        name: pylint
+#        entry: pylint
+#        language: system
+#        types: [python]
+#        require_serial: true
 
 #  - repo: https://github.com/pytest-dev/pytest.git
 #    rev: v6.2.4

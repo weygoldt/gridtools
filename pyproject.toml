@@ -14,7 +14,6 @@ argparse = "^1.4.0"
 matplotlib = "^3.8.0"
 scipy = "^1.11.3"
 
-
 [tool.poetry.group.dev.dependencies]
 black = "^23.10.0"
 isort = "^5.12.0"
@@ -25,3 +24,17 @@ pre-commit = "^3.5.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+extract-chirps = "gridtools.extract_chirps:main_extract"
+resample-chirps = "gridtools.extract_chirps:main_resample"
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 80
+target-version = ["py311"]
+
+[tool.pylint]
+disable = ["W0511", "R0914"]
