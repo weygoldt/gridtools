@@ -16,6 +16,7 @@ from typing import Optional
 
 import numpy as np
 from numpy import isnan, load, ndarray, unique
+from pydantic import BaseModel
 from rich import print as rprint
 from thunderfish.dataloader import DataLoader
 
@@ -111,7 +112,7 @@ def subset(
         rises = None
 
     # construct dataset object
-    ds = Dataset(wt, raw, chirps, rises)
+    ds = Dataset(input_path, wt, raw, chirps, rises)
 
     # estimate the start and stop as indices to get the raw data
     start_idx = int(start * ds.rec.samplerate)
@@ -151,13 +152,13 @@ def subset(
         indices -= indices[0]
 
     # reconstruct dataset
-    ds.track.freqs = tracks
-    ds.track.powers = powers
-    ds.track.times = time
-    ds.track.indices = indices
-    ds.track.idents = idents
-    ds.track.ids = np.unique(idents)
-    ds.rec.raw = raw
+    wt.freqs = tracks
+    wt.powers = powers
+    wt.idents = idents
+    wt.indices = indices
+    wt.ids = np.unique(idents)
+    wt.times = time
+    raw.raw = raw
 
     # extract chirps
     if chirps is not None:
@@ -167,18 +168,21 @@ def subset(
         chirp_times = chirps.times[
             (chirps.times >= start) & (chirps.times <= stop)
         ]
-        ds.chirp.times = chirp_times
-        ds.chirp.idents = chirp_ids
+        chirps.times = chirp_times
+        chirps.idents = chirp_ids
     if rises is not None:
         rise_ids = rises.idents[(rises.times >= start) & (rises.times <= stop)]
         rise_times = rises.times[(rises.times >= start) & (rises.times <= stop)]
-        ds.rise.times = rise_times
-        ds.rise.idents = rise_ids
+        rises.times = rise_times
+        rises.idents = rise_ids
 
-    save(ds, output_path)
+    # rebuild dataset
+    subset_ds = Dataset(output_path, wt, raw, chirps, rises)
+
+    save(subset_ds, output_path)
 
 
-class WavetrackerData:
+class WavetrackerData(BaseModel):
     """
     Loads the `.npy` files produced by the `wavetracker` into an easy to use
     class format. Provides methods to extract single or specific fish. Checks
@@ -190,7 +194,12 @@ class WavetrackerData:
         if not self.path.exists():
             raise FileNotFoundError(f"Path {self.path} does not exist.")
 
-        self._load_data()
+        self.freqs = load(self.path / "fund_v.npy")
+        self.powers = load(self.path / "sign_v.npy")
+        self.idents = load(self.path / "ident_v.npy")
+        self.indices = load(self.path / "idx_v.npy")
+        self.ids = unique(self.idents[~isnan(self.idents)]).astype(int)
+        self.times = load(self.path / "times.npy")
         self._check_health()
 
     def get_fish(self, fish: int) -> ndarray:
@@ -217,14 +226,6 @@ class WavetrackerData:
         freqs = self.freqs[self.idents == fish]
         powers = self.powers[self.idents == fish]
         return times, freqs, powers
-
-    def _load_data(self) -> None:
-        self.freqs = load(self.path / "fund_v.npy")
-        self.powers = load(self.path / "sign_v.npy")
-        self.idents = load(self.path / "ident_v.npy")
-        self.indices = load(self.path / "idx_v.npy")
-        self.ids = unique(self.idents[~isnan(self.idents)]).astype(int)
-        self.times = load(self.path / "times.npy")
 
     def _check_health(self) -> None:
         if (
@@ -253,7 +254,7 @@ class WavetrackerData:
         return f"WavetrackerData({self.path})"
 
 
-class RawData:
+class RawData(BaseModel):
     """
     Loads the raw dataset (real: `traces-grid1.raw`, simulated: `raw.npy`)
     into an easy to use class format.
@@ -264,10 +265,6 @@ class RawData:
         if not self.path.exists():
             raise FileNotFoundError(f"Path {self.path} does not exist.")
 
-        self._load_data()
-        self._check_health()
-
-    def _load_data(self) -> None:
         if pathlib.Path(self.path / "raw.npy").exists():
             self.raw = load(self.path / "raw.npy")
             self.samplerate = 20000
@@ -278,6 +275,7 @@ class RawData:
             self.channels = self.raw.shape[1]
         else:
             raise FileNotFoundError(f"Could not find raw data in {self.path}.")
+        self._check_health()
 
     def _check_health(self) -> None:
         if self.raw.shape[0] == 0:
@@ -290,7 +288,7 @@ class RawData:
         return f"RawData({self.path})"
 
 
-class ChirpData:
+class ChirpData(BaseModel):
     """
     Loads the chirp times and chirp ids into an easy to use class format.
     The chirp times are the times at which the chirps were detected, and the
@@ -311,7 +309,8 @@ class ChirpData:
         if not self.path.exists():
             raise FileNotFoundError(f"Path {self.path} does not exist.")
 
-        self._load_data()
+        self.times = load(self.path / f"chirp_times_{self.detector}.npy")
+        self.idents = load(self.path / f"chirp_ids_{self.detector}.npy")
         self._check_health()
 
     def get_fish(self, fish: int) -> ndarray:
@@ -331,10 +330,6 @@ class ChirpData:
         times = self.times[self.idents == fish]
         return times
 
-    def _load_data(self) -> None:
-        self.times = load(self.path / f"chirp_times_{self.detector}.npy")
-        self.idents = load(self.path / f"chirp_ids_{self.detector}.npy")
-
     def _check_health(self) -> None:
         if self.times.shape[0] != self.idents.shape[0]:
             raise GridDataMismatch(
@@ -348,7 +343,7 @@ class ChirpData:
         return f"ChirpData({self.path})"
 
 
-class RiseData:
+class RiseData(BaseModel):
     """
     Loads rise times and rise identities into an easy to use class format.
     The rise times are the times at which the rises were detected, and the
@@ -367,7 +362,8 @@ class RiseData:
         if not self.path.exists():
             raise FileNotFoundError(f"Path {self.path} does not exist.")
 
-        self._load_data()
+        self.times = load(self.path / f"rise_times_{self.detector}.npy")
+        self.idents = load(self.path / f"rise_ids_{self.detector}.npy")
         self._check_health()
 
     def get_fish(self, fish: int) -> ndarray:
@@ -387,10 +383,6 @@ class RiseData:
         times = self.times[self.idents == fish]
         return times
 
-    def _load_data(self) -> None:
-        self.times = load(self.path / f"rise_times_{self.detector}.npy")
-        self.idents = load(self.path / f"rise_ids_{self.detector}.npy")
-
     def _check_health(self) -> None:
         if self.times.shape[0] != self.idents.shape[0]:
             raise GridDataMismatch(
@@ -404,8 +396,7 @@ class RiseData:
         return f"RiseData({self.path})"
 
 
-@dataclass
-class Dataset:
+class Dataset(BaseModel):
     """
     The main dataset class to load data extracted from electrode grid recordings
     of wave-type weakly electric fish. Every dataset must at least get a path
