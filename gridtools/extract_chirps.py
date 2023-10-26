@@ -13,89 +13,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from rich import print as rprint
 from rich.progress import track
-from scipy.interpolate import interp1d
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 from scipy.signal.windows import tukey
 
-from .datasets import ChirpData, Dataset, RawData, WavetrackerData
-from .simulations import chirp_model
+from .datasets import Dataset, load
+from .simulations import chirp_model_v4
 from .utils.filters import bandpass_filter
-from .utils.transforms import envelope, instantaneous_frequency
+from .utils.transforms import instantaneous_frequency
 
-
-def initial_params(x, y):
-    """
-    Compute initial parameter estimates for the chirp model.
-
-    Parameters
-    ----------
-    x : array-like
-        Time axis.
-    y : array-like
-        Signal.
-
-    Returns
-    -------
-    tuple
-        Initial parameter estimates and boundaries.
-    """
-    # Compute the mean and standard deviation of the signal
-    y_mean = np.mean(y)
-    y_std = np.std(y)
-
-    # Find the indices of the peaks and troughs
-    peaks, _ = find_peaks(y, height=y_mean + 2 * y_std)
-    troughs, _ = find_peaks(-y, height=-y_mean - 2 * y_std)
-
-    # Check if any peaks or troughs were found
-    if len(peaks) == 0 or len(troughs) == 0:
-        return [
-            y_mean,
-            y_mean / 2,
-            1,
-            2,
-            x[0],
-            y_mean,
-            y_mean / 2,
-            1,
-            2,
-            x[-1],
-            y_mean,
-            y_mean / 2,
-        ]
-
-    # Sort the peaks and troughs by their x values
-    peak_x = x[peaks]
-    peak_y = y[peaks]
-    trough_x = x[troughs]
-    trough_y = y[troughs]
-    peak_order = np.argsort(peak_y)
-    trough_order = np.argsort(trough_x)
-    peak_x = peak_x[peak_order]
-    peak_y = peak_y[peak_order]
-    trough_x = trough_x[trough_order]
-    trough_y = trough_y[trough_order]
-
-    # Compute the initial parameter estimates
-    m1 = 0  # Center of the first Gaussian
-    h1 = peak_y[-1] - trough_y[-1]  # Amplitude of the first Gaussian
-    w1 = (
-        peak_x[-1] - trough_x[-1]
-    ) / 5  # Standard deviation of the first Gaussian
-    k1 = 1  # Kurtosis of the first Gaussian
-    m2 = 0 + abs(w1) * 0.6  # Center of the second Gaussian
-    h2 = -h1 / 5  # Amplitude of the second Gaussian
-    w2 = w1 / 2  # Standard deviation of the second Gaussian
-    k2 = 1  # Kurtosis of the second Gaussian
-    m3 = (
-        peak_x[-1] + (peak_x[-1] - trough_x[-1]) / 10
-    )  # Center of the third Gaussian
-    h3 = np.abs(h2)  # Amplitude of the third Gaussian
-    w3 = w1 / 2  # Standard deviation of the third Gaussian
-    k3 = 1  # Kurtosis of the third Gaussian
-
-    return [m1, h1, w1, k1, m2, h2, w2, k2, m3, h3, w3, k3]
+model = chirp_model_v4
 
 
 def get_upper_fish(dataset):
@@ -174,252 +101,298 @@ def get_fish_freq(dataset, time, fish_id):
     return track_freqs[track_index]
 
 
-def extract_features(data):
-    """Extract instantaneous frequency and amplitude of chirps of the
-    upper fish in a dataset.
-
-    Parameters
-    ----------
-    data : Dataset
-        Dataset as defined in datasets.py.
-
-    Returns
-    -------
-        _description_
-    """
-    time_window = 0.5
-
+def extract_features(data: "Dataset") -> np.ndarray:
+    # get the fish with the highest baseline frequency
+    time_window = 1
     upper_fish = get_upper_fish(data)
     lower_fish = get_next_lower_fish(data, upper_fish)
-    chirp_times = data.chirp.times[data.chirp.idents == upper_fish]
+
+    # get data for the upper fish
+    chirp_times = data.com.chirp.times[data.com.chirp.idents == upper_fish]
     track_freqs = data.track.freqs[data.track.idents == upper_fish]
     track_times = data.track.times[
         data.track.indices[data.track.idents == upper_fish]
     ]
     track_powers = data.track.powers[
-        data.track.indices[data.track.idents == upper_fish], :
+        data.track.indices[data.track.idents == upper_fish]
     ]
 
+    # store chip instantaneous frequencies here
     freqs = []
-    envs = []
-    widths = []
     for chirp in chirp_times:
+        # Find the best electrode
         track_index = np.argmin(np.abs(track_times - chirp))
-        track_freq = track_freqs[track_index]
-        lower_fish_freq = get_fish_freq(data, chirp, lower_fish)
-
-        lower_bound = track_freq - lower_fish_freq - 50
         track_power = track_powers[track_index, :]
         best_electrode = np.argmax(track_power)
 
         start_index = int(
-            np.round((chirp - time_window / 2) * data.rec.samplerate)
+            np.round((chirp - time_window / 2) * data.grid.rec.samplerate)
         )
         stop_index = int(
-            np.round((chirp + time_window / 2) * data.rec.samplerate)
+            np.round((chirp + time_window / 2) * data.grid.rec.samplerate)
         )
-        raw_index = np.arange(start_index, stop_index)
+        index_array = np.arange(start_index, stop_index)
+        raw = data.grid.rec[index_array, best_electrode]
 
-        raw = data.rec.raw[raw_index, best_electrode]
-        tuk = tukey(len(raw), alpha=0.1)
-        raw = raw * tuk
+        # apply tukey window to avoid edge effects of the bandpass filter
+        tuk = tukey(raw.size, alpha=0.1)
+        raw *= tuk
 
-        # WARNING: Youll have to play around with the bandpass filter cutoffs
-        # depending on the reocrding. The further away the baseline EODf of two
-        # fish, the lower can be lowf but highf must also be decreased to remove
-        # the harmonic of the upper fish.
-        raw = bandpass_filter(
+        # extract frequencies to make limits for bandpass filter
+        lower_fish_freq = get_fish_freq(data, chirp, lower_fish)
+        track_freq = track_freqs[track_index]
+
+        # make limits for bandpass filter: Cut right between the two fish
+        # and below the first harmonic of the lower fish
+        lowcut = lower_fish_freq + 0.8 * (track_freq - lower_fish_freq)
+        highcut = 0.9 * (2 * lower_fish_freq)
+
+        # apply bandpass filter
+        freq = bandpass_filter(
             signal=raw,
-            samplerate=data.rec.samplerate,
-            lowf=track_freq - 40,
-            highf=track_freq + 280,
+            samplerate=data.grid.rec.samplerate,
+            lowf=lowcut,
+            highf=highcut,
         )
 
-        raw = raw / np.max(np.abs(raw))
-        rawtime = (np.arange(len(raw)) - len(raw) / 2) / data.rec.samplerate
+        # normalize
+        freq = freq / np.max(np.abs(freq))
 
+        # extract the instantaneous frequency
         freq = instantaneous_frequency(
-            signal=raw,
-            samplerate=data.rec.samplerate,
+            signal=freq,
+            samplerate=data.grid.rec.samplerate,
             smoothing_window=5,
         )
 
+        # extract the mode of the instantaneous frequency
         dist = np.histogram(freq, bins=100)
         mode = dist[1][np.argmax(dist[0])]
 
+        # center the frequency at 0
         freq = freq - mode
-        freq = freq[1000:-1000]
-        tuk = tukey(len(freq), alpha=0.3)
-        freq = freq * tuk
-        time = (np.arange(len(freq)) - len(freq) / 2) / data.rec.samplerate
 
-        peak_height = np.percentile(freq, 95)
+        # apply a tukey window to smoothe edges to 0
+        tuk = tukey(freq.size, alpha=0.3)
+        freq *= tuk
+
+        # build a time axis for the extracted frequency
+        time = (np.arange(len(freq)) - len(freq) / 2) / data.grid.rec.samplerate
+
+        # search for the main peak of the frequency excursion during chirp
+        peak_height = np.percentile(freq, 99)
         peaks, _ = find_peaks(freq, height=peak_height)
+        peak = peaks[np.argmax(np.abs(freq[peaks]))]
 
-        peak_index = np.argmin(np.abs(time[peaks] - chirp))
-        peak = peaks[peak_index]
-
-        # skip if peak it too close to edge
-        if abs(time[peak]) > time_window / 4:
+        # check if peak is too close to the edge
+        if abs(time[peak]) > 0.25 * time_window:
             continue
 
-        if np.min(freq) < -80:
-            continue
-
-        # compute envelope as well
-        renv = envelope(
-            raw, samplerate=data.rec.samplerate, cutoff_frequency=100
-        )
-
-        # remove low frequency modulation
-        env = bandpass_filter(
-            signal=renv,
-            samplerate=data.rec.samplerate,
-            lowf=0.1,
-            highf=100,
-        )
-
-        # cut off the edges of the envelope to remove tukey window
-        env = env[1000:-1000]
-
-        mode = np.histogram(env, bins=100)[1][
-            np.argmax(np.histogram(env, bins=100)[0])
-        ]
-        env = (env - mode) * tuk
-        envtime = (np.arange(len(env)) - len(env) / 2) / data.rec.samplerate
-
-        # detect anolaies (peaks and troughs) in the envelope
-        absenv = np.abs(env)
-        env_peaks, _ = find_peaks(absenv, height=np.percentile(absenv, 99))
-
-        # get the peak closest to the chirp
-        env_peak_index = np.argmin(np.abs(envtime[env_peaks] - chirp))
-
-        # skip if peak it too close to edge
-        if abs(envtime[env_peaks[env_peak_index]]) > time_window / 4:
-            continue
-
-        # check if the peak is close to the frequency peak
-        if abs(envtime[env_peaks[env_peak_index]] - time[peak]) > 0.05:
-            continue
-
-        # center the chirp on the center index using the peak on the frequency
-
-        # descend the peak in both directions until the frequency drops below 10
-        left, right = peak, peak
-        while freq[left] > 10:
-            left += 1
-        while freq[right] > 10:
-            right -= 1
-
-        # find the center between the flanks of the peak
-        center = (right - left) // 2 + left
-        width = (right - left) * 20000
-
-        roll = len(freq) // 2 - center
-        freq = np.roll(freq, roll)
-
-        # center the env on the freq peak as well
-        env = np.roll(env, roll)
-
-        tuk = tukey(len(freq), alpha=1)
-        freq = freq * tuk
-        env = (env * tuk) + 1
-
+        # check if there are multiple large peaks and simply skip the chirp
+        # if there are
         height = np.max(freq)
-
-        # check if there are multiple large peaks
-        cp, _ = find_peaks(freq, prominence=height * 0.5)
+        cp, _ = find_peaks(freq, prominence=0.3 * height)
         if len(cp) > 1:
             continue
 
-        # fig, axs = plt.subplots(3, 1, sharex=True)
-        # axs[0].plot(rawtime, raw)
-        # axs[0].plot(rawtime, renv, color="red")
-        # axs[1].plot(time, freq)
-        # axs[1].plot(time[peak], freq[peak], "o")
-        # axs[1].axhline(0, color="gray")
-        # axs[2].plot(envtime, env)
-        # axs[2].plot(envtime[env_peaks], env[env_peaks], "o")
-        # axs[2].axhline(1, color="gray")
-        # plt.show()
+        # center the chirp on the time axis:
+        # descend the peak in both directions until it drops below 10 %
+        # of the peak height
+        left, right = peak, peak
+        while freq[left] > 0.1 * peak_height:
+            left -= 1
+        while freq[right] > 0.1 * peak_height:
+            right += 1
 
-        # fig, ax = plt.subplots(2, 1, sharex=True)
-        # ax[0].plot(freq)
-        # ax[0].plot(cp, freq[cp], "o")
-        # ax[1].plot(env)
-        # ax[0].axvline(len(freq) // 2, color="gray", linestyle="--", lw=1)
-        # ax[1].axvline(len(freq) // 2, color="gray", linestyle="--", lw=1)
-        # ax[0].axhline(0, color="gray", linestyle="--", lw=1)
-        # ax[1].axhline(1, color="gray", linestyle="--", lw=1)
-        # plt.show()
+        # find the center between the flanks of the peaks
+        center = (left + right) // 2
 
+        # roll the peak to the center
+        roll = len(freq) // 2 - center
+        freq = np.roll(freq, roll.astype(int))
+
+        # apply tukey window again because edges are now not smooth anymore
+        tuk = tukey(freq.size, alpha=0.3)
+        freq *= tuk
+
+        # save the frequency
         freqs.append(freq)
-        envs.append(env)
-        widths.append(width)
 
-    return freqs, envs, width
+    return freqs
 
 
-def env_to_gauss(env):
-    return -(env - 1)
+def estimate_params(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    # compute mean and standard deviation of signal for peak detection
+    y_mean = np.mean(y)
+    y_std = np.std(y)
+
+    # find peaks and troughs
+    peaks, _ = find_peaks(y, height=y_mean + 2 * y_std)
+    troughs, _ = find_peaks(-y, height=-y_mean + 2 * y_std)
+
+    # check if there are enough peaks and troughs
+    if len(peaks) == 0 or len(troughs) == 0:
+        return None
+
+    # sort the peaks and troughts by their height
+    peaks = peaks[np.argsort(y[peaks])]
+    troughs = troughs[np.argsort(y[troughs])]
+
+    # initial estimate for center is position of highest peak
+    m = x[peaks[-1]]
+    # get the height of the highest peak as the amplitude
+    a = y[peaks[-1]]
+    # estimate standard deviation of largest peak
+    s = (y[peaks[-1]] - y[troughs[-1]]) / 2
+    # initial kurtosis estimate
+    k = 1.5
+    return np.array([m, a, s, k])
 
 
-def gauss_to_env(env):
-    return -env + 1
+def fit_model(freqs: np.ndarray, model: object) -> np.ndarray:
+    fits = []
 
-
-def fit_model(freqs, envs):
-    freq_fit = []
-    env_contrasts = []
-    for iter, (freq, env) in track(
-        enumerate(zip(freqs, envs)),
-        description="Fitting chirps",
-        total=len(freqs),
+    for iter, freq in track(
+        enumerate(freqs), description="Fitting chirps", total=len(freqs)
     ):
-        # fig, ax = plt.subplots(2, 1, sharex=True)
-
+        # make a time axis
         x = (np.arange(len(freq)) / 20000) - (len(freq) / 20000 / 2)
-        p0_c = initial_params(x, freq)
 
-        ec = 1 - np.min(env)
-        env_contrasts.append(ec)
+        # estimate initial parameters
+        p0_c = estimate_params(x, freq)
 
+        # set bounds for parameters
+        bounds = (
+            [-0.1, 20, -np.inf, 0.9],
+            [0.1, 600, np.inf, 10],
+        )
+
+        # try to fit the model
         try:
-            popt_c, pcov_c = curve_fit(
-                f=chirp_model,
-                xdata=x,
-                ydata=freq,
-                maxfev=100000,
+            popt, _ = curve_fit(
+                model,
+                x,
+                freq,
                 p0=p0_c,
+                bounds=bounds,
             )
-            freq_fit.append(popt_c)
-            rprint(f"[bold green]Iter: {iter} SUCCESS![/bold green]")
+            fits.append(popt)
+            rprint(f"[green]Fit {iter} successful[/green]")
         except:
-            # ax[0].plot(x, freq, color="black")
-            # ax[0].plot(x, chirp_model(x, *p0_c), color="blue", alpha=0.5)
-            # ax[1].plot(x, env, color="black")
-            # plt.show()
-            freq_fit.append(np.full_like(p0_c, np.nan))
-            rprint(f"[bold red]Iter: {iter} FITTING FAILED![/bold red]")
+            rprint(f"[red]Fit {iter} failed[/red]")
             continue
-
-        # ax[0].plot(x, freq, color="black", label="data")
-        # ax[0].plot(x, chirp_model(x, *popt_c), color="red", label="fit")
-        # ax[0].plot(x, chirp_model(x, *p0_c), color="blue", label="initial", alpha=0.5)
-        # ax[1].plot(x, env, color="black", label="data")
-        # ax[0].legend()
-        # plt.show()
-
-    return freq_fit
+    return np.array(fits)
 
 
-def save_arrays(freqs, envs, freq_fit, input_dir, output_dir):
-    filename = input_dir.name
-    path = output_dir
-    np.save(path / f"{filename}_freqs.npy", freqs)
-    np.save(path / f"{filename}_envs.npy", envs)
-    np.save(path / f"{filename}_freq_fit.npy", freq_fit)
+def extract_chirp_params(
+    input_dir: pathlib.Path, output_dir: pathlib.Path
+) -> None:
+    # load a dataset
+    data = load(input_dir, grid=True)
+
+    # extract instantaneous frequencies at each chirp of the fish with
+    # the highest baseline frequency
+    freqs = extract_features(data)
+
+    # try to fit a gaussian to the extracted frequencies
+    fits = fit_model(freqs, model)
+
+    fits[:, 0] = 0
+
+    # plot the results
+    _, ax = plt.subplots(2, 1, sharex=True, figsize=(20, 20))
+
+    for freq, fit in zip(freqs, fits):
+        x = (np.arange(len(freq)) / 20000) - (len(freq) / 20000 / 2)
+        ax[0].plot(x, freq, color="black", alpha=0.1)
+        ax[1].plot(x, model(x, *fit), color="black", alpha=0.1)
+
+    ax[0].axvline(0, color="gray", linestyle="--", lw=1)
+    ax[0].axhline(0, color="gray", linestyle="--", lw=1)
+    ax[1].axvline(0, color="gray", linestyle="--", lw=1)
+    ax[1].axhline(0, color="gray", linestyle="--", lw=1)
+
+    ax[0].set_ylabel("Frequency (Hz)")
+    ax[1].set_xlabel("Time (s)")
+
+    ax[0].set_title("Instantaneous Frequency")
+    ax[1].set_title("Fitted instantaneous frequency")
+
+    plt.savefig(output_dir / f"{input_dir.name}_chirps.png")
+    plt.show()
+
+    np.save(output_dir / f"{input_dir.name}_chirp_freqs.npy", freqs)
+    np.save(output_dir / f"{input_dir.name}_chirp_fits.npy", fits)
+
+
+def load_chirp_fits(path: pathlib.Path) -> np.ndarray:
+    files = list(path.glob("*_chirp_fits.npy"))
+    rprint(f"[green]Found {len(files)} chirp fit datasets[/green]")
+
+    fits = []
+    for file in files:
+        fits.append(np.load(file))
+    return np.concatenate(fits)
+
+
+def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
+    # load chirp fits
+    fits = load_chirp_fits(input)
+
+    # make standard deviations positive
+    fits[:, 2] = np.abs(fits[:, 2])
+
+    # sort fits by standard deviation
+    fits = fits[np.argsort(fits[:, 2])]
+
+    # interpolate the fits based on their standard deviation
+    oldx = np.arange(len(fits))
+    newx = np.linspace(0, len(fits), 1000)
+    newfits = np.zeros((len(newx), 4))
+    for i in range(4):
+        newfits[:, i] = np.interp(newx, oldx, fits[:, i])
+        plt.plot(oldx, fits[:, i], ".", color="black", alpha=0.1)
+        plt.plot(newx, newfits[:, i], ".", color="red", alpha=0.1)
+        plt.title(f"Parameter {i}")
+        plt.show()
+
+    newfits = np.asarray(newfits).T
+
+    # plot the distributions of the parameters
+    _, ax = plt.subplots(2, 2, figsize=(20, 20))
+    ax[0, 0].hist(newfits[0, :], bins=100)
+    ax[0, 0].hist(fits[:, 0], bins=100, alpha=0.5)
+    ax[0, 0].set_title("Center")
+    ax[0, 1].hist(newfits[1, :], bins=100)
+    ax[0, 1].hist(fits[:, 1], bins=100, alpha=0.5)
+    ax[0, 1].set_title("Amplitude")
+    ax[1, 0].hist(newfits[2, :], bins=100)
+    ax[1, 0].hist(fits[:, 2], bins=100, alpha=0.5)
+    ax[1, 0].set_title("Standard Deviation")
+    ax[1, 1].hist(newfits[3, :], bins=100)
+    ax[1, 1].hist(fits[:, 3], bins=100, alpha=0.5)
+    ax[1, 1].set_title("Kurtosis")
+    plt.savefig(output / "chirp_fit_distributions.png")
+    plt.show()
+
+    # plot the resulting chirps
+    _, ax = plt.subplots(1, 1, figsize=(20, 20))
+    t = np.linspace(0, 1, 20000) - 0.5
+
+    for fit in newfits.T:
+        ax.plot(t, model(t, *fit), color="black", alpha=0.1)
+    for fit in fits:
+        ax.plot(t, model(t, *fit), color="red", alpha=0.1)
+
+    ax.set_title("Simulated chirps")
+    ax.axvline(0, color="k", linestyle="--", lw=0.5)
+    ax.axhline(0, color="k", linestyle="--", lw=0.5)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Frequency (Hz)")
+    plt.savefig(output / "chirp_simulations.png")
+    plt.show()
+
+    np.save(output / "interpolation.npy", newfits)
 
 
 def extract_interface():
@@ -435,232 +408,11 @@ def extract_interface():
     return args
 
 
-def extract_chirp_params(input_dir, output_dir):
-    raw = RawData(input_dir)
-    chirps = ChirpData(input_dir, detector="gt")
-    wavetracker = WavetrackerData(input_dir)
-    dataset = Dataset(
-        path=input_dir,
-        track=wavetracker,
-        rec=raw,
-        chirp=chirps,
-    )
-
-    freqs, envs, widths = extract_features(dataset)
-    freq_fit = fit_model(freqs, envs)
-
-    fig, ax = plt.subplots(3, 1, sharex=True, figsize=(20, 20))
-    for freq, env, fit in zip(freqs, envs, freq_fit):
-        x = (np.arange(len(freq)) / 20000) - (len(freq) / 20000 / 2)
-        ax[0].plot(x, freq, color="black", alpha=0.1)
-        ax[1].plot(x, chirp_model(x, *fit), color="black", alpha=0.1)
-        ax[2].plot(x, env, color="black", alpha=0.1)
-
-    ax[0].axvline(0, color="gray", linestyle="--", lw=1)
-    ax[0].axhline(0, color="gray", linestyle="--", lw=1)
-    ax[1].axvline(0, color="gray", linestyle="--", lw=1)
-    ax[1].axhline(0, color="gray", linestyle="--", lw=1)
-    ax[2].axvline(0, color="gray", linestyle="--", lw=1)
-    ax[2].axhline(1, color="gray", linestyle="--", lw=1)
-
-    ax[0].set_ylabel("Frequency (Hz)")
-    ax[2].set_xlabel("Time (s)")
-    ax[2].set_ylabel("Amplitude")
-
-    ax[0].set_title("Instantaneous Frequency")
-    ax[1].set_title("Fitted instantaneous frequency")
-    ax[2].set_title("Envelope")
-
-    plt.savefig(output_dir / f"{input_dir.name}_chirps.png")
-    plt.show()
-
-    save_arrays(freqs, envs, freq_fit, input_dir, output_dir)
-
-
 def main_extract():
     args = extract_interface()
     extract_chirp_params(args.input, args.output)
 
 
-def load_dataset(path: pathlib.Path):
-    freq_fits = list(path.glob("*freq_fit.npy"))
-
-    rprint(f"Found {len(freq_fits)} files.")
-
-    freq_params = []
-    for freq in freq_fits:
-        fps = np.load(freq)
-        freq_params.append(fps)
-    freq_params = np.concatenate(freq_params)
-    return freq_params
-
-
-def sort_dataset(dataset):
-    """
-    Sort the Gaussians in each chirp by their amplitude.
-    """
-
-    sorted_dataset = np.zeros_like(dataset)
-
-    for i in range(len(dataset)):
-        curr_fit = dataset[i, :]
-
-        # split fits into 3 gaussians
-        split_fit = np.split(curr_fit, 3)
-
-        # sort by height, which is the second parameter of each gaussian
-        sorted_fit = sorted(split_fit, key=lambda x: x[1])
-
-        # put it back into the matrix
-        sorted_dataset[i, :] = np.concatenate(sorted_fit)
-
-    return sorted_dataset
-
-
-def remove_outliers(dataset):
-    """
-    Remove all parameter arrays that have large outliers.
-    """
-
-    # TODO: Switch to quantiles to remove outliers because some of the distributions
-    # are definetely not normal.
-
-    # get indices of rows that contain outliers in any parameter
-    for i in range(dataset.shape[1]):
-        param = dataset[:, i]
-        outliers = np.abs(param - np.mean(param)) > 2 * np.std(param)
-        dataset = dataset[~outliers, :]
-
-    return dataset
-
-
-def resample_chirp_params(path: pathlib.Path):
-    freq_fits = load_dataset(path)
-    # freq_fits = sort_dataset(freq_fits)
-
-    # remove the nans from the dataset
-    freq_fits = freq_fits[~np.isnan(freq_fits).any(axis=1)]
-
-    freq_fits = remove_outliers(freq_fits)
-
-    params = [
-        "m1",
-        "h1",
-        "w1",
-        "k1",
-        "m2",
-        "h2",
-        "w2",
-        "k2",
-        "m3",
-        "h3",
-        "w3",
-        "k3",
-    ]
-
-    # interpolate to make more
-    old_x = np.arange(freq_fits.shape[0])
-    new_x = np.linspace(0, freq_fits.shape[0], 1000)
-
-    new_freq_fits = []
-    new_env_fits = []
-
-    for i in range(freq_fits.shape[1]):
-        rprint(i)
-        ff = interp1d(
-            old_x, freq_fits[:, i], kind="linear", fill_value="extrapolate"
-        )
-
-        new_freq_fits.append(ff(new_x))
-
-        plt.plot(new_x, ff(new_x), ".", label="freq")
-        plt.plot(old_x, freq_fits[:, i], ".", label="old freq")
-
-        plt.title(params[i])
-        plt.legend()
-        plt.show()
-
-    new_freq_fits = np.array(new_freq_fits).T
-
-    # plot the new distributions and overlay the old ones
-    param_names = [
-        "Center",
-        "Height",
-        "Width",
-        "Kurtosis",
-    ]
-
-    fig, ax = plt.subplots(3, 4, figsize=(20, 20), sharex="col", sharey="row")
-    for i, param in enumerate(params):
-        ax[i // 4, i % 4].hist(
-            freq_fits[:, i], bins=100, alpha=0.5, label="old"
-        )
-        ax[i // 4, i % 4].hist(
-            new_freq_fits[:, i], bins=100, alpha=0.5, label="new"
-        )
-        ax[i // 4, i % 4].axvline(0, color="k", ls="--", lw=0.5)
-
-        if i == 0:
-            ax[i // 4, i % 4].legend()
-
-        # add row labels
-        if i % 4 == 0:
-            ax[i // 4, i % 4].set_ylabel("Density")
-
-        # add column labels
-        if i // 4 == 2:
-            ax[i // 4, i % 4].set_xlabel("Parameter value")
-
-        # add column titles
-        if i < 4:
-            ax[i // 4, i % 4].set_title(param_names[i % 4])
-
-    fig.suptitle("Frequency fits")
-    plt.savefig(path / "interpolation_distributions.png")
-    plt.show()
-
-    # plot the resulting chirps
-    fig, ax = plt.subplots()
-    t = np.linspace(0, 0.5, 20000) - 0.25
-    tuk = tukey(len(t), alpha=0.4)
-    for i in range(len(new_freq_fits)):
-        popt = new_freq_fits[i, :]
-        chirp = chirp_model(t, *popt)
-        mode = np.histogram(chirp, bins=100)[1][
-            np.argmax(np.histogram(chirp, bins=100)[0])
-        ]
-        chirp -= mode
-        chirp *= tuk
-        ax.plot(
-            t,
-            chirp,
-            alpha=0.1,
-            color="k",
-            lw=0.5,
-        )
-
-    ax.axvline(0, color="k", ls="--", lw=0.5)
-    ax.axhline(0, color="k", ls="--", lw=0.5)
-    ax.set_xlim(-0.1, 0.1)
-    ax.set_ylim(-50, 400)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Frequency (Hz)")
-    ax.set_title("Interpolated chirp simulations")
-    plt.savefig(path / "interpolation.png")
-    plt.show()
-
-    np.save(path / "interpolation.npy", new_freq_fits)
-
-
-def resample_interface():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--path", "-p", type=pathlib.Path, help="Path to the dataset."
-    )
-    args = parser.parse_args()
-    return args
-
-
 def main_resample():
-    args = resample_interface()
-    resample_chirp_params(args.path)
+    args = extract_interface()
+    resample_chirp_fits(args.input, args.output)

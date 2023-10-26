@@ -333,7 +333,7 @@ def gaussian(
     return curve
 
 
-def chirp_model(x, m1, h1, w1, k1, m2, h2, w2, k2, m3, h3, w3, k3):
+def chirp_model_v2(x, m1, h1, w1, k1, m2, h2, w2, k2, m3, h3, w3, k3):
     """Model a chirp as a combination of 3 Gaussians. This model
     can be fit to the extracted instantaneous frequencies of real chirps and
     is not supposed to be tuned "by hand".
@@ -376,6 +376,68 @@ def chirp_model(x, m1, h1, w1, k1, m2, h2, w2, k2, m3, h3, w3, k3):
     g2 = gaussian(x, m2, h2, w2, k2)
     g3 = gaussian(x, m3, h3, w3, k3)
     return g1 + g2 + g3
+
+
+def chirp_model_v3(x, m1, h1, w1, k1, m2, h2, w2, k2):
+    """Model a chirp as a combination of 2 Gaussians. This model
+    can be fit to the extracted instantaneous frequencies of real chirps and
+    is not supposed to be tuned "by hand".
+
+    Parameters
+    ----------
+    x : np.array
+        The time axis.
+    m1 : float
+        The mean of the first Gaussian
+    h1 : float
+        The height of the first Gaussian
+    w1 : float
+        The width of the first Gaussian
+    k1 : float
+        The kurtosis of the first Gaussian
+    m2 : float
+        The mean of the second Gaussian
+    h2 : float
+        The height of the second Gaussian
+    w2 : float
+        The width of the second Gaussian
+    k2 : float
+        The kurtosis of the second Gaussian
+
+    Returns
+    -------
+    np.array
+        The modeled chirp
+    """
+    g1 = gaussian(x, m1, h1, w1, k1)
+    g2 = gaussian(x, m2, h2, w2, k2)
+    return g1 + g2
+
+
+def chirp_model_v4(x, m1, h1, w1, k1):
+    """Model a chirp as a combination of 1 Gaussians. This model
+    can be fit to the extracted instantaneous frequencies of real chirps and
+    is not supposed to be tuned "by hand".
+
+    Parameters
+    ----------
+    x : np.array
+        The time axis.
+    m1 : float
+        The mean of the first Gaussian
+    h1 : float
+        The height of the first Gaussian
+    w1 : float
+        The width of the first Gaussian
+    k1 : float
+        The kurtosis of the first Gaussian
+
+    Returns
+    -------
+    np.array
+        The modeled chirp
+    """
+    return gaussian(x, m1, h1, w1, k1)
 
 
 def make_chirps(
