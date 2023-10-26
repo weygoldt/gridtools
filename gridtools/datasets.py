@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 
 """
-Wavetracker dataset classes using composition. The main class is the `Dataset`
-class, which can be used to load data from the wavetracker, the raw data and
-the chirp data. The `WavetrackerData` class loads the wavetracker data, the
-`GridData` class loads the raw data and the `ChirpData` class loads the chirp
-data. The `Dataset` class is a composition of the other three classes. This way,
-the user can choose which data to load and which not to load. It is also easily
-extensible to other data types, e.g. rises or behaviour data.
+Classes and functions to load, work with and save data associated with 
+electrode grid recordings of wave-type weakly electric fish.
+
+The main class is the Dataset class, which is able to load all data extracted
+by the `wavetracker` as well as raw data, communication signals, etc.
+
+The main functionalities include the following:
+- gridtools.datasets.load: Load a dataset from a given path.
+- gridtools.datasets.save: Save a dataset to disk.
+- gridtools.datasets.subset: Make a subset of a dataset.
+
+The Dataset class is a composition of the WavetrackerData, GridData and
+CommunicationData classes. This way, the user can choose which data to load
+and which not to load. This design might seem complicated at first, but it
+allows for a lot of flexibility and extensibility. For example, if in the
+future, better detectors are available, or other kinds of data is extracted,
+they can easily be added to the Dataset class, without breaking the existing
+code.
 """
 
 import pathlib
@@ -21,6 +32,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from rich.pretty import pprint as rpprint
 
 from thunderfish.dataloader import DataLoader
 from thunderfish.datawriter import write_data
@@ -28,147 +40,246 @@ from thunderfish.datawriter import write_data
 from .exceptions import GridDataMismatch
 
 
-def save_wavetracker(wt: "WavetrackerData", output_path: pathlib.Path) -> None:
+def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
     """
-    Save WavetrackerData object to disk.
+    Load data produced by the wavetracker and other data extracted from them,
+    such as position estimates.
 
     Parameters
     ----------
-    wt : WavetrackerData
-        WavetrackerData object to save.
-    output_path : pathlib.Path
-        Path to save the object to.
+    path : pathlib.Path
+        Path to the directory containing the data files.
 
     Returns
     -------
-    None
+    WavetrackerData
+        An instance of the WavetrackerData class containing the loaded data.
 
-    Notes
-    -----
-    This function saves the following attributes of the WavetrackerData object to disk:
-    - freqs: numpy.ndarray
-        Frequencies of each fish over time.
-    - powers: numpy.ndarray
-        Powers for each frequency.
-    - idents: numpy.ndarray
-        Identifiers of the fish.
-    - indices: numpy.ndarray
-        Indices to connect fish ID and freq/power/positions to the time axis.
-    - times: numpy.ndarray
-        Time axis.
-    - xpos: numpy.ndarray, optional
-        X-coordinates estimated for each fish, if available.
-    - ypos: numpy.ndarray, optional
-        Y-coordinates estimated for each fish, if available.
+    Raises
+    ------
+    FileNotFoundError
+        If no wavetracker dataset is found in the specified directory.
 
     Examples
     --------
     >>> import pathlib
     >>> from gridtools.datasets import load_wavetracker
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
-    >>> save_wavetracker(wt, pathlib.Path("path/to/save"))
     """
 
-    np.save(output_path / "fund_v.npy", wt.freqs)
-    np.save(output_path / "sign_v.npy", wt.powers)
-    np.save(output_path / "ident_v.npy", wt.idents)
-    np.save(output_path / "idx_v.npy", wt.indices)
-    np.save(output_path / "times.npy", wt.times)
-    if wt.xpos is not None:
-        np.save(output_path / "xpos.npy", wt.xpos)
-        np.save(output_path / "ypos.npy", wt.ypos)
+    if isinstance(path, str):
+        path = pathlib.Path(path)
+
+    files = list(path.glob("*"))
+
+    if not any("fund_v.npy" in str(f) for f in files):
+        raise FileNotFoundError("No wavetracker dataset found!")
+
+    return WavetrackerData(
+        freqs=np.load(path / "fund_v.npy"),
+        powers=np.load(path / "sign_v.npy"),
+        idents=np.load(path / "ident_v.npy"),
+        indices=np.load(path / "idx_v.npy"),
+        times=np.load(path / "times.npy"),
+        ids=np.unique(np.load(path / "ident_v.npy")),
+        xpos=np.load(path / "xpos.npy") if "xpos.npy" in files else None,
+        ypos=np.load(path / "ypos.npy") if "ypos.npy" in files else None,
+    )
 
 
-def save_grid(rec: "GridData", output_path: pathlib.Path) -> None:
+def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     """
-    Save raw data to a WAV file using `thunderfish.datawriter`.
+    Load a raw dataset from a given path.
 
     Parameters
     ----------
-    rec :GridData
-        The raw data to be saved.
-    output_path : pathlib.Path
-        The path to save the file to.
-
-    Example
-    -------
-    >>> import pathlib
-    >>> from gridtools.datasets import load_grid,save_grid
-    >>> rec = load_grid(pathlib.Path("path/to/raw"))
-    >>> save_grid(rec, pathlib.Path("path/to/save"))
-    """
-
-    write_data(str(output_path / "traces_grid1.wav"), rec.raw, rec.samplerate)
-
-
-def save_com(com: "CommunicationData", output_path: pathlib.Path) -> None:
-    """
-    Save communication data to disk.
-
-    Parameters
-    ----------
-    com : CommunicationData
-        The communication data to save.
-    output_path : pathlib.Path
-        The path to the directory where the data should be saved.
+    path : pathlib.Path
+        The path to the directory containing the raw dataset.
 
     Returns
     -------
-    None
-
-    Example
-    -------
-    >>> import pathlib
-    >>> from gridtools.datasets import load_com, save_com
-    >>> com = load_com(pathlib.Path("path/to/communication"))
-    >>> save_com(com, pathlib.Path("path/to/save"))
-    """
-
-    if com.chirp is not None:
-        np.save(output_path / "chirp_times_gt.npy", com.chirp.times)
-        np.save(output_path / "chirp_ids_gt.npy", com.chirp.idents)
-
-
-def save(dataset: "Dataset", output_path: pathlib.Path) -> None:
-    """
-    Save a Dataset object to disk. This function saves the wavetracker data,
-    the raw data and the communication data to disk, depending on what is
-    available in the Dataset object.
-
-    Parameters
-    ----------
-    dataset : Dataset
-        Dataset to save to file.
-    output_path : pathlib.Path
-        Path where to save the dataset.
+    GridData
+        An object containing the loaded raw dataset.
 
     Raises
     ------
-    FileExistsError
-        When there already is a dataset.
+    FileNotFoundError
+        If no raw dataset is found in the given directory.
+
+    Notes
+    -----
+    This function uses the thunderfish dataloader to easily access large binary files.
+    The function checks if the directory contains a "traces*" file.
+    The function is tested using .raw and .wav files.
+    If neither file is found, a FileNotFoundError is raised.
+    If a "traces-grid1.raw" file is found, it is loaded using the thunderfish DataLoader.
+    The function returns a GridData object containing the loaded raw dataset.
+    Instead of directly passing the DataLoader object, I wrap it in this class
+    to later be able to add metadata such as electrode positions, etc. to the
+    recording class.
+
+    Examples
+    --------
+    >>> import pathlib
+    >>> from gridtools.datasets load_grid
+    >>> rec = load_grid(pathlib.Path("path/to/raw"))
+    """
+
+    if isinstance(path, str):
+        path = pathlib.Path(path)
+
+    files = list(path.glob("traces*"))
+
+    if len(files) == 0:
+        raise FileNotFoundError("No raw dataset found!")
+    if len(files) > 1:
+        raise FileNotFoundError("More than one raw dataset found! Check path.")
+
+    file = files[0]
+    rec = DataLoader(str(path / file.name))
+
+    return GridData(rec=rec)
+
+
+def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
+    """
+    Load communication data from a given path. Loads chirps if available, loads
+    rises if available, or loads both if available. If no communication data is
+    available, returns None.
+
+    Data on disk must follow the following naming convention:
+    - {signal type}_times_{detector handle}.npy
+    - {signal type}_ids_{detector handle}.npy
+
+    For example, chirp data is loaded from the following files:
+    - chirp_times_gt.npy
+    - chirp_ids_gt.npy
+    - chirp_times_cnn.npy
+    - chirp_ids_cnn.npy
+
+    If no detector handle is found, the data is not loaded. If in the future,
+    better detectors are available, they need to be added to this function.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The path to the directory containing the communication data.
+
+    Returns
+    -------
+    CommunicationData
+        An object containing the loaded communication data.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no chirp or rise dataset with the correct detector handle is found.
+
+    Examples
+    --------
+    >>> import pathlib
+    >>> from gridtools.datasets import load_com
+    >>> com = load_com(pathlib.Path("path/to/communication"))
+    >>> # get rise times and ids
+    >>> com.rise.times
+    >>> com.rise.idents
+    """
+
+    if isinstance(path, str):
+        path = pathlib.Path(path)
+
+    files = list(path.glob("*"))
+
+    # Load chirp data if available
+    if any("chirp_times_" in str(f) for f in files):
+        if any("chirp_times_gt.npy" in str(f) for f in files):
+            det = "gt"
+        elif any("chirp_times_cnn.npy" in str(f) for f in files):
+            det = "cnn"
+        else:
+            raise FileNotFoundError(
+                "No chirp dataset with correct detector handle found!"
+            )
+        chps = ChirpData(
+            times=np.load(path / f"chirp_times_{det}.npy"),
+            idents=np.load(path / f"chirp_ids_{det}.npy").astype(int),
+            detector=det,
+        )
+    else:
+        chps = None
+
+    # Load rise data if available
+    if any("rise_times_" in str(f) for f in files):
+        if any("rise_times_gt.npy" in str(f) for f in files):
+            det = "gt"
+        elif any("rise_times_pd.npy" in str(f) for f in files):
+            det = "pd"
+        else:
+            raise FileNotFoundError(
+                "No rise dataset with correct detector handle found!"
+            )
+        ris = RiseData(
+            times=np.load(path / f"rise_times_{det}.npy"),
+            idents=np.load(path / f"rise_ids_{det}.npy").astype(int),
+            detector=det,
+        )
+    else:
+        ris = None
+
+    return CommunicationData(chirp=chps, rise=ris)
+
+
+def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
+    """
+    Load all data from a dataset and build a Dataset object. A dataset object
+    contains at least all data produces by the wavetracker and optionally, also
+    the raw data, communication signals or position estimates.
+
+    A dataset is not just a dataclass but a data model: Upon instantiation, the
+    data is checked for consistency and errors are raised if the data is
+    inconsistent.
+
+    the Dataset model is a composition of the WavetrackerData, GridData and
+    CommunicationData models. This way, the user can choose which data to load
+    and which not to load. It is also easily extensible to other data types,
+    e.g. rises or behaviour data, if this is needed in the future.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The path to the dataset.
+    raw : bool, optional
+        Whether to load the raw data or not. Default is False.
+
+    Returns
+    -------
+    Dataset
+        A Dataset object containing the raw data, wavetracker data, and communication data.
 
     Example
     -------
-    >>> import pathlib
-    >>> from gridtools.datasets import load, save
+    >>> from gridtools.datasets import load
     >>> ds = load(pathlib.Path("path/to/dataset"))
-    >>> save(ds, pathlib.Path("path/to/save"))
+    >>> # You can easily access wavetracker data using the dot notation
+    >>> ds.track.freqs
+    >>> # You can also access the raw data
+    >>> ds.rec.raw
+    >>> # Or the communication data
+    >>> ds.com.chirp.times
+    >>> ds.com.chirp.idents
+    >>> # Or the position estimates
+    >>> ds.track.xpos
     """
+    if isinstance(path, str):
+        path = pathlib.Path(path)
 
-    output_dir = output_path / dataset.path.name
-
-    if output_dir.exists():
-        raise FileExistsError(f"Output directory {output_dir} already exists.")
-
-    output_dir.mkdir(parents=True)
-
-    save_wavetracker(dataset.track, output_dir)
-
-    if dataset.grid is not None:
-        save_grid(dataset.grid, output_dir)
-
-    if dataset.com is not None:
-        save_com(dataset.com, output_dir)
+    ds = Dataset(
+        path=path,
+        grid=load_grid(path) if grid else None,
+        track=load_wavetracker(path),
+        com=load_com(path),
+    )
+    return ds
 
 
 def subset_wavetracker(
@@ -422,233 +533,183 @@ def subset(data: "Dataset", start_time: float, stop_time: float) -> "Dataset":
     return Dataset(path=data.path, grid=raw_sub, track=wt_sub, com=com_sub)
 
 
-def load_wavetracker(path: pathlib.Path) -> "WavetrackerData":
+def save_wavetracker(
+    wt: "WavetrackerData", output_path: Union[pathlib.Path, str]
+) -> None:
     """
-    Load data produced by the wavetracker and other data extracted from them,
-    such as position estimates.
+    Save WavetrackerData object to disk.
 
     Parameters
     ----------
-    path : pathlib.Path
-        Path to the directory containing the data files.
+    wt : WavetrackerData
+        WavetrackerData object to save.
+    output_path : pathlib.Path
+        Path to save the object to.
 
     Returns
     -------
-    WavetrackerData
-        An instance of the WavetrackerData class containing the loaded data.
+    None
 
-    Raises
-    ------
-    FileNotFoundError
-        If no wavetracker dataset is found in the specified directory.
+    Notes
+    -----
+    This function saves the following attributes of the WavetrackerData object to disk:
+    - freqs: numpy.ndarray
+        Frequencies of each fish over time.
+    - powers: numpy.ndarray
+        Powers for each frequency.
+    - idents: numpy.ndarray
+        Identifiers of the fish.
+    - indices: numpy.ndarray
+        Indices to connect fish ID and freq/power/positions to the time axis.
+    - times: numpy.ndarray
+        Time axis.
+    - xpos: numpy.ndarray, optional
+        X-coordinates estimated for each fish, if available.
+    - ypos: numpy.ndarray, optional
+        Y-coordinates estimated for each fish, if available.
 
     Examples
     --------
     >>> import pathlib
     >>> from gridtools.datasets import load_wavetracker
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
+    >>> save_wavetracker(wt, pathlib.Path("path/to/save"))
     """
 
-    files = list(path.glob("*"))
-    if not any(["fund_v.npy" in str(f) for f in files]):
-        raise FileNotFoundError("No wavetracker dataset found!")
+    if isinstance(output_path, str):
+        output_path = pathlib.Path(output_path)
 
-    return WavetrackerData(
-        freqs=np.load(path / "fund_v.npy"),
-        powers=np.load(path / "sign_v.npy"),
-        idents=np.load(path / "ident_v.npy"),
-        indices=np.load(path / "idx_v.npy"),
-        times=np.load(path / "times.npy"),
-        ids=np.unique(np.load(path / "ident_v.npy")),
-        xpos=np.load(path / "xpos.npy") if "xpos.npy" in files else None,
-        ypos=np.load(path / "ypos.npy") if "ypos.npy" in files else None,
-    )
+    np.save(output_path / "fund_v.npy", wt.freqs)
+    np.save(output_path / "sign_v.npy", wt.powers)
+    np.save(output_path / "ident_v.npy", wt.idents)
+    np.save(output_path / "idx_v.npy", wt.indices)
+    np.save(output_path / "times.npy", wt.times)
+    if wt.xpos is not None:
+        np.save(output_path / "xpos.npy", wt.xpos)
+        np.save(output_path / "ypos.npy", wt.ypos)
 
 
-def load_grid(path: pathlib.Path) -> "GridData":
+def save_grid(rec: "GridData", output_path: Union[pathlib.Path, str]) -> None:
     """
-     Load a raw dataset from a given path.
-
-     Parameters
-     ----------
-     path : pathlib.Path
-         The path to the directory containing the raw dataset.
-
-     Returns
-     -------
-    GridData
-         An object containing the loaded raw dataset.
-
-     Raises
-     ------
-     FileNotFoundError
-         If no raw dataset is found in the given directory.
-
-     Notes
-     -----
-     This function uses the thunderfish dataloader to easily access large binary files.
-     The function checks if the directory contains a "traces*" file.
-     The function is tested using .raw and .wav files.
-     If neither file is found, a FileNotFoundError is raised.
-     If a "traces-grid1.raw" file is found, it is loaded using the thunderfish DataLoader.
-     The function returns a GridData object containing the loaded raw dataset.
-     Instead of directly passing the DataLoader object, I wrap it in this class
-     to later be able to add metadata such as electrode positions, etc. to the
-     recording class.
-
-     Examples
-     --------
-     >>> import pathlib
-     >>> from gridtools.datasets load_grid
-     >>> rec = load_grid(pathlib.Path("path/to/raw"))
-    """
-
-    files = list(path.glob("traces*"))
-    if len(files) == 0:
-        raise FileNotFoundError("No raw dataset found!")
-    if len(files) > 1:
-        raise FileNotFoundError("More than one raw dataset found! Check path.")
-
-    file = files[0]
-    rec = DataLoader(str(path / file.name))
-
-    return GridData(raw=rec)
-
-
-def load_com(path: pathlib.Path) -> "CommunicationData":
-    """
-    Load communication data from a given path. Loads chirps if available, loads
-    rises if available, or loads both if available. If no communication data is
-    available, returns None.
-
-    Data on disk must follow the following naming convention:
-    - {signal type}_times_{detector handle}.npy
-    - {signal type}_ids_{detector handle}.npy
-
-    For example, chirp data is loaded from the following files:
-    - chirp_times_gt.npy
-    - chirp_ids_gt.npy
-    - chirp_times_cnn.npy
-    - chirp_ids_cnn.npy
-
-    If no detector handle is found, the data is not loaded. If in the future,
-    better detectors are available, they need to be added to this function.
+    Save raw data to a WAV file using `thunderfish.datawriter`.
 
     Parameters
     ----------
-    path : pathlib.Path
-        The path to the directory containing the communication data.
-
-    Returns
-    -------
-    CommunicationData
-        An object containing the loaded communication data.
-
-    Raises
-    ------
-    FileNotFoundError
-        If no chirp or rise dataset with the correct detector handle is found.
-
-    Examples
-    --------
-    >>> import pathlib
-    >>> from gridtools.datasets import load_com
-    >>> com = load_com(pathlib.Path("path/to/communication"))
-    >>> # get rise times and ids
-    >>> com.rise.times
-    >>> com.rise.idents
-    """
-
-    files = list(path.glob("*"))
-
-    # Load chirp data if available
-    if any("chirp_times_" in str(f) for f in files):
-        if any("chirp_times_gt.npy" in str(f) for f in files):
-            det = "gt"
-        elif any("chirp_times_cnn.npy" in str(f) for f in files):
-            det = "cnn"
-        else:
-            raise FileNotFoundError(
-                "No chirp dataset with correct detector handle found!"
-            )
-        chps = ChirpData(
-            times=np.load(path / f"chirp_times_{det}.npy"),
-            idents=np.load(path / f"chirp_ids_{det}.npy").astype(int),
-            detector=det,
-        )
-    else:
-        chps = None
-
-    # Load rise data if available
-    if any("rise_times_" in str(f) for f in files):
-        if any("rise_times_gt.npy" in str(f) for f in files):
-            det = "gt"
-        elif any("rise_times_pd.npy" in str(f) for f in files):
-            det = "pd"
-        else:
-            raise FileNotFoundError(
-                "No rise dataset with correct detector handle found!"
-            )
-        ris = RiseData(
-            times=np.load(path / f"rise_times_{det}.npy"),
-            idents=np.load(path / f"rise_ids_{det}.npy").astype(int),
-            detector=det,
-        )
-    else:
-        ris = None
-
-    return CommunicationData(chirp=chps, rise=ris)
-
-
-def load(path: pathlib.Path, grid: bool = False) -> "Dataset":
-    """
-    Load all data from a dataset and build a Dataset object. A dataset object
-    contains at least all data produces by the wavetracker and optionally, also
-    the raw data, communication signals or position estimates.
-
-    A dataset is not just a dataclass but a data model: Upon instantiation, the
-    data is checked for consistency and errors are raised if the data is
-    inconsistent.
-
-    the Dataset model is a composition of the WavetrackerData, GridData and
-    CommunicationData models. This way, the user can choose which data to load
-    and which not to load. It is also easily extensible to other data types,
-    e.g. rises or behaviour data, if this is needed in the future.
-
-    Parameters
-    ----------
-    path : pathlib.Path
-        The path to the dataset.
-    raw : bool, optional
-        Whether to load the raw data or not. Default is False.
-
-    Returns
-    -------
-    Dataset
-        A Dataset object containing the raw data, wavetracker data, and communication data.
+    rec :GridData
+        The raw data to be saved.
+    output_path : pathlib.Path
+        The path to save the file to.
 
     Example
     -------
-    >>> from gridtools.datasets import load
-    >>> ds = load(pathlib.Path("path/to/dataset"))
-    >>> # You can easily access wavetracker data using the dot notation
-    >>> ds.track.freqs
-    >>> # You can also access the raw data
-    >>> ds.rec.raw
-    >>> # Or the communication data
-    >>> ds.com.chirp.times
-    >>> ds.com.chirp.idents
-    >>> # Or the position estimates
-    >>> ds.track.xpos
+    >>> import pathlib
+    >>> from gridtools.datasets import load_grid,save_grid
+    >>> rec = load_grid(pathlib.Path("path/to/raw"))
+    >>> save_grid(rec, pathlib.Path("path/to/save"))
     """
 
-    ds = Dataset(
-        path=path,
-        grid=load_grid(path) if grid else None,
-        track=load_wavetracker(path),
-        com=load_com(path),
+    if isinstance(output_path, str):
+        output_path = pathlib.Path(output_path)
+
+    write_data(
+        str(output_path / "traces_grid1.wav"), rec.rec, rec.rec.samplerate
     )
-    return ds
+
+
+def save_com(
+    com: "CommunicationData", output_path: Union[pathlib.Path, str]
+) -> None:
+    """
+    Save communication data to disk.
+
+    Parameters
+    ----------
+    com : CommunicationData
+        The communication data to save.
+    output_path : pathlib.Path
+        The path to the directory where the data should be saved.
+
+    Returns
+    -------
+    None
+
+    Example
+    -------
+    >>> import pathlib
+    >>> from gridtools.datasets import load_com, save_com
+    >>> com = load_com(pathlib.Path("path/to/communication"))
+    >>> save_com(com, pathlib.Path("path/to/save"))
+    """
+
+    if com.chirp is not None:
+        np.save(output_path / "chirp_times_gt.npy", com.chirp.times)
+        np.save(output_path / "chirp_ids_gt.npy", com.chirp.idents)
+
+
+def save(dataset: "Dataset", output_path: Union[pathlib.Path, str]) -> None:
+    """
+    Save a Dataset object to disk. This function saves the wavetracker data,
+    the raw data and the communication data to disk, depending on what is
+    available in the Dataset object.
+
+    Parameters
+    ----------
+    dataset : Dataset
+        Dataset to save to file.
+    output_path : pathlib.Path
+        Path where to save the dataset.
+
+    Raises
+    ------
+    FileExistsError
+        When there already is a dataset.
+
+    Example
+    -------
+    >>> import pathlib
+    >>> from gridtools.datasets import load, save
+    >>> ds = load(pathlib.Path("path/to/dataset"))
+    >>> save(ds, pathlib.Path("path/to/save"))
+    """
+
+    if isinstance(output_path, str):
+        output_path = pathlib.Path(output_path)
+
+    output_dir = output_path / dataset.path.name
+
+    if output_dir.exists():
+        raise FileExistsError(f"Output directory {output_dir} already exists.")
+
+    output_dir.mkdir(parents=True)
+
+    save_wavetracker(dataset.track, output_dir)
+
+    if dataset.grid is not None:
+        save_grid(dataset.grid, output_dir)
+
+    if dataset.com is not None:
+        save_com(dataset.com, output_dir)
+
+
+def pprint(obj: BaseModel) -> None:
+    """
+    Pretty-print the attributes of the object.
+    """
+
+    def collect_vars(obj):
+        if isinstance(obj, BaseModel):
+            result = {}
+            for key, value in obj.__dict__.items():
+                if not key.startswith("_") and value is not None:
+                    if isinstance(value, BaseModel):
+                        result[key] = collect_vars(value)
+                    else:
+                        result[key] = type(value).__name__
+            return result
+        else:
+            return None
+
+    return rpprint(collect_vars(obj), expand_all=True)
 
 
 class WavetrackerData(BaseModel):
@@ -658,8 +719,6 @@ class WavetrackerData(BaseModel):
 
     Parameters
     ----------
-    model_config : ConfigDict
-        Configuration dictionary for the model.
     freqs : np.ndarray[float]
         Array of frequencies.
     powers : np.ndarray[float]
@@ -796,7 +855,7 @@ class WavetrackerData(BaseModel):
         GridDataMismatch
             If the number of times is smaller than the number of unique indices.
         """
-        if self.times.shape[0] <= len(set(self.indices)):
+        if self.times.shape[0] < len(set(self.indices)):
             raise GridDataMismatch(
                 "Number of times is smaller than number of unique indices!"
             )
@@ -824,6 +883,12 @@ class WavetrackerData(BaseModel):
         if len(set(lengths)) > 1:
             raise GridDataMismatch("Wavetracker data is not of equal length!")
         return self
+
+    def pprint(self) -> None:
+        """
+        Pretty-print the attributes of the object.
+        """
+        pprint(self)
 
 
 class GridData(BaseModel):
@@ -888,6 +953,12 @@ class GridData(BaseModel):
                 "Raw data must be a numpy array or a DataLoader."
             )
         return v
+
+    def pprint(self) -> None:
+        """
+        Pretty-print the attributes of the object.
+        """
+        pprint(self)
 
 
 class ChirpData(BaseModel):
@@ -994,6 +1065,12 @@ class ChirpData(BaseModel):
             raise ValidationError("Detector must be 'gt' or 'cnn'.")
         return v
 
+    def pprint(self) -> None:
+        """
+        Pretty-print the attributes of the object.
+        """
+        pprint(self)
+
 
 class RiseData(BaseModel):
     """
@@ -1075,15 +1152,20 @@ class RiseData(BaseModel):
             raise ValidationError("Detector must be 'gt' or 'pd'.")
         return v
 
+    def pprint(self) -> None:
+        """
+        Pretty-print the attributes of the object.
+        """
+        pprint(self)
+
 
 class CommunicationData(BaseModel):
     """
     Contains data for communication signals produced by fish in the dataset.
+    If a variable is set to None, it is removed.
 
     Parameters
     ----------
-    model_config : ConfigDict
-        A dictionary containing configuration information for the model.
     chirp : ChirpData, optional
         Data for the chirp signal produced by the fish.
     rise : RiseData, optional
@@ -1185,15 +1267,32 @@ class CommunicationData(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def delete_if_none(self):
+        """
+        Deletes attributes from the model if their values are None.
+
+        Returns:
+        --------
+        self : object
+            The modified instance of the object.
+        """
+        for key, value in self.model_dump().items():
+            if value is None:
+                delattr(self, key)
+        return self
+
+    def pprint(self) -> None:
+        """
+        Pretty-print the attributes of the object.
+        """
+        pprint(self)
+
 
 class Dataset(BaseModel):
     """
     The main dataset class to load data extracted from electrode grid recordings
-    of wave-type weakly electric fish. Every dataset must at least get a path
-    to a wavetracker dataset. Optionally, a raw dataset and/or a chirp dataset
-    can be provided. The raw dataset can be used to extract e.g. the chirp times
-    from the raw data. Best instantiated with the `load` function as demonstrated
-    in the examples.
+    of wave-type weakly electric fish.
 
     Parameters
     ----------
@@ -1205,6 +1304,14 @@ class Dataset(BaseModel):
         The wavetracker data.
     com : Optional[CommunicationData], optional
         The communication data, by default None.
+
+    Notes
+    -----
+    Every dataset must at least get a path to a wavetracker dataset. Optionally,
+    a raw dataset and/or a chirp dataset can be provided. The raw dataset can
+    be used to extract e.g. the chirp times from the raw data. Best instantiated
+    with the `load` function as demonstrated in the examples. If a variable is
+    set to None, it is removed.
 
     Examples
     --------
@@ -1220,9 +1327,9 @@ class Dataset(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     path: pathlib.Path
-    grid: Optional[GridData] = None
+    grid: Optional[GridData]
     track: WavetrackerData
-    com: Optional[CommunicationData] = None
+    com: Optional[CommunicationData]
 
     @field_validator("path")
     @classmethod
@@ -1327,3 +1434,24 @@ class Dataset(BaseModel):
                 "Communication data must be a CommunicationData object."
             )
         return v
+
+    @model_validator(mode="after")
+    def delete_if_none(self):
+        """
+        Deletes attributes from the model if their values are None.
+
+        Returns:
+        --------
+        self : object
+            The modified instance of the object.
+        """
+        for key, value in self.model_dump().items():
+            if value is None:
+                delattr(self, key)
+        return self
+
+    def pprint(self) -> None:
+        """
+        Pretty-print the attributes of the object.
+        """
+        pprint(self)
