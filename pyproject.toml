@@ -20,6 +20,7 @@ pydantic = "^2.4.2"
 pandas = "^2.1.2"
 audioio = {git = "https://github.com/janscience/audioio.git"}
 thunderfish = {git = "https://github.com/weygoldt/thunderfish.git"}
+pyaml = "^23.9.7"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.10.0"
@@ -33,6 +34,10 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
+fakegrid = "gridtools.fakegrid:fakegrid"
+movement-demo = "gridtools.simulations:movement_demo"
+communication-demo = "gridtools.simulations:communication_demo"
+grid-demo = "gridtools.simulations:grid_demo"
 subset-dataset = "gridtools.datasets:subset_cli"
 extract-chirps = "gridtools.extract_chirps:extract_cli"
 resample-chirps = "gridtools.extract_chirps:resample_cli"

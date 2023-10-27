@@ -27,7 +27,16 @@ data = load('path/to/dataset')
 data = subset(data, 0, 1000) # get the first 1000 seconds
 save(data, 'path/to/dataset_subset')
 ```
-Because the `load` function automatically loads as much data as possible (excluding the raw data) and verifies the dataset, it is a good idea to check what is included in the dataset before loading it. This can be done with the `pprint` function:
+
+Most of this functionality is also implemented as shell scipts and can 
+be used from the command line. For example, to create a subset of a dataset,
+you can run:
+
+```bash
+subset-dataset -i /path/to/dataset -o /path/to/save --start 10 --end 20
+```
+
+Because the `load` function automatically loads as much data as possible (excluding the raw data) and verifies the dataset, it is a good idea to check what is included in the dataset before loading it. This can be done with the `pprint` function. It will print a summary of the dataset.
 
 ```python
 data.pprint()

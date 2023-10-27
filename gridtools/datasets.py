@@ -26,7 +26,6 @@ import pathlib
 from typing import Optional, Union
 
 import numpy as np
-from IPython import embed
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -1067,6 +1066,7 @@ class ChirpData(BaseModel):
     times: np.ndarray
     idents: np.ndarray
     detector: str
+    params: Optional[np.ndarray]
 
     @field_validator("times", "idents")
     @classmethod
