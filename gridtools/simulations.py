@@ -11,6 +11,13 @@ from typing import List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from scipy.interpolate import interp1d
 from scipy.stats import gamma, norm
 
@@ -72,12 +79,12 @@ class RiseParams:
 
 
 def direction_pdf(
-    forward_s,
-    backward_s,
-    backward_h,
-    measurement_fs=30,
-    target_fs=3,
-):
+    forward_s: float,
+    backward_s: float,
+    backward_h: float,
+    measurement_fs: int = 30,
+    target_fs: int = 3,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Probability density function of the directions a fish can take.
 
@@ -334,9 +341,18 @@ def gaussian(
 
 
 def chirp_model_v2(x, m1, h1, w1, k1, m2, h2, w2, k2, m3, h3, w3, k3):
-    """Model a chirp as a combination of 3 Gaussians. This model
-    can be fit to the extracted instantaneous frequencies of real chirps and
-    is not supposed to be tuned "by hand".
+    """Model a chirp as a combination of 3 Gaussians.
+
+    This model can be fit to the extracted instantaneous frequencies of real
+    chirps and is not supposed to be tuned "by hand".
+
+    This is the most complex model and is not that useful because of the
+    12 dimensonal parameter space. What motivated this model is the fact that
+    while the averaged chirp is most of the time a single Gaussian with a small
+    undershoot, the instantaneous frequency of real chirps rarely looks like
+    that. Instead, the instantaneous frequency of real chirps come in a variety
+    of shapes, to which a more complex model is better conform to. And when the
+    aim is to model realistic chirps, this variation in shape is important.
 
     Parameters
     ----------
@@ -418,6 +434,10 @@ def chirp_model_v4(x, m1, h1, w1, k1):
     """Model a chirp as a combination of 1 Gaussians. This model
     can be fit to the extracted instantaneous frequencies of real chirps and
     is not supposed to be tuned "by hand".
+
+    It is overly simplistic and does not capture the variation in shape of
+    real chirps. But on the other hand, it is fast and easy to fit
+    and controlling the parameters is intuitive.
 
     Parameters
     ----------
@@ -506,7 +526,7 @@ def make_chirps(
 def make_simple_chirps(params: ChirpParams) -> tuple[np.ndarray, np.ndarray]:
     """Simulate frequency trace with chirps. Original code by Jan Benda et al.
 
-    A chirp is modeled as a combination of 3 Gaussians. This model is used to
+    A chirp is modeled as a combination of 2 Gaussians. This model is used to
     simulate chirps "by hand". The first Gaussian is
     centered at the chirp time and has a width of chirp_width. The second Gaussian
     is centered at chirp_time + chirp_width / 2 and has the same width but a
@@ -670,7 +690,7 @@ def movement_demo():
     plt.show()
 
 
-def make_chirp_rise_demo():
+def communication_demo():
     """
     Demo of chirp and rise simulations.
     """
@@ -690,7 +710,7 @@ def make_chirp_rise_demo():
     plt.show()
 
 
-def make_grid_demo():
+def grid_demo():
     """
     Plot some simulations of electrode grid arrangements.
     """
@@ -719,8 +739,8 @@ def main():
     Show some demos.
     """
     movement_demo()
-    make_chirp_rise_demo()
-    make_grid_demo()
+    communication_demo()
+    grid_demo()
 
 
 if __name__ == "__main__":
