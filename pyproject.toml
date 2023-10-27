@@ -2,9 +2,12 @@
 name = "gridtools"
 version = "0.0.1"
 description = "A toolbox to work with electrode grid recordings of wave-type weakly electric fish more efficiently."
-authors = ["weygoldt <88969563+weygoldt@users.noreply.github.com>"]
+authors = ["weygoldt <patrick@weygoldt.com>"]
+homepage = "https://weygoldt.com"
 license = "MIT"
 readme = "README.md"
+keywords = ["datascience", "biology", "neuro", "behavior", "bioinformatics"]
+include = ["data", "tests"]
 
 [tool.poetry.dependencies]
 python = ">=3.11, <3.13"
@@ -14,6 +17,9 @@ argparse = "^1.4.0"
 matplotlib = "^3.8.0"
 scipy = "^1.11.3"
 pydantic = "^2.4.2"
+pandas = "^2.1.2"
+audioio = {git = "https://github.com/janscience/audioio.git"}
+thunderfish = {git = "https://github.com/weygoldt/thunderfish.git"}
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.10.0"
@@ -27,8 +33,9 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-extract-chirps = "gridtools.extract_chirps:main_extract"
-resample-chirps = "gridtools.extract_chirps:main_resample"
+subset-dataset = "gridtools.datasets:subset_cli"
+extract-chirps = "gridtools.extract_chirps:extract_cli"
+resample-chirps = "gridtools.extract_chirps:resample_cli"
 
 [tool.isort]
 profile = "black"

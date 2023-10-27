@@ -11,6 +11,7 @@ import pathlib
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from rich import print as rprint
 from rich.progress import track
 from scipy.optimize import curve_fit
@@ -321,17 +322,27 @@ def extract_chirp_params(
     plt.savefig(output_dir / f"{input_dir.name}_chirps.png")
     plt.show()
 
-    np.save(output_dir / f"{input_dir.name}_chirp_freqs.npy", freqs)
-    np.save(output_dir / f"{input_dir.name}_chirp_fits.npy", fits)
+    # convert the fits to a pandas dataframe
+    df_fits = pd.DataFrame(
+        fits, columns=["mean", "amplitude", "std", "kurtosis"]
+    )
+    df_freqs = pd.DataFrame(freqs)
+
+    # save the fits and frequencies to csv files
+    df_fits.to_csv(output_dir / f"{input_dir.name}_chirp_fits.csv", index=False)
+    df_freqs.to_csv(
+        output_dir / f"{input_dir.name}_chirp_freqs.csv", index=False
+    )
 
 
 def load_chirp_fits(path: pathlib.Path) -> np.ndarray:
-    files = list(path.glob("*_chirp_fits.npy"))
+    files = list(path.glob("*_chirp_fits.csv"))
     rprint(f"[green]Found {len(files)} chirp fit datasets[/green]")
 
     fits = []
     for file in files:
-        fits.append(np.load(file))
+        # read the csv file and convert it to a numpy array
+        fits.append(pd.read_csv(file).to_numpy())
     return np.concatenate(fits)
 
 
@@ -392,7 +403,13 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
     plt.savefig(output / "chirp_simulations.png")
     plt.show()
 
-    np.save(output / "interpolation.npy", newfits)
+    # put them into a pandas dataframe
+    df = pd.DataFrame(
+        newfits.T, columns=["mean", "amplitude", "std", "kurtosis"]
+    )
+
+    # save the dataframe to a csv file
+    df.to_csv(output / "chirp_fits_interpolated.csv", index=False)
 
 
 def extract_interface():
@@ -408,11 +425,11 @@ def extract_interface():
     return args
 
 
-def main_extract():
+def extract_cli():
     args = extract_interface()
     extract_chirp_params(args.input, args.output)
 
 
-def main_resample():
+def resample_cli():
     args = extract_interface()
     resample_chirp_fits(args.input, args.output)

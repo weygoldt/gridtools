@@ -21,10 +21,12 @@ they can easily be added to the Dataset class, without breaking the existing
 code.
 """
 
+import argparse
 import pathlib
 from typing import Optional, Union
 
 import numpy as np
+from IPython import embed
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -138,7 +140,7 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     file = files[0]
     rec = DataLoader(str(path / file.name))
 
-    return GridData(rec=rec)
+    return GridData(rec=rec, samplerate=rec.samplerate)
 
 
 def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
@@ -329,7 +331,7 @@ def subset_wavetracker(
         time = wt.times[wt.indices[wt.idents == track_id]]
         index = wt.indices[wt.idents == track_id]
 
-        freq = freqs[(time >= start_time) & (time <= stop_time)]
+        freq = freq[(time >= start_time) & (time <= stop_time)]
         power = power[(time >= start_time) & (time <= stop_time)]
         index = index[(time >= start_time) & (time <= stop_time)]
         ident = np.repeat(track_id, len(freq))
@@ -354,7 +356,7 @@ def subset_wavetracker(
     if wt.xpos is not None:
         xpos = np.concatenate(xpos)
         ypos = np.concatenate(ypos)
-    time = wt.times[wt.times >= start_time & wt.times <= stop_time]
+    time = wt.times[(wt.times >= start_time) & (wt.times <= stop_time)]
 
     if len(indices) == 0:
         raise GridDataMismatch("No data in the specified time range.")
@@ -411,11 +413,11 @@ def subset_grid(
     start_idx = int(start_time * rec.samplerate)
     stop_idx = int(stop_time * rec.samplerate)
 
-    assert start_idx < rec.shape[0], "Start index out of bounds."
+    assert start_idx < rec.rec.shape[0], "Start index out of bounds."
     assert stop_idx < rec.rec.shape[0], "Stop index out of bounds."
 
     raw = rec.rec[start_idx:stop_idx, :]
-    return GridData(raw=raw)
+    return GridData(rec=raw, samplerate=rec.samplerate)
 
 
 def subset_com(
@@ -446,14 +448,14 @@ def subset_com(
     >>> subset = subset_com(com, 0.1, 0.5)
     """
 
-    if com.chirp is not None:
+    if hasattr(com, "chirp"):
         ci = com.chirp.idents[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
         ]
         ct = com.chirp.times[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
         ]
-    if com.rise is not None:
+    if hasattr(com, "rise"):
         ri = com.rise.idents[
             (com.rise.times >= start_time) & (com.rise.times <= stop_time)
         ]
@@ -463,15 +465,15 @@ def subset_com(
 
     chirp = (
         ChirpData(times=ct, idents=ci, detector=com.chirp.detector)
-        if com.chirp is not None
+        if hasattr(com, "chirp")
         else None
     )
     rise = (
         RiseData(times=rt, idents=ri, detector=com.rise.detector)
-        if com.rise is not None
+        if hasattr(com, "rise")
         else None
     )
-    if com.chirp is None and com.rise is None:
+    if not hasattr(com, "chirp") and not hasattr(com, "rise"):
         return None
     return CommunicationData(chirp=chirp, rise=rise)
 
@@ -611,9 +613,7 @@ def save_grid(rec: "GridData", output_path: Union[pathlib.Path, str]) -> None:
     if isinstance(output_path, str):
         output_path = pathlib.Path(output_path)
 
-    write_data(
-        str(output_path / "traces_grid1.wav"), rec.rec, rec.rec.samplerate
-    )
+    write_data(str(output_path / "traces_grid1.wav"), rec.rec, rec.samplerate)
 
 
 def save_com(
@@ -689,6 +689,60 @@ def save(dataset: "Dataset", output_path: Union[pathlib.Path, str]) -> None:
 
     if dataset.com is not None:
         save_com(dataset.com, output_dir)
+
+
+def subset_cli():
+    """
+    Subset a dataset to a given time range. Parameters are passed via the
+    command line.
+
+    Parameters
+    ----------
+    input_path : pathlib.Path
+        Path to the dataset to be subsetted.
+    output_path : pathlib.Path
+        Path to the directory where the subsetted dataset should be saved.
+    start_time : float
+        Start time of the subset in seconds.
+    stop_time : float
+        Stop time of the subset in seconds.
+
+    Returns
+    -------
+    None
+    """
+    parser = argparse.ArgumentParser(
+        description="Subset a dataset to a given time range."
+    )
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=pathlib.Path,
+        help="Path to the dataset to be subsetted.",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=pathlib.Path,
+        help="Path to the directory where the subsetted dataset should be saved.",
+    )
+    parser.add_argument(
+        "--start",
+        "-s",
+        type=float,
+        help="Start time of the subset in seconds.",
+    )
+    parser.add_argument(
+        "--end",
+        "-e",
+        type=float,
+        help="Stop time of the subset in seconds.",
+    )
+    args = parser.parse_args()
+
+    ds = load(args.input, grid=True)
+    ds_sub = subset(ds, args.start, args.end)
+    save(ds_sub, args.output)
 
 
 def pprint(obj: BaseModel) -> None:
@@ -918,12 +972,13 @@ class GridData(BaseModel):
     >>> from gridtools.datasets load_grid
     >>> rec = load_grid(pathlib.Path("path/to/raw"))
     >>> rec.rec
-    >>> rec.rec.samplerate
+    >>> rec.samplerate
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     rec: Union[np.ndarray, DataLoader]
+    samplerate: int
 
     @field_validator("rec")
     @classmethod
