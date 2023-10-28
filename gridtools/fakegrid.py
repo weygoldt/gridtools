@@ -16,7 +16,6 @@ from IPython import embed
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
-
 from thunderfish.fakefish import wavefish_eods
 
 from .datasets import (

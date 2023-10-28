@@ -34,7 +34,6 @@ from pydantic import (
     model_validator,
 )
 from rich.pretty import pprint as rpprint
-
 from thunderfish.dataloader import DataLoader
 from thunderfish.datawriter import write_data
 
