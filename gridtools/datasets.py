@@ -1066,7 +1066,7 @@ class ChirpData(BaseModel):
     times: np.ndarray
     idents: np.ndarray
     detector: str
-    params: Optional[np.ndarray]
+    params: Optional[np.ndarray] = None
 
     @field_validator("times", "idents")
     @classmethod

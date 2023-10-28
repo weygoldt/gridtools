@@ -5,6 +5,7 @@ Simulate an electrode grid recording of wave-type weakly electric fish based on
 the parameters from the configuration file.
 """
 
+import argparse
 import pathlib
 import shutil
 
@@ -24,8 +25,10 @@ from .datasets import (
     Dataset,
     GridData,
     WavetrackerData,
+    load,
     save,
 )
+from .exceptions import GridDataMismatch
 from .simulations import (
     MovementParams,
     chirp_model_v4,
@@ -33,14 +36,10 @@ from .simulations import (
     make_positions,
     make_steps,
 )
-
-# from .utils.files import Config
 from .utils.filters import lowpass_filter
 
-# conf = Config("config.yml")
-con = Console()
-
 np.random.seed(42)
+con = Console()
 model = chirp_model_v4
 
 
@@ -78,13 +77,16 @@ def get_random_timestamps(start_t, stop_t, n_timestamps, min_dt):
             timestamps.sort()
 
 
-def fakegrid() -> None:
+def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     """
     Simulate a grid of electrodes and fish EOD signals.
 
     Parameters
     ----------
-    None
+    chirp_param_path : pathlib.Path
+        Path to the simulated chirp parameters.
+    output_path : pathlib.Path
+        Path to save the simulated recordings to.
 
     Returns
     -------
@@ -103,17 +105,10 @@ def fakegrid() -> None:
     directory.
     """
 
-    chirp_param_path = pathlib.Path(
-        "/home/weygoldt/Projects/mscthesis/data/processed/chirpsimulations/chirp_fits_interpolated.csv"
-    )
-    output_path = pathlib.Path(
-        "/home/weygoldt/Projects/mscthesis/data/raw/local/grid_simulations"
-    )
-
-    ngrids = 100  # number of grids to simulate as long as there are chirps left
+    ngrids = 10  # number of grids to simulate as long as there are chirps left
     samplerate = 20000  # Hz
     wavetracker_samplingrate = 3
-    duration = 300  # s
+    duration = 600  # s
     min_chirp_dt = 0.5  # s
     max_chirp_freq = 0.5  # Hz
     max_chirp_contrast = 0.6
@@ -123,13 +118,14 @@ def fakegrid() -> None:
 
     gridx, gridy = make_grid(
         origin=(0, 0),
-        shape=(4, 4),
+        shape=(2, 2),
         spacing=0.5,
         style="square",
     )
     nelectrodes = len(np.ravel(gridx))
+    boundaries = (-2, 2, -2, 2)
 
-    for griditer in range(ngrids):
+    for griditer in track(range(ngrids), description="Simulating grids"):
         nfish = np.random.randint(1, 5)
         stop = False
 
@@ -145,7 +141,7 @@ def fakegrid() -> None:
         chirp_params = []
         detector = "gt"
 
-        con.log(f"Grid {griditer}: Simulating {nfish} fish")
+        con.log(f"Grid {griditer}: Simulating {nfish} fish -----------------")
 
         for fishiter in range(nfish):
             eodf = np.random.uniform(eodfrange[0], eodfrange[1])
@@ -207,7 +203,6 @@ def fakegrid() -> None:
 
             # simulate positions for this fish
             # pick a random origin
-            boundaries = (-2, 2, -2, 2)
             origin = (
                 np.random.uniform(boundaries[0], boundaries[1]),
                 np.random.uniform(boundaries[2], boundaries[3]),
@@ -361,3 +356,243 @@ def fakegrid() -> None:
         ax[1].set_xlabel("x (m)")
         ax[1].set_ylabel("y (m)")
         plt.savefig(path / "overview.png")
+
+
+def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
+    """
+    Augment a simulated dataset with a random snippet from a real recording.
+
+    Parameters
+    ----------
+    sd : xarray.Dataset
+        The simulated dataset to augment.
+    rd : xarray.Dataset
+        The real recording dataset to use for augmentation.
+
+    Returns
+    -------
+    xarray.Dataset
+        The augmented dataset.
+
+    Raises
+    ------
+    GridDataMismatch
+        If the number of electrodes in the simulated dataset is larger than
+        the number of electrodes in the real dataset.
+
+    Notes
+    -----
+    This function normalizes the simulated dataset, takes a random snippet from the
+    real recording, scales the simulated dataset to match the real recording, and
+    combines the two datasets. This introduces realistic background noise to the
+    simulated dataset. A future version should choose a snipped from the real
+    recording that contains as little communication as possible.
+    """
+
+    # normalize the simulated dataset
+    sd.track.powers = (sd.track.powers - np.mean(sd.track.powers)) / np.std(
+        sd.track.powers
+    )
+    sd.grid.rec = (sd.grid.rec - np.mean(sd.grid.rec)) / np.std(sd.grid.rec)
+
+    # take a random snippet from the real recording
+    target_shape = sd.grid.rec.shape
+    source_shape = rd.grid.rec.shape
+
+    # check if number of electrodes of the simulated dataset is larger
+    # than the number of electrodes of the real dataset
+    if target_shape[1] > source_shape[1]:
+        raise GridDataMismatch(
+            "The number of electrodes of the simulated dataset is larger than the number of electrodes of the real dataset."
+        )
+
+    random_electrodes = np.random.choice(
+        np.arange(source_shape[1]), size=target_shape[1], replace=False
+    )
+    random_start = np.random.randint(
+        0, source_shape[0] - target_shape[0], size=1
+    )[0]
+    random_end = random_start + target_shape[0]
+    real_snippet = rd.grid.rec[random_start:random_end, random_electrodes]
+
+    # get mean and std of the real recording
+    mean_power, std_power = np.nanmean(rd.track.powers), np.nanstd(
+        rd.track.powers
+    )
+    mean_amp, std_amp = np.mean(real_snippet), np.std(real_snippet)
+
+    # scale the simulated dataset to match the real recording
+    sd.track.powers = sd.track.powers * std_power + mean_power
+    sd.grid.rec = sd.grid.rec * std_amp + mean_amp
+
+    # combine the simulated dataset with the real recording
+    sd.grid.rec = sd.grid.rec + real_snippet
+
+    # save the hybrid dataset
+    return sd
+
+
+def hybridgrid(
+    fakegrid_path: pathlib.Path,
+    realgrid_path: pathlib.Path,
+    save_path: pathlib.Path,
+) -> None:
+    """
+    Take a simulated dataset and add realistic background noise to it.
+
+    Parameters
+    ----------
+    fakegrid_path : pathlib.Path
+        The path to the simulated dataset.
+    realgrid_path : pathlib.Path
+        The path to the real dataset.
+    save_path : pathlib.Path
+        The path to save the hybrid dataset to.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This function takes a simulated dataset and adds realistic background noise
+    to it. It adds realistic background noise to a simulated dataset and scales
+    it to match a real recording by combining the simulated dataset with a real
+    recording.
+
+    The function saves the hybrid dataset to disk in the specified output
+    directory.
+    """
+
+    fake_datasets = fakegrid_path.listdir()
+    real_datasets = realgrid_path.listdir()
+
+    for fake_dataset in track(fake_datasets, description="Hybridizing grids"):
+        fake_dataset = load(fake_dataset)
+        real_dataset = load(np.random.choice(real_datasets))
+        fake_dataset = augment_grid(fake_dataset, real_dataset)
+        save(fake_dataset, save_path)
+
+
+def fakegrid_interface():
+    """
+    Simulate a grid of electrodes and fish EOD signals.
+
+    Parameters
+    ----------
+    chirp_path : pathlib.Path, optional
+        Path to the simulated chirp parameters. Default is
+        "/home/weygoldt/Projects/mscthesis/data/processed/chirpsimulations/chirp_fits_interpolated.csv".
+    output_path : pathlib.Path, optional
+        Path to save the simulated recordings to. Default is
+        "/home/weygoldt/Projects/mscthesis/data/raw/local/grid_simulations".
+
+    Returns
+    -------
+    argparse.Namespace
+        The parsed command-line arguments.
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Simulate a grid of electrodes and fish EOD signals."
+    )
+    parser.add_argument(
+        "-c",
+        "--chirp_path",
+        type=pathlib.Path,
+        default=pathlib.Path(
+            "/home/weygoldt/Projects/mscthesis/data/processed/chirpsimulations/chirp_fits_interpolated.csv"
+        ),
+        help="Path to the simulated chirp parameters.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output_path",
+        type=pathlib.Path,
+        default=pathlib.Path(
+            "/home/weygoldt/Projects/mscthesis/data/raw/local/grid_simulations"
+        ),
+        help="Path to save the simulated recordings to.",
+    )
+    args = parser.parse_args()
+    return args
+
+
+def hybridgrid_interface():
+    """
+    Parse command line arguments for creating a hybrid dataset by adding realistic background noise to a simulated dataset.
+
+    Parameters
+    ----------
+    simulation_path : str
+        Path to the simulated dataset.
+    real_path : str
+        Path to the real recording.
+    output_path : str
+        Path to save the hybrid dataset to.
+
+    Returns
+    -------
+    args : argparse.Namespace
+        An object containing the parsed command line arguments.
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Add realistic background noise to a simulated dataset."
+    )
+    parser.add_argument(
+        "--simulation_path",
+        "-s",
+        type=pathlib.Path,
+        help="Path to the simulated dataset.",
+    )
+    parser.add_argument(
+        "--real_path",
+        "-r",
+        type=pathlib.Path,
+        help="Path to the real recording.",
+    )
+    parser.add_argument(
+        "--output_path",
+        "-o",
+        type=pathlib.Path,
+        help="Path to save the hybrid dataset to.",
+    )
+    args = parser.parse_args()
+    return args
+
+
+def fakegrid_cli():
+    """
+    Command line interface for the fakegrid function.
+
+    Examples
+    --------
+    To generate fake grid data from the command line:
+
+    $ fakegrid --chirp_path /path/to/chirp_param.csv --output_path /path/to/output/dir
+    """
+
+    args = fakegrid_interface()
+    fakegrid(
+        chirp_param_path=args.chirp_path,
+        output_path=args.output_path,
+    )
+
+
+def hybridgrid_cli():
+    """
+    Run the hybridgrid simulation using the command line interface.
+
+    Examples
+    --------
+    To run the hybridgrid simulation from the command line:
+    $ hybridgrid --simulation_path /path/to/simulated/dataset --real_path /path/to/real/recording --output_path /path/to/output/dir
+    """
+
+    args = hybridgrid_interface()
+    hybridgrid(
+        fakegrid_path=args.simulation_path,
+        realgrid_path=args.real_path,
+        save_path=args.output_path,
+    )

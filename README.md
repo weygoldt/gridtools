@@ -97,6 +97,11 @@ pre-commit run --all-files
 ## To do
 
 - [ ] Build unit tests for `gridtools.datasets`
+- [ ] Make a datavis module that provides functions to visualize the data
+    -  [ ] Spec, track, pos terminal commands to quickly visualize datasets
+    -  [ ] animation suite that gets a dataset and start and stop time to animate a full dataset
+- [ ] Build training data generation pipeline for faster RCNN 
+- [ ] Test the hybrid grid when data is available
 
 
 ## Project log 

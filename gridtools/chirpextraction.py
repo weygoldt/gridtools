@@ -27,7 +27,8 @@ model = chirp_model_v4
 
 
 def get_upper_fish(dataset):
-    """Return the fish with the highest frequency.
+    """
+    Return the fish with the highest frequency.
 
     Parameters
     ----------
@@ -38,6 +39,11 @@ def get_upper_fish(dataset):
     -------
     int
         The id of the fish with the highest frequency.
+
+    Notes
+    -----
+    This function calculates the minimum frequency of each fish track in the
+    dataset and returns the id of the fish with the highest minimum frequency.
     """
     min_fs = []
     track_ids = np.unique(dataset.track.idents[~np.isnan(dataset.track.idents)])
@@ -102,7 +108,22 @@ def get_fish_freq(dataset, time, fish_id):
     return track_freqs[track_index]
 
 
-def extract_features(data: "Dataset") -> np.ndarray:
+def extract_frequency(data: "Dataset") -> np.ndarray:
+    """
+    Extracts the instantaneous frequency of the chirps of the fish with the
+    highest baseline EODf in a dataset.
+
+    Parameters
+    ----------
+    data : Dataset
+        The dataset to extract chirp frequencies from.
+
+    Returns
+    -------
+    np.ndarray
+        An array of the instantaneous frequencies of the chirps in the dataset.
+    """
+
     # get the fish with the highest baseline frequency
     time_window = 1
     upper_fish = get_upper_fish(data)
@@ -223,6 +244,34 @@ def extract_features(data: "Dataset") -> np.ndarray:
 
 
 def estimate_params(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """
+    Estimate parameters of a chirp signal from its time and amplitude values.
+    This makes fitting models to the data much faster.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        1D array of time values.
+    y : np.ndarray
+        1D array of amplitude values.
+
+    Returns
+    -------
+    np.ndarray
+        1D array of estimated parameters, in the following order:
+        [center, amplitude, standard deviation, kurtosis]
+
+    Notes
+    -----
+    This function estimates the center, amplitude, standard deviation, and kurtosis
+    of a chirp signal from its time and amplitude values. It first computes the mean
+    and standard deviation of the signal for peak detection. It then finds the peaks
+    and troughs of the signal, and checks if there are enough of them. If there are,
+    it sorts them by their height and uses the position and height of the highest peak
+    to estimate the center and amplitude of the signal. It also estimates the standard
+    deviation of the largest peak and sets an initial value for the kurtosis.
+    """
+
     # compute mean and standard deviation of signal for peak detection
     y_mean = np.mean(y)
     y_std = np.std(y)
@@ -251,6 +300,22 @@ def estimate_params(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def fit_model(freqs: np.ndarray, model: object) -> np.ndarray:
+    """
+    Fits a chirp model to a set of instantaneous frequencies of chirps.
+
+    Parameters
+    ----------
+    freqs : np.ndarray
+        Array of frequency data to fit the chirp model to.
+    model : object
+        Chirp model object to use for fitting.
+
+    Returns
+    -------
+    np.ndarray
+        Array of fitted parameter values for each frequency data set.
+    """
+
     fits = []
 
     for iter, freq in track(
@@ -288,12 +353,44 @@ def fit_model(freqs: np.ndarray, model: object) -> np.ndarray:
 def extract_chirp_params(
     input_dir: pathlib.Path, output_dir: pathlib.Path
 ) -> None:
+    """
+    Extracts chirp parameters from a dataset and saves the results to disk.
+
+    Parameters
+    ----------
+    input_dir : pathlib.Path
+        The path to the directory containing the input dataset.
+    output_dir : pathlib.Path
+        The path to the directory where the output files will be saved.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This function loads a dataset from disk using the `load` function, extracts
+    instantaneous frequencies at each chirp of the fish with the highest baseline
+    frequency using the `extract_features` function, fits a gaussian to the extracted
+    frequencies using the `fit_model` function, and saves the resulting fits and
+    frequencies to csv files.
+
+    The function also generates two plots showing the instantaneous frequencies and
+    fitted instantaneous frequencies, which are saved to disk as a PNG file.
+
+    Examples
+    --------
+    >>> input_dir = pathlib.Path('/path/to/input/dataset')
+    >>> output_dir = pathlib.Path('/path/to/output/directory')
+    >>> extract_chirp_params(input_dir, output_dir)
+    """
+
     # load a dataset
     data = load(input_dir, grid=True)
 
     # extract instantaneous frequencies at each chirp of the fish with
     # the highest baseline frequency
-    freqs = extract_features(data)
+    freqs = extract_frequency(data)
 
     # try to fit a gaussian to the extracted frequencies
     fits = fit_model(freqs, model)
@@ -336,9 +433,21 @@ def extract_chirp_params(
 
 
 def load_chirp_fits(path: pathlib.Path) -> np.ndarray:
-    files = list(path.glob("*_chirp_fits.csv"))
-    rprint(f"[green]Found {len(files)} chirp fit datasets[/green]")
+    """
+    Load chirp fit datasets from csv files located in the given directory.
 
+    Parameters
+    ----------
+    path : pathlib.Path
+        The directory containing the csv files.
+
+    Returns
+    -------
+    np.ndarray
+        A numpy array containing the concatenated chirp fit datasets.
+    """
+
+    files = list(path.glob("*_chirp_fits.csv"))
     fits = []
     for file in files:
         # read the csv file and convert it to a numpy array
@@ -347,6 +456,28 @@ def load_chirp_fits(path: pathlib.Path) -> np.ndarray:
 
 
 def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
+    """
+    Resample chirp fits and plot the resulting chirps and parameter distributions.
+
+    Parameters
+    ----------
+    input : pathlib.Path
+        Path to the input chirp fits file.
+    output : pathlib.Path
+        Path to the output directory.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This function loads chirp fits from a file, sorts them by their standard
+    deviation, and interpolates them to generate a new set of chirp fits. It
+    then plots the distributions of the parameters of the original and new fits,
+    and plots the resulting chirps. Finally, it saves the new fits to a CSV file.
+    """
+
     # load chirp fits
     fits = load_chirp_fits(input)
 
@@ -358,7 +489,7 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
 
     # interpolate the fits based on their standard deviation
     oldx = np.arange(len(fits))
-    newx = np.linspace(0, len(fits), 1000)
+    newx = np.linspace(0, len(fits), 10000)
     newfits = np.zeros((len(newx), 4))
     for i in range(4):
         newfits[:, i] = np.interp(newx, oldx, fits[:, i])
@@ -401,7 +532,6 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Frequency (Hz)")
     plt.savefig(output / "chirp_simulations.png")
-    plt.show()
 
     # put them into a pandas dataframe
     df = pd.DataFrame(
@@ -413,6 +543,21 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
 
 
 def extract_interface():
+    """
+    Command line interface to extract chirp parameters from a dataset.
+
+    Parameters
+    ----------
+    input : pathlib.Path
+        Path to dataset.
+    output : pathlib.Path
+        Path to output.
+
+    Returns
+    -------
+    argparse.Namespace
+        The parsed arguments.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--input", "-i", type=pathlib.Path, help="Path to dataset."
@@ -426,10 +571,18 @@ def extract_interface():
 
 
 def extract_cli():
+    """
+    Extracts chirp parameters from input file and writes them to output file
+    interactively from the command line.
+    """
     args = extract_interface()
     extract_chirp_params(args.input, args.output)
 
 
 def resample_cli():
+    """
+    Resamples chirp parameters from input file and writes them to output file
+    interactively from the command line.
+    """
     args = extract_interface()
     resample_chirp_fits(args.input, args.output)
