@@ -16,6 +16,7 @@ from IPython import embed
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
+
 from thunderfish.fakefish import wavefish_eods
 
 from .datasets import (
@@ -107,7 +108,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     ngrids = 10  # number of grids to simulate as long as there are chirps left
     samplerate = 20000  # Hz
     wavetracker_samplingrate = 3
-    duration = 600  # s
+    duration = 120  # s
     min_chirp_dt = 0.5  # s
     max_chirp_freq = 0.5  # Hz
     max_chirp_contrast = 0.6
@@ -124,8 +125,13 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     nelectrodes = len(np.ravel(gridx))
     boundaries = (-2, 2, -2, 2)
 
-    for griditer in track(range(ngrids), description="Simulating grids"):
+    for griditer in track(
+        range(ngrids), description="Simulating grids", total=ngrids
+    ):
         nfish = np.random.randint(1, 5)
+
+        # space possible baseline eodfs apart by at least 20 Hz
+        eodfs = get_random_timestamps(eodfrange[0], eodfrange[1], nfish, 20)
         stop = False
 
         track_freqs = []
@@ -143,7 +149,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
         con.log(f"Grid {griditer}: Simulating {nfish} fish -----------------")
 
         for fishiter in range(nfish):
-            eodf = np.random.uniform(eodfrange[0], eodfrange[1])
+            eodf = eodfs[fishiter]
 
             # simulate chirps
             nchirps = np.random.randint(1, duration * max_chirp_freq)
@@ -194,7 +200,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
                 samplerate=samplerate,
                 duration=duration,
                 phase0=0,
-                noise_std=0.001,
+                noise_std=0.01,
             )
 
             # modulate the eod with the amplitude trace

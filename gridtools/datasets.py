@@ -34,6 +34,7 @@ from pydantic import (
     model_validator,
 )
 from rich.pretty import pprint as rpprint
+
 from thunderfish.dataloader import DataLoader
 from thunderfish.datawriter import write_data
 
@@ -200,10 +201,18 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
             raise FileNotFoundError(
                 "No chirp dataset with correct detector handle found!"
             )
+
+        # Check if params file is available
+        if any("chirp_params_" in str(f) for f in files):
+            params = np.load(path / f"chirp_params_{det}.npy")
+        else:
+            params = None
+
         chps = ChirpData(
             times=np.load(path / f"chirp_times_{det}.npy"),
             idents=np.load(path / f"chirp_ids_{det}.npy").astype(int),
             detector=det,
+            params=params,
         )
     else:
         chps = None
@@ -218,10 +227,17 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
             raise FileNotFoundError(
                 "No rise dataset with correct detector handle found!"
             )
+
+        # check if params file available
+        if any("rise_params_" in str(f) for f in files):
+            params = np.load(path / f"rise_params_{det}.npy")
+        else:
+            params = None
         ris = RiseData(
             times=np.load(path / f"rise_times_{det}.npy"),
             idents=np.load(path / f"rise_ids_{det}.npy").astype(int),
             detector=det,
+            params=None,
         )
     else:
         ris = None
@@ -283,7 +299,11 @@ def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
 
 
 def subset_wavetracker(
-    wt: "WavetrackerData", start_time: float, stop_time: float
+    wt: "WavetrackerData",
+    start: Union[float, int],
+    stop: Union[float, int],
+    mode: str = "time",
+    samplerate: int = 20000,
 ) -> "WavetrackerData":
     """
     Extracts a subset of a WavetrackerData object between start_time and stop_time.
@@ -292,10 +312,14 @@ def subset_wavetracker(
     ----------
     wt : WavetrackerData
         The WavetrackerData object to extract a subset from.
-    start_time : float
-        The start time of the subset.
-    stop_time : float
-        The stop time of the subset.
+    start : float
+        The start time or index of the subset.
+    stop : float
+        The stop time or index of the subset.
+    mode: str
+        Whether to use time or index method.
+    samplerate: int
+        Samplerate to use for conversion between time and index.
 
     Returns
     -------
@@ -314,6 +338,15 @@ def subset_wavetracker(
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
     >>> wt_sub = subset_wavetracker(wt, 0.5, 1.5)
     """
+
+    assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
+
+    if mode == "index":
+        start_time = start / samplerate
+        stop_time = stop / samplerate
+    else:
+        start_time = start
+        stop_time = stop
 
     freqs = []
     powers = []
@@ -375,35 +408,52 @@ def subset_wavetracker(
 
 
 def subset_grid(
-    rec: "GridData", start_time: float, stop_time: float
+    rec: "GridData",
+    start: float,
+    stop: float,
+    mode: str = "time",
+    samplerate: int = 20000,
 ) -> "GridData":
     """
-     Returns a subset of a raw dataset.
+    Returns a subset of a raw dataset.
 
-     Parameters
-     ----------
-     rec :GridData
-         The raw dataset to subset.
-     start_time : float
-         The start time of the subset in seconds.
-     stop_time : float
-         The stop time of the subset in seconds.
+    Parameters
+    ----------
+    rec :GridData
+        The raw dataset to subset.
+    start : float
+        The start time / index of the subset.
+    stop: float
+        The stop time / index of the subset.
+    mode: str
+        Whether to use time or index method.
+    samplerate: int
+        Samplerate to use for conversion between time and index.
 
-     Returns
-     -------
+    Returns
+    -------
     GridData
          The subset of the raw dataset.
 
-     Examples
-     --------
-     >>> import pathlib
-     >>> from gridtools.datasets import load_grid,subset_grid
-     >>> rec = load_grid(pathlib.Path("path/to/raw")
-     >>> subset = subset_grid(rec, 0.1, 0.5)
+    Examples
+    --------
+    >>> import pathlib
+    >>> from gridtools.datasets import load_grid,subset_grid
+    >>> rec = load_grid(pathlib.Path("path/to/raw")
+    >>> subset = subset_grid(rec, 0.1, 0.5)
     """
 
+    assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
+
+    if mode == "index":
+        start_time = start / samplerate
+        stop_time = stop / samplerate
+    else:
+        start_time = start
+        stop_time = stop
+
     assert start_time < stop_time, "Start time must be smaller than stop time."
-    assert start_time > 0, "Start time must be larger than 0."
+    assert start_time >= 0, "Start time must be larger or equal to 0."
     assert (
         stop_time < rec.rec.shape[0] / rec.samplerate
     ), "Stop time must be smaller than the end."
@@ -419,7 +469,11 @@ def subset_grid(
 
 
 def subset_com(
-    com: "CommunicationData", start_time: float, stop_time: float
+    com: "CommunicationData",
+    start: float,
+    stop: float,
+    mode: str = "time",
+    samplerate: int = 20000,
 ) -> "CommunicationData":
     """
     Makes a subset of a communication dataset.
@@ -428,10 +482,14 @@ def subset_com(
     ----------
     com : CommunicationData
         The communication dataset to subset.
-    start_time : float
-        The start time of the subset.
-    stop_time : float
-        The stop time of the subset.
+    start : float
+        The start time / index of the subset.
+    stop: float
+        The stop time / index of the subset.
+    mode: str
+        Whether to use time or index method.
+    samplerate: int
+        Samplerate to use for conversion between time and index.
 
     Returns
     -------
@@ -446,6 +504,15 @@ def subset_com(
     >>> subset = subset_com(com, 0.1, 0.5)
     """
 
+    assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
+
+    if mode == "index":
+        start_time = start / samplerate
+        stop_time = stop / samplerate
+    else:
+        start_time = start
+        stop_time = stop
+
     if hasattr(com, "chirp"):
         ci = com.chirp.idents[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
@@ -453,6 +520,21 @@ def subset_com(
         ct = com.chirp.times[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
         ]
+        if hasattr(com.chirp, "params"):
+            cp = com.chirp.params[
+                (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
+            ]
+        else:
+            cp = None
+        chirp = (
+            ChirpData(
+                times=ct, idents=ci, params=cp, detector=com.chirp.detector
+            )
+            if hasattr(com, "chirp")
+            else None
+        )
+    else:
+        chirp = None
     if hasattr(com, "rise"):
         ri = com.rise.idents[
             (com.rise.times >= start_time) & (com.rise.times <= stop_time)
@@ -460,23 +542,28 @@ def subset_com(
         rt = com.rise.times[
             (com.rise.times >= start_time) & (com.rise.times <= stop_time)
         ]
+        if hasattr(com.rise, "params"):
+            rp = com.rise.params[
+                (com.rise.times >= start_time) & (com.rise.times <= stop_time)
+            ]
+        else:
+            rp = None
+        rise = (
+            RiseData(times=rt, idents=ri, params=rp, detector=com.rise.detector)
+            if hasattr(com, "rise")
+            else None
+        )
+    else:
+        rise = None
 
-    chirp = (
-        ChirpData(times=ct, idents=ci, detector=com.chirp.detector)
-        if hasattr(com, "chirp")
-        else None
-    )
-    rise = (
-        RiseData(times=rt, idents=ri, detector=com.rise.detector)
-        if hasattr(com, "rise")
-        else None
-    )
     if not hasattr(com, "chirp") and not hasattr(com, "rise"):
         return None
     return CommunicationData(chirp=chirp, rise=rise)
 
 
-def subset(data: "Dataset", start_time: float, stop_time: float) -> "Dataset":
+def subset(
+    data: "Dataset", start: float, stop: float, mode: str = "time"
+) -> "Dataset":
     """
     Makes a subset of a full dataset.
 
@@ -484,10 +571,12 @@ def subset(data: "Dataset", start_time: float, stop_time: float) -> "Dataset":
     ----------
     data : Dataset
         The full dataset to be subsetted.
-    start_time : float
-        The start time of the subset, in seconds.
-    stop_time : float
-        The stop time of the subset, in seconds.
+    start : float
+        The start time / index of the subset, in seconds.
+    stop : float
+        The stop time / index of the subset, in seconds.
+    mode : str = "time" or "index"
+        Whether to use time or index method.
 
     Returns
     -------
@@ -515,6 +604,18 @@ def subset(data: "Dataset", start_time: float, stop_time: float) -> "Dataset":
     >>> subset = subset(ds, 0.1, 0.5)
     >>> save(subset, pathlib.Path("path/to/save"))
     """
+
+    assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
+    samplerate = data.grid.samplerate
+
+    if mode == "index":
+        start_time = start / samplerate
+        stop_time = stop / samplerate
+    else:
+        start_time = start
+        stop_time = stop
+
+    rpprint(start_time)
 
     assert start_time < stop_time, "Start time must be smaller than stop time."
     assert (
@@ -639,9 +740,33 @@ def save_com(
     >>> save_com(com, pathlib.Path("path/to/save"))
     """
 
-    if com.chirp is not None:
-        np.save(output_path / "chirp_times_gt.npy", com.chirp.times)
-        np.save(output_path / "chirp_ids_gt.npy", com.chirp.idents)
+    if hasattr(com, "chirp"):
+        np.save(
+            output_path / f"chirp_times_{com.chirp.detector}.npy",
+            com.chirp.times,
+        )
+        np.save(
+            output_path / f"chirp_ids_{com.chirp.detector}.npy",
+            com.chirp.idents,
+        )
+        if hasattr(com.chirp, "params"):
+            np.save(
+                output_path / f"chirp_params_{com.chirp.detector}.npy",
+                com.chirp.params,
+            )
+
+    if hasattr(com, "rise"):
+        np.save(
+            output_path / f"rise_times_{com.rise.detector}.npy", com.rise.times
+        )
+        np.save(
+            output_path / f"rise_ids_{com.rise.detector}.npy", com.rise.idents
+        )
+        if hasattr(com.rise, "params"):
+            np.save(
+                output_path / f"rise_params_{com.rise.detector}.npy",
+                com.rise.params,
+            )
 
 
 def save(dataset: "Dataset", output_path: Union[pathlib.Path, str]) -> None:
@@ -1119,6 +1244,21 @@ class ChirpData(BaseModel):
             raise ValidationError("Detector must be 'gt' or 'cnn'.")
         return v
 
+    @model_validator(mode="after")
+    def delete_if_none(self):
+        """
+        Deletes attributes from the model if their values are None.
+
+        Returns:
+        --------
+        self : object
+            The modified instance of the object.
+        """
+        for key, value in self.model_dump().items():
+            if value is None:
+                delattr(self, key)
+        return self
+
     def pprint(self) -> None:
         """
         Pretty-print the attributes of the object.
@@ -1152,6 +1292,7 @@ class RiseData(BaseModel):
 
     times: np.ndarray
     idents: np.ndarray
+    params: Optional[np.ndarray] = None
     detector: str
 
     @field_validator("times", "idents")
@@ -1206,6 +1347,21 @@ class RiseData(BaseModel):
             raise ValidationError("Detector must be 'gt' or 'pd'.")
         return v
 
+    @model_validator(mode="after")
+    def delete_if_none(self):
+        """
+        Deletes attributes from the model if their values are None.
+
+        Returns:
+        --------
+        self : object
+            The modified instance of the object.
+        """
+        for key, value in self.model_dump().items():
+            if value is None:
+                delattr(self, key)
+        return self
+
     def pprint(self) -> None:
         """
         Pretty-print the attributes of the object.
@@ -1232,12 +1388,14 @@ class CommunicationData(BaseModel):
     typecheck_rise(v)
         Check if rise data is a RiseData object if it is not none.
     check_communication_data()
-        Check if chirp or rise data is provided. Class should not be instantiated when no data is provided.
+        Check if chirp or rise data is provided. Class should not be instantiated
+        when no data is provided.
 
     Raises
     ------
     ValidationError
-        If chirp data is not a ChirpData object or if rise data is not a RiseData object, or if neither chirp nor rise data is provided.
+        If chirp data is not a ChirpData object or if rise data is not a
+        RiseData object, or if neither chirp nor rise data is provided.
 
     Returns
     -------

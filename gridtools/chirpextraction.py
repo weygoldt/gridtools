@@ -19,11 +19,11 @@ from scipy.signal import find_peaks
 from scipy.signal.windows import tukey
 
 from .datasets import Dataset, load
-from .simulations import chirp_model_v4
+from .simulations import chirp_model_v4, gaussian
 from .utils.filters import bandpass_filter
 from .utils.transforms import instantaneous_frequency
 
-model = chirp_model_v4
+model = gaussian
 
 
 def get_upper_fish(dataset):
@@ -489,7 +489,7 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
 
     # interpolate the fits based on their standard deviation
     oldx = np.arange(len(fits))
-    newx = np.linspace(0, len(fits), 10000)
+    newx = np.linspace(0, len(fits), 5000)
     newfits = np.zeros((len(newx), 4))
     for i in range(4):
         newfits[:, i] = np.interp(newx, oldx, fits[:, i])
