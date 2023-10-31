@@ -24,6 +24,7 @@ pyaml = "^23.9.7"
 torch = "^2.1.0"
 torchaudio = "^2.1.0"
 torchvision = "^0.16.0"
+pillow = "^10.1.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.10.0"
@@ -37,7 +38,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-specs = "gridtools.dataconverter:main"
+dataconverter = "gridtools.dataconverter:dataconverter_cli"
 fakegrid = "gridtools.fakegrid:fakegrid_cli"
 hybridgrid = "gridtools.fakegrid:hybridgrid_cli"
 movement-demo = "gridtools.simulations:movement_demo"

@@ -69,6 +69,25 @@ def freqres_to_nfft(freq_res, samplingrate):
     return int(next_power_of_two(samplingrate / freq_res))
 
 
+def nfft_to_freqres(nfft, samplingrate):
+    """Convert the number of FFT bins of a spectrogram to
+    the frequency resolution.
+
+    Parameters
+    ----------
+    nfft : int
+        Number of FFT bins.
+    samplingrate : int
+        The sampling rate of the signal.
+
+    Returns
+    -------
+    float
+        The frequency resolution of the spectrogram.
+    """
+    return samplingrate / nfft
+
+
 def overlap_to_hoplen(overlap, nfft):
     """Convert the overlap of a spectrogram to the hop length.
 

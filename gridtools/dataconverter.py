@@ -5,12 +5,13 @@ This module contains functions and classes for converting data from one format
 to another.
 """
 
+import argparse
 import pathlib
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from rich import print as rprint
+from PIL import Image, ImageDraw
 from rich.console import Console
 from rich.progress import track
 
@@ -20,18 +21,8 @@ from .utils.spectrograms import (
     freqres_to_nfft,
     overlap_to_hoplen,
     sint,
-    specshow,
     spectrogram,
 )
-
-# Notes
-# dataset/
-# ├── train/
-# │   ├── images/
-# │   └── labels/
-# └── val/
-#     ├── images/
-#     └── labels/
 
 con = Console()
 
@@ -40,47 +31,38 @@ overlap_fraction = 0.9
 spectrogram_freq_limits = (0, 2200)
 
 
-def chirps_fasterrcnn_trainingdata(data: Dataset) -> None:
-    """
-    Convert a dataset containing ground truth chirps (simulated or annotated
-    by hand) to a dataset of images and bounding boxes for training a
-    Faster-RCNN model.
+def numpy_to_pil(img: np.ndarray) -> Image:
+    """Convert a numpy array to a PIL image.
 
     Parameters
     ----------
-    data : Dataset
-        The input dataset
+    img : np.ndarray
+        The input image.
+
+    Returns
+    -------
+    PIL.Image
+        The converted image.
     """
-
-    # For each fish ...
-
-    # Get frequency point for each time point of the chirps of this fish
-
-    # From the chirp params, estimate bounding box using amp, std and nfft of
-    # the spectrogram
-
-    # save bounding box freq and time points to a dataframe with fish id
-
-    # iterate through the raw signal and save a sum of the spectrogram of 10 seconds
-
-    # save the spectrogram as images
-
-    pass
+    img = np.flipud(img)
+    img = np.uint8((img - img.min()) / (img.max() - img.min()) * 255)
+    img = Image.fromarray(img)
+    return img
 
 
-def chirp_bounding_boxes(data: Dataset) -> pd.DataFrame:
+def chirp_bounding_boxes(data: Dataset, nfft: int) -> pd.DataFrame:
     assert hasattr(
         data.com.chirp, "params"
     ), "Dataset must have a chirp attribute with a params attribute"
 
     nfft = 4096
 
-    # Bounding box adjustment paramters as factors
-    time_padding = 0.4
-    freq_padding = 0.4
-
+    # Time padding is one NFFT window
     pad_time = nfft / data.grid.samplerate
-    rprint(pad_time)
+
+    # Freq padding is fixed by the frequency resolution
+    freq_res = data.grid.samplerate / nfft
+    pad_freq = freq_res * 15
 
     boxes = []
     ids = []
@@ -106,20 +88,17 @@ def chirp_bounding_boxes(data: Dataset) -> pd.DataFrame:
             # we now have baseline eodf and time point of the chirp. Now
             # we get some parameters from the params to build the bounding box
             # for the chirp
-            amp = param[1]
-            std = param[2]
+            height = param[1]
+            width = param[2]
 
             # now define bounding box as center coordinates, width and height
             t_center = chirp
-            f_center = f_closest + amp / 2
+            f_center = f_closest + height / 2
 
-            # approximate width from std by taking approx 3 stds which should
-            # cover 99.7% of the gaussian
-            # width = std * 3 + ((std * 3) * time_padding)
-            height = amp + (amp * freq_padding)
-            width = std + pad_time
+            bbox_height = height + pad_freq
+            bbox_width = width + pad_time
 
-            boxes.append((t_center, f_center, width, height))
+            boxes.append((t_center, f_center, bbox_width, bbox_height))
             ids.append(fish_id)
 
     df = pd.DataFrame(
@@ -129,7 +108,18 @@ def chirp_bounding_boxes(data: Dataset) -> pd.DataFrame:
     return df
 
 
-def make_spectrograms(data: Dataset) -> None:
+def make_spectrograms(
+    data: Dataset, dataroot: pathlib.Path, plot_boxes: bool = False
+) -> None:
+    """
+    Notes
+    -----
+    This function iterates through a raw recording in chunks and computes the
+    sum spectrogram of each chunk. The chunk size needs to be chosen such that
+    the images can be nicely fed to a detector. The function also computes
+    the bounding boxes of chirps in that chunk and saves them to a dataframe
+    and a txt file into a labels directory.
+    """
     assert hasattr(data, "grid"), "Dataset must have a grid attribute"
 
     n_electrodes = data.grid.rec.shape[1]
@@ -141,16 +131,13 @@ def make_spectrograms(data: Dataset) -> None:
 
     # Spectrogram computation parameters
     nfft = freqres_to_nfft(freq_resolution, data.grid.samplerate)  # samples
-    rprint(nfft)
     hop_len = overlap_to_hoplen(overlap_fraction, nfft)  # samples
     chunksize = time_window * data.grid.samplerate  # samples
     n_chunks = np.ceil(data.grid.rec.shape[0] / chunksize).astype(int)
 
-    for chunk_no in track(
-        range(n_chunks), description="Computing spectrograms"
-    ):
-        con.log(f"Chunk {chunk_no + 1} of {n_chunks}")
+    bbox_dfs = []
 
+    for chunk_no in range(n_chunks):
         # get start and stop indices for the current chunk
         # including some overlap to compensate for edge effects
         # this diffrers for the first and last chunk
@@ -176,6 +163,9 @@ def make_spectrograms(data: Dataset) -> None:
         spec_freqs = np.arange(0, nfft / 2 + 1) * data.grid.samplerate / nfft
 
         # create a subset from the grid dataset
+        if idx2 > data.grid.rec.shape[0]:
+            idx2 = data.grid.rec.shape[0] - 1
+
         chunk = subset(data, idx1, idx2, mode="index")
 
         # compute the spectrogram for each electrode of the current chunk
@@ -222,41 +212,138 @@ def make_spectrograms(data: Dataset) -> None:
         # the spec is still a tensor
         spec = (spec - spec.mean()) / spec.std()
 
-        # plot the bounding boxes for this chunk
-        bboxes = chirp_bounding_boxes(chunk)
+        # compute the bounding boxes for this chunk
+        bboxes = chirp_bounding_boxes(chunk, nfft)
 
-        # plot the spectrogram
-        _, ax = plt.subplots()
-        specshow(
-            spec,
-            spec_times,
-            spec_freqs,
-            ax=ax,
-            aspect="auto",
-            origin="lower",
-            cmap="gray",
+        # convert bounding box center coordinates to spectrogram coordinates
+        # find the indices on the spec_times corresponding to the center times
+        x = np.searchsorted(spec_times, bboxes.t_center)
+        y = np.searchsorted(spec_freqs, bboxes.f_center)
+        widths = np.searchsorted(spec_times - spec_times[0], bboxes.width)
+        heights = np.searchsorted(spec_freqs, bboxes.height)
+
+        # now we have center coordinates, widths and heights in indices. But PIL
+        # expects coordinates in pixels in the format
+        # (Upper left x coordinate, upper left y coordinate,
+        # lower right x coordinate, lower right y coordinate)
+        # In addiotion, an image starts in the top left corner so the bboxes
+        # need to be mirrored horizontally.
+
+        y = spec.shape[0] - y  # flip the y values to fit y=0 at the top
+        lxs, lys = x - widths / 2, y - heights / 2
+        rxs, rys = x + widths / 2, y + heights / 2
+
+        # add them to the bboxes dataframe
+        bboxes["upperleft_img_x"] = lxs
+        bboxes["upperleft_img_y"] = lys
+        bboxes["lowerright_img_x"] = rxs
+        bboxes["lowerright_img_y"] = rys
+
+        # most deep learning frameworks expect bounding box coordinates
+        # as relative to the image size. So we normalize the coordinates
+        # to the image size
+
+        rel_lxs = lxs / spec.shape[1]
+        rel_rxs = rxs / spec.shape[1]
+        rel_lys = lys / spec.shape[0]
+        rel_rys = rys / spec.shape[0]
+
+        # add them to the bboxes dataframe
+        bboxes["upperleft_img_x_norm"] = rel_lxs
+        bboxes["upperleft_img_y_norm"] = rel_lys
+        bboxes["lowerright_img_x_norm"] = rel_rxs
+        bboxes["lowerright_img_y_norm"] = rel_rys
+
+        # add chunk ID to the bboxes dataframe
+        bboxes["chunk_id"] = chunk_no
+
+        # stash the bboxes dataframe for this chunk
+        bbox_dfs.append(bboxes)
+
+        # put them into a dataframe to save for eahc spectrogram
+        df = pd.DataFrame(
+            {"lx": rel_lxs, "ly": rel_lys, "rx": rel_rxs, "ry": rel_rys}
         )
 
-        for box in bboxes.itertuples():
-            ax.add_patch(
-                plt.Rectangle(
-                    (
-                        box.t_center - box.width / 2,
-                        box.f_center - box.height / 2,
-                    ),
-                    box.width,
-                    box.height,
-                    linewidth=1,
-                    edgecolor="r",
-                    facecolor="none",
-                )
-            )
-        plt.show()
+        # add as first colum instance id
+        df.insert(0, "instance_id", np.zeros_like(lxs, dtype=int))
+
+        # convert the spectrogram to a PIL image
+        spec = spec.detach().cpu().numpy()
+        img = numpy_to_pil(spec)
+
+        # draw the bounding boxes on the image
+        if plot_boxes is True:
+            for lx, ly, rx, ry in zip(lxs, lys, rxs, rys):
+                img = img.convert("RGB")
+                draw = ImageDraw.Draw(img)
+                draw.rectangle((lx, ly, rx, ry), outline="red", width=1)
+
+        # save image
+        imgpath = dataroot / "images"
+        imgpath.mkdir(exist_ok=True, parents=True)
+        img.save(imgpath / f"{data.path.name}_{chunk_no:06}.png")
+
+        # save dataframe for every spec without headers as txt
+        labelpath = dataroot / "labels"
+        labelpath.mkdir(exist_ok=True, parents=True)
+        df.to_csv(
+            labelpath / f"{data.path.name}_{chunk_no:06}.txt",
+            header=False,
+            index=False,
+            sep=" ",
+        )
+
+    # concat all the bboxes dataframes
+    bbox_df = pd.concat(bbox_dfs, ignore_index=True)
+    # save the bboxes dataframe
+    bbox_df.to_csv(dataroot / f"{data.path.name}_bboxes.csv", index=False)
 
 
-def main():
-    path = pathlib.Path(
-        "/home/weygoldt/Projects/mscthesis/data/raw/local/gridsimulations/simulated_grid_000"
+def parse_datasets(input: pathlib.Path, output: pathlib.Path) -> None:
+    """
+    Parse all datasets in a directory.
+
+    Parameters
+    ----------
+    dataroot : pathlib.Path
+        The root directory of the datasets.
+
+    Returns
+    -------
+    None
+    """
+    for path in track(list(input.iterdir()), description="Building datasets"):
+        data = load(path, grid=True)
+        make_spectrograms(data, output, plot_boxes=False)
+
+
+def interface() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build a deep learning dataset from simulated or annotated data."
     )
-    data = load(path, grid=True)
-    make_spectrograms(data)
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=pathlib.Path,
+        help="Path where datasets are.",
+        default=pathlib.Path(
+            "/home/weygoldt/Projects/mscthesis/data/raw/local/gridsimulations/"
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=pathlib.Path,
+        help="Path where to save the dataset.",
+        default=pathlib.Path(
+            "/home/weygoldt/Projects/mscthesis/data/processed/deepnn"
+        ),
+    )
+    args = parser.parse_args()
+    return args
+
+
+def dataconverter_cli() -> None:
+    args = interface()
+    parse_datasets(args.input, args.output)

@@ -455,14 +455,14 @@ def subset_grid(
     assert start_time < stop_time, "Start time must be smaller than stop time."
     assert start_time >= 0, "Start time must be larger or equal to 0."
     assert (
-        stop_time < rec.rec.shape[0] / rec.samplerate
+        stop_time <= rec.rec.shape[0] / rec.samplerate
     ), "Stop time must be smaller than the end."
 
     start_idx = int(start_time * rec.samplerate)
     stop_idx = int(stop_time * rec.samplerate)
 
     assert start_idx < rec.rec.shape[0], "Start index out of bounds."
-    assert stop_idx < rec.rec.shape[0], "Stop index out of bounds."
+    assert stop_idx <= rec.rec.shape[0], "Stop index out of bounds."
 
     raw = rec.rec[start_idx:stop_idx, :]
     return GridData(rec=raw, samplerate=rec.samplerate)
@@ -615,15 +615,13 @@ def subset(
         start_time = start
         stop_time = stop
 
-    rpprint(start_time)
-
     assert start_time < stop_time, "Start time must be smaller than stop time."
     assert (
         start_time >= data.track.times[0]
     ), "Start time must be larger than the beginning."
-    assert (
-        stop_time <= data.track.times[-1]
-    ), "Stop time must be smaller than the end."
+    # assert (
+    #     stop_time <= data.track.times[-1]
+    # ), "Stop time must be smaller than the end."
 
     wt_sub = subset_wavetracker(data.track, start_time, stop_time)
     raw_sub = (
