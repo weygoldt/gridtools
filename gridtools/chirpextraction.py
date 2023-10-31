@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from rich import print as rprint
+from rich.console import Console
 from rich.progress import track
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
@@ -24,6 +25,7 @@ from .utils.filters import bandpass_filter
 from .utils.transforms import instantaneous_frequency
 
 model = gaussian
+con = Console()
 
 
 def get_upper_fish(dataset):
@@ -292,8 +294,8 @@ def estimate_params(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     m = x[peaks[-1]]
     # get the height of the highest peak as the amplitude
     a = y[peaks[-1]]
-    # estimate standard deviation of largest peak
-    s = (y[peaks[-1]] - y[troughs[-1]]) / 2
+    # estimate width from the standard deviation of largest peak
+    s = ((y[peaks[-1]] - y[troughs[-1]]) / 2) * 3
     # initial kurtosis estimate
     k = 1.5
     return np.array([m, a, s, k])
@@ -343,7 +345,7 @@ def fit_model(freqs: np.ndarray, model: object) -> np.ndarray:
                 bounds=bounds,
             )
             fits.append(popt)
-            rprint(f"[green]Fit {iter} successful[/green]")
+            # rprint(f"[green]Fit {iter} successful[/green]")
         except:
             rprint(f"[red]Fit {iter} failed[/red]")
             continue
@@ -417,7 +419,7 @@ def extract_chirp_params(
     ax[1].set_title("Fitted instantaneous frequency")
 
     plt.savefig(output_dir / f"{input_dir.name}_chirps.png")
-    plt.show()
+    # plt.show()
 
     # convert the fits to a pandas dataframe
     df_fits = pd.DataFrame(
@@ -496,7 +498,7 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
         plt.plot(oldx, fits[:, i], ".", color="black", alpha=0.1)
         plt.plot(newx, newfits[:, i], ".", color="red", alpha=0.1)
         plt.title(f"Parameter {i}")
-        plt.show()
+        # plt.show()
 
     newfits = np.asarray(newfits).T
 
@@ -515,7 +517,7 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
     ax[1, 1].hist(fits[:, 3], bins=100, alpha=0.5)
     ax[1, 1].set_title("Kurtosis")
     plt.savefig(output / "chirp_fit_distributions.png")
-    plt.show()
+    # plt.show()
 
     # plot the resulting chirps
     _, ax = plt.subplots(1, 1, figsize=(20, 20))
@@ -576,7 +578,9 @@ def extract_cli():
     interactively from the command line.
     """
     args = extract_interface()
-    extract_chirp_params(args.input, args.output)
+    for dir in list(args.input.iterdir()):
+        con.log(f"Extracting chirp parameters from {dir.name}")
+        extract_chirp_params(dir, args.output)
 
 
 def resample_cli():
@@ -585,4 +589,5 @@ def resample_cli():
     interactively from the command line.
     """
     args = extract_interface()
+    con.log(f"Resampling chirp parameters from {args.input.name}")
     resample_chirp_fits(args.input, args.output)

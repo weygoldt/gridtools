@@ -7,6 +7,7 @@ to another.
 
 import argparse
 import pathlib
+import shutil
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,7 +29,33 @@ con = Console()
 
 freq_resolution = 6
 overlap_fraction = 0.9
-spectrogram_freq_limits = (0, 2200)
+spectrogram_freq_limits = (100, 2200)
+
+
+def make_file_tree(path: pathlib.Path) -> None:
+    """
+    Builds a file tree for the training dataset.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The root directory of the dataset.
+    """
+
+    if path.exists():
+        shutil.rmtree(path)
+
+    path.mkdir(exist_ok=True, parents=True)
+
+    train_imgs = path / "train" / "images"
+    train_labels = path / "train" / "labels"
+    train_imgs.mkdir(exist_ok=True, parents=True)
+    train_labels.mkdir(exist_ok=True, parents=True)
+
+    val_imgs = path / "val" / "images"
+    val_labels = path / "val" / "labels"
+    val_imgs.mkdir(exist_ok=True, parents=True)
+    val_labels.mkdir(exist_ok=True, parents=True)
 
 
 def numpy_to_pil(img: np.ndarray) -> Image:
@@ -55,14 +82,12 @@ def chirp_bounding_boxes(data: Dataset, nfft: int) -> pd.DataFrame:
         data.com.chirp, "params"
     ), "Dataset must have a chirp attribute with a params attribute"
 
-    nfft = 4096
-
     # Time padding is one NFFT window
     pad_time = nfft / data.grid.samplerate
 
     # Freq padding is fixed by the frequency resolution
     freq_res = data.grid.samplerate / nfft
-    pad_freq = freq_res * 15
+    pad_freq = freq_res * 50
 
     boxes = []
     ids = []
@@ -257,9 +282,6 @@ def make_spectrograms(
         # add chunk ID to the bboxes dataframe
         bboxes["chunk_id"] = chunk_no
 
-        # stash the bboxes dataframe for this chunk
-        bbox_dfs.append(bboxes)
-
         # put them into a dataframe to save for eahc spectrogram
         df = pd.DataFrame(
             {"lx": rel_lxs, "ly": rel_lys, "rx": rel_rxs, "ry": rel_rys}
@@ -280,15 +302,19 @@ def make_spectrograms(
                 draw.rectangle((lx, ly, rx, ry), outline="red", width=1)
 
         # save image
-        imgpath = dataroot / "images"
-        imgpath.mkdir(exist_ok=True, parents=True)
-        img.save(imgpath / f"{data.path.name}_{chunk_no:06}.png")
+        imgname = f"{data.path.name}_{chunk_no:06}.png"
+        img.save(dataroot / "train" / "images" / f"{imgname}")
+
+        # stash the bboxes dataframe for this chunk
+        bboxes["image"] = imgname
+        bbox_dfs.append(bboxes)
 
         # save dataframe for every spec without headers as txt
-        labelpath = dataroot / "labels"
-        labelpath.mkdir(exist_ok=True, parents=True)
         df.to_csv(
-            labelpath / f"{data.path.name}_{chunk_no:06}.txt",
+            dataroot
+            / "train"
+            / "labels"
+            / f"{data.path.name}_{chunk_no:06}.txt",
             header=False,
             index=False,
             sep=" ",
@@ -297,7 +323,9 @@ def make_spectrograms(
     # concat all the bboxes dataframes
     bbox_df = pd.concat(bbox_dfs, ignore_index=True)
     # save the bboxes dataframe
-    bbox_df.to_csv(dataroot / f"{data.path.name}_bboxes.csv", index=False)
+    bbox_df.to_csv(
+        dataroot / "train" / f"{data.path.name}_bboxes.csv", index=False
+    )
 
 
 def parse_datasets(input: pathlib.Path, output: pathlib.Path) -> None:
@@ -313,9 +341,11 @@ def parse_datasets(input: pathlib.Path, output: pathlib.Path) -> None:
     -------
     None
     """
+
+    make_file_tree(output)
     for path in track(list(input.iterdir()), description="Building datasets"):
         data = load(path, grid=True)
-        make_spectrograms(data, output, plot_boxes=False)
+        make_spectrograms(data, output, plot_boxes=True)
 
 
 def interface() -> argparse.Namespace:

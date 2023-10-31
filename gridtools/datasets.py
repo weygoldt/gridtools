@@ -242,6 +242,8 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
     else:
         ris = None
 
+    if chps is None and ris is None:
+        return None
     return CommunicationData(chirp=chps, rise=ris)
 
 

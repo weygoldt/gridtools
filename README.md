@@ -101,11 +101,14 @@ pre-commit run --all-files
     -  [ ] Spec, track, pos terminal commands to quickly visualize datasets
     -  [ ] animation suite that gets a dataset and start and stop time to animate a full dataset
 - [ ] Build training data generation pipeline for faster RCNN 
-- [ ] Test the hybrid grid when data is available
+- [x] Test the hybrid grid when data is available
 - [ ] Port the chirp annotation gui from the cnn-chirpdetector to gridtools and rewrite input data handling
 - [ ] Make spectrogram decibel transorm cutoff dynamic for an optimal signal to noise ratio for each 10s window
-- [ ] Concerning bounding boxes: Work well for short chirps. I have the impression that either long chirps or chirps with a high curtosis result in too large boxes. I estimate the box width with the standard deviation, maybe a high curtosis results in a large standard deviation. But this does not explain why heigth is a problem as well. The kurtosis could also scale down the amplitude a bit ...
-- [ ] The frequency bbox padding needs to be a sum, not a factor, that is basically the freq bin multiplied by a factor to tune it: amp + (freq_bin * factor)
+- [x] Concerning bounding boxes: Work well for short chirps. I have the impression that either long chirps or chirps with a high curtosis result in too large boxes. I estimate the box width with the standard deviation, maybe a high curtosis results in a large standard deviation. But this does not explain why heigth is a problem as well. The kurtosis could also scale down the amplitude a bit ...
+- [x] The frequency bbox padding needs to be a sum, not a factor, that is basically the freq bin multiplied by a factor to tune it: amp + (freq_bin * factor)
+- [x] Make the extractor run on a folder of datasets instead of individual ones
+- [x] Update the parameter estimation function of the extractor to accomodate the simpler model that is fit to the frequency traces
+- [x] Rewrite hybrid grid function to choose windows where no chirps of the real fish are produced or at least take take snippets that happen during the day when the fish are inactive
 
 ## Project log 
 

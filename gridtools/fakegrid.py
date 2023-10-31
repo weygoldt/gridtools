@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from IPython import embed
+from rich import print as rprint
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
@@ -125,9 +126,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     nelectrodes = len(np.ravel(gridx))
     boundaries = (-2, 2, -2, 2)
 
-    for griditer in track(
-        range(ngrids), description="Simulating grids", total=ngrids
-    ):
+    for griditer in range(ngrids):
         nfish = np.random.randint(1, 5)
 
         # space possible baseline eodfs apart by at least 20 Hz
@@ -146,14 +145,15 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
         chirp_params = []
         detector = "gt"
 
-        con.log(f"Grid {griditer}: Simulating {nfish} fish -----------------")
-
-        for fishiter in range(nfish):
+        for fishiter in track(
+            range(nfish),
+            description=f"Grid {griditer + 1} of {ngrids}",
+            total=nfish,
+        ):
             eodf = eodfs[fishiter]
 
             # simulate chirps
             nchirps = np.random.randint(1, duration * max_chirp_freq)
-            con.log(f"Fish {fishiter}: Simulating {nchirps} chirps")
 
             # get n_chirps random chirp parameters and delete them from the list
             # of chirp parameters after each iteration to avoid duplicates
@@ -398,7 +398,9 @@ def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
     sd.track.powers = (sd.track.powers - np.mean(sd.track.powers)) / np.std(
         sd.track.powers
     )
-    sd.grid.rec = (sd.grid.rec - np.mean(sd.grid.rec)) / np.std(sd.grid.rec)
+    sd.grid.rec = (sd.grid.rec[:] - np.mean(sd.grid.rec[:])) / np.std(
+        sd.grid.rec[:]
+    )
 
     # take a random snippet from the real recording
     target_shape = sd.grid.rec.shape
@@ -414,10 +416,30 @@ def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
     random_electrodes = np.random.choice(
         np.arange(source_shape[1]), size=target_shape[1], replace=False
     )
+    # random_start = np.random.randint(
+    #     0, source_shape[0] - target_shape[0], size=1
+    # )[0]
+    # random_end = random_start + target_shape[0]
+
+    # get a window where little chirps are produced
+    chirps = np.sort(rd.com.chirp.times)
+    cdiffs = np.diff(chirps)
+
+    # get start and stop time of the longest chirpless window
+    start, stop = np.argmax(cdiffs), np.argmax(cdiffs) + 1
+    start, stop = chirps[start], chirps[stop]
+    time = np.arange(rd.grid.rec.shape[0]) / rd.grid.samplerate
+    index = np.where((time >= start) & (time <= stop))[0]
+
+    if len(index) < target_shape[0]:
+        return None
+
+    # now get random snippet from the indices
     random_start = np.random.randint(
-        0, source_shape[0] - target_shape[0], size=1
+        index[0], index[-1] - target_shape[0], size=1
     )[0]
     random_end = random_start + target_shape[0]
+
     real_snippet = rd.grid.rec[random_start:random_end, random_electrodes]
 
     # get mean and std of the real recording
@@ -469,13 +491,27 @@ def hybridgrid(
     directory.
     """
 
-    fake_datasets = fakegrid_path.listdir()
-    real_datasets = realgrid_path.listdir()
+    # list subdirectories of fakegrid_path
+    fake_datasets = list(fakegrid_path.iterdir())
+    real_datasets = list(realgrid_path.iterdir())
 
-    for fake_dataset in track(fake_datasets, description="Hybridizing grids"):
-        fake_dataset = load(fake_dataset)
-        real_dataset = load(np.random.choice(real_datasets))
+    # load csv with notes
+    chirp_notes = pd.read_csv(
+        realgrid_path / "chirp_notes.csv",
+    )
+
+    # get indices 25 to 29 as real datasets
+    real_datasets = chirp_notes.iloc[25:30]["recording"]
+    real_datasets = [realgrid_path / rd for rd in real_datasets]
+
+    for fake_dataset in fake_datasets:
+        fake_dataset = load(fake_dataset, grid=True)
+        real_dataset = load(np.random.choice(real_datasets), grid=True)
         fake_dataset = augment_grid(fake_dataset, real_dataset)
+        while fake_dataset is None:
+            real_dataset = load(np.random.choice(real_datasets), grid=True)
+            fake_dataset = augment_grid(fake_dataset, real_dataset)
+            rprint("No valid snippet found, trying again...")
         save(fake_dataset, save_path)
 
 
@@ -596,6 +632,8 @@ def hybridgrid_cli():
     """
 
     args = hybridgrid_interface()
+    if args.output_path.exists():
+        shutil.rmtree(args.output_path)
     hybridgrid(
         fakegrid_path=args.simulation_path,
         realgrid_path=args.real_path,
