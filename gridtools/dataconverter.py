@@ -193,6 +193,10 @@ def make_spectrograms(
 
         chunk = subset(data, idx1, idx2, mode="index")
 
+        # skip if no chirps in this chunk
+        if len(chunk.com.chirp.times) == 0:
+            continue
+
         # compute the spectrogram for each electrode of the current chunk
         for el in range(n_electrodes):
             # get the signal for the current electrode
@@ -288,7 +292,7 @@ def make_spectrograms(
         )
 
         # add as first colum instance id
-        df.insert(0, "instance_id", np.zeros_like(lxs, dtype=int))
+        df.insert(1, "instance_id", np.zeros_like(lxs, dtype=int))
 
         # convert the spectrogram to a PIL image
         spec = spec.detach().cpu().numpy()
@@ -345,7 +349,7 @@ def parse_datasets(input: pathlib.Path, output: pathlib.Path) -> None:
     make_file_tree(output)
     for path in track(list(input.iterdir()), description="Building datasets"):
         data = load(path, grid=True)
-        make_spectrograms(data, output, plot_boxes=True)
+        make_spectrograms(data, output, plot_boxes=False)
 
 
 def interface() -> argparse.Namespace:

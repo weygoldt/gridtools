@@ -106,10 +106,10 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     directory.
     """
 
-    ngrids = 10  # number of grids to simulate as long as there are chirps left
+    ngrids = 20  # number of grids to simulate as long as there are chirps left
     samplerate = 20000  # Hz
     wavetracker_samplingrate = 3
-    duration = 120  # s
+    duration = 600  # s
     min_chirp_dt = 0.5  # s
     max_chirp_freq = 0.5  # Hz
     max_chirp_contrast = 0.6
@@ -501,18 +501,19 @@ def hybridgrid(
     )
 
     # get indices 25 to 29 as real datasets
-    real_datasets = chirp_notes.iloc[25:30]["recording"]
+    # real_datasets = chirp_notes.iloc[25:30]["recording"]
+    real_datasets = chirp_notes["recording"]
     real_datasets = [realgrid_path / rd for rd in real_datasets]
 
-    for fake_dataset in fake_datasets:
+    for fake_dataset in track(fake_datasets):
         fake_dataset = load(fake_dataset, grid=True)
         real_dataset = load(np.random.choice(real_datasets), grid=True)
-        fake_dataset = augment_grid(fake_dataset, real_dataset)
-        while fake_dataset is None:
+        augmented_fake_dataset = augment_grid(fake_dataset, real_dataset)
+        while augmented_fake_dataset is None:
             real_dataset = load(np.random.choice(real_datasets), grid=True)
-            fake_dataset = augment_grid(fake_dataset, real_dataset)
+            augmented_fake_dataset = augment_grid(fake_dataset, real_dataset)
             rprint("No valid snippet found, trying again...")
-        save(fake_dataset, save_path)
+        save(augmented_fake_dataset, save_path)
 
 
 def fakegrid_interface():
