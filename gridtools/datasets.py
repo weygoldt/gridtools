@@ -618,9 +618,9 @@ def subset(
         stop_time = stop
 
     assert start_time < stop_time, "Start time must be smaller than stop time."
-    assert (
-        start_time >= data.track.times[0]
-    ), "Start time must be larger than the beginning."
+    # assert (
+    #     start_time >= data.track.times[0]
+    # ), "Start time must be larger than the beginning."
     # assert (
     #     stop_time <= data.track.times[-1]
     # ), "Stop time must be smaller than the end."
