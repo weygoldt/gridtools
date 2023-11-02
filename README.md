@@ -109,6 +109,7 @@ pre-commit run --all-files
 - [x] Make the extractor run on a folder of datasets instead of individual ones
 - [x] Update the parameter estimation function of the extractor to accomodate the simpler model that is fit to the frequency traces
 - [x] Rewrite hybrid grid function to choose windows where no chirps of the real fish are produced or at least take take snippets that happen during the day when the fish are inactive
+- [ ] Save the first and last spec image of a dataset in the same dimensions as the others but add zero padding.
 
 ## Project log 
 

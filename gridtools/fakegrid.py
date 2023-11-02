@@ -17,7 +17,6 @@ from rich import print as rprint
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
-
 from thunderfish.fakefish import wavefish_eods
 
 from .datasets import (
@@ -369,14 +368,14 @@ def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
 
     Parameters
     ----------
-    sd : xarray.Dataset
+    sd : Dataset
         The simulated dataset to augment.
-    rd : xarray.Dataset
+    rd : Dataset
         The real recording dataset to use for augmentation.
 
     Returns
     -------
-    xarray.Dataset
+    Dataset
         The augmented dataset.
 
     Raises
