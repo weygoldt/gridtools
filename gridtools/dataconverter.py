@@ -79,10 +79,8 @@ def numpy_to_pil(img: np.ndarray) -> Image:
 
 def chirp_bounding_boxes(data: Dataset, nfft: int) -> pd.DataFrame:
     assert hasattr(
-        data.com.chirp,
-        "params",
-        "Dataset must have a chirp attribute with a params attribute",
-    )
+        data.com.chirp, "params"
+    ), "Dataset must have a chirp attribute with a params attribute"
 
     # Time padding is one NFFT window
     pad_time = nfft / data.grid.samplerate
