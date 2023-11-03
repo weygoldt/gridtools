@@ -294,7 +294,7 @@ def make_spectrograms(
         )
 
         # add as first colum instance id
-        df.insert(1, "instance_id", np.zeros_like(lxs, dtype=int))
+        df.insert(0, "instance_id", np.ones_like(lxs, dtype=int))
 
         # convert the spectrogram to a PIL image
         spec = spec.detach().cpu().numpy()
