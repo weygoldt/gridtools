@@ -600,31 +600,31 @@
 <p>A high-level API to handle the different types of data recorded with, and extracted from electrode grid recordings of wave-type weakly electric fish.</p>
 <h2 id="installation">Installation</h2>
 <p>To install the package, clone the repository and simply install it with pip:</p>
-<pre><code class="language-bash">git clone https://github.com/weygoldt/gridtools.git
-cd gridtools &amp;&amp; pip install .
-</code></pre>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/weygoldt/gridtools.git
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>gridtools<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.
+</span></code></pre></div>
 <h2 id="usage">Usage</h2>
 <h3 id="loading-manipulating-and-saving-data">Loading, manipulating and saving data</h3>
 <p><code>gridtools</code> can easily load <code>wavetracker</code> datasets including 
 position estimates, communication signals, and the raw recordings 
 into a single data model that verifies the dataset upon instantiation and automatically loads everything that is presend in the directory. The data model can be manipulated and saved to disk.</p>
 <p>As an example loading a dataset, creating a subset, and saving it to disk is as easy as:</p>
-<pre><code class="language-python">from gridtools.datasets import load, subset, save
-data = load('path/to/dataset')
-data = subset(data, 0, 1000) # get the first 1000 seconds
-save(data, 'path/to/dataset_subset')
-</code></pre>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span> <span class="nn">gridtools.datasets</span> <span class="kn">import</span> <span class="n">load</span><span class="p">,</span> <span class="n">subset</span><span class="p">,</span> <span class="n">save</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">data</span> <span class="o">=</span> <span class="n">load</span><span class="p">(</span><span class="s1">&#39;path/to/dataset&#39;</span><span class="p">)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">data</span> <span class="o">=</span> <span class="n">subset</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span> <span class="c1"># get the first 1000 seconds</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">save</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s1">&#39;path/to/dataset_subset&#39;</span><span class="p">)</span>
+</span></code></pre></div>
 <p>Most of this functionality is also implemented as shell scipts and can 
 be used from the command line. For example, to create a subset of a dataset,
 you can run:</p>
-<pre><code class="language-bash">subset-dataset -i /path/to/dataset -o /path/to/save --start 10 --end 20
-</code></pre>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>subset-dataset<span class="w"> </span>-i<span class="w"> </span>/path/to/dataset<span class="w"> </span>-o<span class="w"> </span>/path/to/save<span class="w"> </span>--start<span class="w"> </span><span class="m">10</span><span class="w"> </span>--end<span class="w"> </span><span class="m">20</span>
+</span></code></pre></div>
 <p>Because the <code>load</code> function automatically loads as much data as possible (excluding the raw data) and verifies the dataset, it is a good idea to check what is included in the dataset before loading it. This can be done with the <code>pprint</code> function. It will print a summary of the dataset.</p>
-<pre><code class="language-python">data.pprint()
-</code></pre>
-<p>To also load the raw data as a <code>thunderfish.dataloader.DataLoader</code> object, you can set the <code>grid</code> flag to <code>True</code>:</p>
-<pre><code class="language-python">data = load('path/to/dataset', grid=True)
-</code></pre>
+<p><div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">data</span><span class="o">.</span><span class="n">pprint</span><span class="p">()</span>
+</span></code></pre></div>
+To also load the raw data as a <code>thunderfish.dataloader.DataLoader</code> object, you can set the <code>grid</code> flag to <code>True</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">data</span> <span class="o">=</span> <span class="n">load</span><span class="p">(</span><span class="s1">&#39;path/to/dataset&#39;</span><span class="p">,</span> <span class="n">grid</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
 <h3 id="building-preprocessing-pipelines">Building preprocessing pipelines</h3>
 <p>The first step in electrode grid preprocessing is the <code>wavetracker</code>, that 
 performs ridge detection on sum spectrograms across all electrodes of the grid
@@ -648,17 +648,17 @@ recordings.</p>
 <p>Under construction.</p>
 <h2 id="contributing">Contributing</h2>
 <p>Contributions are welcome. To develop the package, clone the repository and install it in editable mode. Dev dependencies are managed with <code>poetry</code>. To install them, run:</p>
-<pre><code class="language-bash">poetry install
-</code></pre>
-<p>Before committing, please run the tests and the linter:</p>
-<pre><code class="language-bash">poetry run black gridtools
-poetry run pylint gridtools
-poetry run pytest
-</code></pre>
-<p>Only commit if all tests pass and the linter does not report any errors. To make this easier, you can install a pre-commit hook that runs the linter and the tests before every commit:</p>
-<pre><code class="language-bash">pre-commit install
-pre-commit run --all-files
-</code></pre>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>poetry<span class="w"> </span>install
+</span></code></pre></div>
+Before committing, please run the tests and the linter:</p>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>poetry<span class="w"> </span>run<span class="w"> </span>black<span class="w"> </span>gridtools
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>poetry<span class="w"> </span>run<span class="w"> </span>pylint<span class="w"> </span>gridtools
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>poetry<span class="w"> </span>run<span class="w"> </span>pytest
+</span></code></pre></div>
+Only commit if all tests pass and the linter does not report any errors. To make this easier, you can install a pre-commit hook that runs the linter and the tests before every commit:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>pre-commit<span class="w"> </span>install
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>pre-commit<span class="w"> </span>run<span class="w"> </span>--all-files
+</span></code></pre></div>
 <h2 id="to-do">To do</h2>
 <ul>
 <li>[ ] Build unit tests for <code>gridtools.datasets</code></li>
