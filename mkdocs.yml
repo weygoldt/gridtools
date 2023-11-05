@@ -1,0 +1,36 @@
+site_name: gridtools
+
+theme:
+  name: material
+  logo: 
+  palette: 
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to light mode
+  features:
+    - navigation.expand
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+  
+  icon:
+    repo: fontawesome/brands/github
+  
+extra:
+  generator: false
+
+repo_url: https://github.com/weygoldt/gridtools
+repo_name: weygoldt/gridtools
+
