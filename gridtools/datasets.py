@@ -1,24 +1,83 @@
 #!/usr/bin/env python3
 
 """
+# Datasets
+
 Classes and functions to load, work with and save data associated with 
 electrode grid recordings of wave-type weakly electric fish.
-
-The main class is the Dataset class, which is able to load all data extracted
-by the `wavetracker` as well as raw data, communication signals, etc.
 
 The main functionalities include the following:
 - gridtools.datasets.load: Load a dataset from a given path.
 - gridtools.datasets.save: Save a dataset to disk.
 - gridtools.datasets.subset: Make a subset of a dataset.
 
-The Dataset class is a composition of the WavetrackerData, GridData and
-CommunicationData classes. This way, the user can choose which data to load
-and which not to load. This design might seem complicated at first, but it
-allows for a lot of flexibility and extensibility. For example, if in the
-future, better detectors are available, or other kinds of data is extracted,
-they can easily be added to the Dataset class, without breaking the existing
-code.
+The main class is the `Dataset` class, which is able to load all data extracted
+by the `wavetracker` as well as raw data, communication signals, etc.
+
+## Architecture and design principles
+
+The architecture of the `datasets` module follows these design principles:
+- **Composition over inheritance**: The `Dataset` class is a composition of different
+subclasses, making it easily extensible to other data types in the future.
+- **Data models**: The `Dataset` class is not just a dataclass but a data model:
+Upon instantiation, the data is checked for consistency and errors are raised
+if the data is inconsistent.
+- **Data is immutable**: The data is immutable, i.e. it cannot be changed after
+instantiation. This is to ensure that the data is consistent at all times. If 
+data is ought to be changed, e.g. in a preprocessing pipeline, a new instance
+of the `Dataset` class should be created.
+
+The Dataset class is a composition of:
+- `GridData`: The raw recording from the electrode grid.
+- `WavetrackerData`: Tracking arrays produced by - and derived from - the [`wavetracker`](https://github.com/tillraab/wavetracker.git).
+- `CommunicationData`: Chirp and rise times, identifiers and optionally, extracted parameters such as height, width, etc.
+
+## Usage
+
+Loading a dataset is as easy as calling the `load` function with the path to the
+dataset as an argument. The function returns a `Dataset` object containing the
+loaded data.
+```python
+from gridtools.datasets import load
+ds = load(pathlib.Path("path/to/dataset"))
+```
+
+To also load the raw data, set the `grid` argument to `True`.
+```python
+from gridtools.datasets import load
+ds = load(pathlib.Path("path/to/dataset"), grid=True)
+```
+
+To create a subset of a dataset, use the `subset` function. The function takes
+the dataset to subset, the start and stop time of the subset, and the mode
+("time" or "index") as arguments. The function returns a new `Dataset` object
+containing the subsetted data.
+```python
+from gridtools.datasets import load, subset
+ds = load(pathlib.Path("path/to/dataset"))
+subset = subset(ds, 0.1, 0.5)
+```
+
+To save this subset to disk, use the `save` function. The function takes the
+subsetted dataset and the path to the directory where the dataset should be
+saved as arguments.
+```python
+from gridtools.datasets import load, subset, save
+ds = load(pathlib.Path("path/to/dataset"))
+subset = subset(ds, 0.1, 0.5)
+save(subset, pathlib.Path("path/to/save"))
+```
+
+If you are just interested in some part of the dataset, such as the `wavetracker`
+arrays, you can simply use the subclass specific methods instead:
+```python
+from gridtools.datasets import load_wavetracker, subset_wavetracker, save_wavetracker
+wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
+subset = subset_wavetracker(wt, 0.1, 0.5)
+save_wavetracker(subset, pathlib.Path("path/to/save"))
+```
+
+## API Reference
 """
 
 import argparse
@@ -814,61 +873,7 @@ def save(dataset: "Dataset", output_path: Union[pathlib.Path, str]) -> None:
         save_com(dataset.com, output_dir)
 
 
-def subset_cli():
-    """
-    Subset a dataset to a given time range. Parameters are passed via the
-    command line.
-
-    Parameters
-    ----------
-    input_path : pathlib.Path
-        Path to the dataset to be subsetted.
-    output_path : pathlib.Path
-        Path to the directory where the subsetted dataset should be saved.
-    start_time : float
-        Start time of the subset in seconds.
-    stop_time : float
-        Stop time of the subset in seconds.
-
-    Returns
-    -------
-    None
-    """
-    parser = argparse.ArgumentParser(
-        description="Subset a dataset to a given time range."
-    )
-    parser.add_argument(
-        "--input",
-        "-i",
-        type=pathlib.Path,
-        help="Path to the dataset to be subsetted.",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=pathlib.Path,
-        help="Path to the directory where the subsetted dataset should be saved.",
-    )
-    parser.add_argument(
-        "--start",
-        "-s",
-        type=float,
-        help="Start time of the subset in seconds.",
-    )
-    parser.add_argument(
-        "--end",
-        "-e",
-        type=float,
-        help="Stop time of the subset in seconds.",
-    )
-    args = parser.parse_args()
-
-    ds = load(args.input, grid=True)
-    ds_sub = subset(ds, args.start, args.end)
-    save(ds_sub, args.output)
-
-
-def pprint(obj: BaseModel) -> None:
+def _pprint(obj: BaseModel) -> None:
     """
     Pretty-print the attributes of the object.
     """
@@ -928,7 +933,7 @@ class WavetrackerData(BaseModel):
         Check if the wavetracker data is of equal length.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     freqs: np.ndarray[float]
     powers: np.ndarray[float]
@@ -941,7 +946,7 @@ class WavetrackerData(BaseModel):
 
     @field_validator("freqs", "powers", "idents", "indices", "ids", "times")
     @classmethod
-    def check_numpy_array(cls, v):
+    def _check_numpy_array(cls, v):
         """
         Check if all the arrays are numpy arrays.
 
@@ -966,7 +971,7 @@ class WavetrackerData(BaseModel):
 
     @field_validator("xpos", "ypos")
     @classmethod
-    def check_numpy_array_pos(cls, v):
+    def _check_numpy_array_pos(cls, v):
         """
         Check if xpos and ypos are numpy arrays when they are not none.
 
@@ -991,7 +996,7 @@ class WavetrackerData(BaseModel):
 
     @field_validator("times")
     @classmethod
-    def check_times_sorted(cls, v):
+    def _check_times_sorted(cls, v):
         """
         Checks that the times are monotonically increasing.
 
@@ -1017,7 +1022,7 @@ class WavetrackerData(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def check_times_indices(self):
+    def _check_times_indices(self):
         """
         Checks that the indices in the indices array cannot go out of bounds
         of the times array.
@@ -1039,7 +1044,7 @@ class WavetrackerData(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_wavetracker_data(self) -> "WavetrackerData":
+    def _check_wavetracker_data(self) -> "WavetrackerData":
         """
         Check if the wavetracker data is of correct length.
 
@@ -1065,7 +1070,7 @@ class WavetrackerData(BaseModel):
         """
         Pretty-print the attributes of the object.
         """
-        pprint(self)
+        _pprint(self)
 
 
 class GridData(BaseModel):
@@ -1098,14 +1103,14 @@ class GridData(BaseModel):
     >>> rec.samplerate
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     rec: Union[np.ndarray, DataLoader]
     samplerate: int
 
     @field_validator("rec")
     @classmethod
-    def check_raw(
+    def _check_raw(
         cls, v: Union[np.ndarray, DataLoader]
     ) -> Union[np.ndarray, DataLoader]:
         """
@@ -1136,7 +1141,7 @@ class GridData(BaseModel):
         """
         Pretty-print the attributes of the object.
         """
-        pprint(self)
+        _pprint(self)
 
 
 class ChirpData(BaseModel):
@@ -1185,7 +1190,7 @@ class ChirpData(BaseModel):
     >>> chirps = ChirpData(times=times, idents=idents, detector=detector)
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     times: np.ndarray
     idents: np.ndarray
@@ -1194,7 +1199,7 @@ class ChirpData(BaseModel):
 
     @field_validator("times", "idents")
     @classmethod
-    def check_numpy_array(cls, v):
+    def _check_numpy_array(cls, v):
         """
         Check if times and idents are numpy arrays.
 
@@ -1219,7 +1224,7 @@ class ChirpData(BaseModel):
 
     @field_validator("detector")
     @classmethod
-    def check_detector(cls, v):
+    def _check_detector(cls, v):
         """
         Check if detector is either 'gt' or 'cnn' and a string.
 
@@ -1245,7 +1250,7 @@ class ChirpData(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def delete_if_none(self):
+    def _delete_if_none(self):
         """
         Deletes attributes from the model if their values are None.
 
@@ -1263,7 +1268,7 @@ class ChirpData(BaseModel):
         """
         Pretty-print the attributes of the object.
         """
-        pprint(self)
+        _pprint(self)
 
 
 class RiseData(BaseModel):
@@ -1288,7 +1293,7 @@ class RiseData(BaseModel):
     >>> data = RiseData(times=times, idents=idents, detector=detector)
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     times: np.ndarray
     idents: np.ndarray
@@ -1297,7 +1302,7 @@ class RiseData(BaseModel):
 
     @field_validator("times", "idents")
     @classmethod
-    def check_numpy_array(cls, v):
+    def _check_numpy_array(cls, v):
         """
         Check if times and idents are numpy arrays.
 
@@ -1322,7 +1327,7 @@ class RiseData(BaseModel):
 
     @field_validator("detector")
     @classmethod
-    def check_detector(cls, v):
+    def _check_detector(cls, v):
         """
         Check if detector is either 'gt' or 'pd' and a string.
 
@@ -1348,7 +1353,7 @@ class RiseData(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def delete_if_none(self):
+    def _delete_if_none(self):
         """
         Deletes attributes from the model if their values are None.
 
@@ -1366,7 +1371,7 @@ class RiseData(BaseModel):
         """
         Pretty-print the attributes of the object.
         """
-        pprint(self)
+        _pprint(self)
 
 
 class CommunicationData(BaseModel):
@@ -1410,7 +1415,7 @@ class CommunicationData(BaseModel):
 
     @field_validator("chirp")
     @classmethod
-    def typecheck_chirp(cls, v):
+    def _typecheck_chirp(cls, v):
         """
         Check if chirp data is a ChirpData object if it is not none.
 
@@ -1435,7 +1440,7 @@ class CommunicationData(BaseModel):
 
     @field_validator("rise")
     @classmethod
-    def typecheck_rise(cls, v):
+    def _typecheck_rise(cls, v):
         """
         Check if rise data is a RiseData object if it is not none.
 
@@ -1459,7 +1464,7 @@ class CommunicationData(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def check_communication_data(self):
+    def _check_communication_data(self):
         """
         Check if chirp or rise data is provided. Class should not be instantiated when no data is provided.
 
@@ -1480,7 +1485,7 @@ class CommunicationData(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def delete_if_none(self):
+    def _delete_if_none(self):
         """
         Deletes attributes from the model if their values are None.
 
@@ -1498,7 +1503,7 @@ class CommunicationData(BaseModel):
         """
         Pretty-print the attributes of the object.
         """
-        pprint(self)
+        _pprint(self)
 
 
 class Dataset(BaseModel):
@@ -1536,7 +1541,7 @@ class Dataset(BaseModel):
     >>> ds.track.freqs
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     path: pathlib.Path
     grid: Optional[GridData]
@@ -1545,7 +1550,7 @@ class Dataset(BaseModel):
 
     @field_validator("path")
     @classmethod
-    def check_path(cls, v):
+    def _check_path(cls, v):
         """
         Check if path is a pathlib.Path object.
 
@@ -1570,7 +1575,7 @@ class Dataset(BaseModel):
 
     @field_validator("grid")
     @classmethod
-    def check_rec(cls, v):
+    def _check_rec(cls, v):
         """
         Check if raw data is a GridData object or none.
 
@@ -1595,7 +1600,7 @@ class Dataset(BaseModel):
 
     @field_validator("track")
     @classmethod
-    def check_track(cls, v):
+    def _check_track(cls, v):
         """
         Check if wavetracker data is a WavetrackerData object.
 
@@ -1622,7 +1627,7 @@ class Dataset(BaseModel):
 
     @field_validator("com")
     @classmethod
-    def check_com(cls, v):
+    def _check_com(cls, v):
         """
         Check if communication data is a CommunicationData object or none.
 
@@ -1648,7 +1653,7 @@ class Dataset(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def delete_if_none(self):
+    def _delete_if_none(self):
         """
         Deletes attributes from the model if their values are None.
 
@@ -1666,4 +1671,58 @@ class Dataset(BaseModel):
         """
         Pretty-print the attributes of the object.
         """
-        pprint(self)
+        _pprint(self)
+
+
+def subset_cli():
+    """
+    Subset a dataset to a given time range. Parameters are passed via the
+    command line.
+
+    Parameters
+    ----------
+    input_path : pathlib.Path
+        Path to the dataset to be subsetted.
+    output_path : pathlib.Path
+        Path to the directory where the subsetted dataset should be saved.
+    start_time : float
+        Start time of the subset in seconds.
+    stop_time : float
+        Stop time of the subset in seconds.
+
+    Returns
+    -------
+    None
+    """
+    parser = argparse.ArgumentParser(
+        description="Subset a dataset to a given time range."
+    )
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=pathlib.Path,
+        help="Path to the dataset to be subsetted.",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=pathlib.Path,
+        help="Path to the directory where the subsetted dataset should be saved.",
+    )
+    parser.add_argument(
+        "--start",
+        "-s",
+        type=float,
+        help="Start time of the subset in seconds.",
+    )
+    parser.add_argument(
+        "--end",
+        "-e",
+        type=float,
+        help="Stop time of the subset in seconds.",
+    )
+    args = parser.parse_args()
+
+    ds = load(args.input, grid=True)
+    ds_sub = subset(ds, args.start, args.end)
+    save(ds_sub, args.output)
