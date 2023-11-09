@@ -112,6 +112,7 @@ pre-commit run --all-files
 - [x] Save the first and last spec image of a dataset in the same dimensions as the others but add zero padding.
 - [ ] Add augmentations to the chirps that are simulated from the interpolated parameterspace, i.e. noise, etc. No real chirp is a perfect gaussian, just the average of all chirps are gaussians.
 - [ ] Fix interpolating the parameter space so that the training dataset is uniformly distributed.
+- [ ] Fix wrong track times in subset function 
 
 ## Project log 
 

@@ -308,44 +308,27 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
 
 def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
     """
-    Load all data from a dataset and build a Dataset object. A dataset object
-    contains at least all data produces by the wavetracker and optionally, also
-    the raw data, communication signals or position estimates.
+    Load all data from a dataset and build a Dataset object.
 
-    A dataset is not just a dataclass but a data model: Upon instantiation, the
-    data is checked for consistency and errors are raised if the data is
-    inconsistent.
+    Args:
+        path (Union[pathlib.Path, str]): The path to the dataset.
+        grid (bool, optional): Whether to load the grid data or not. Defaults to False.
 
-    the Dataset model is a composition of the WavetrackerData, GridData and
-    CommunicationData models. This way, the user can choose which data to load
-    and which not to load. It is also easily extensible to other data types,
-    e.g. rises or behaviour data, if this is needed in the future.
+    Returns:
+        Dataset: A Dataset object containing the raw data, wavetracker data, and communication data.
 
-    Parameters
-    ----------
-    path : pathlib.Path
-        The path to the dataset.
-    raw : bool, optional
-        Whether to load the raw data or not. Default is False.
-
-    Returns
-    -------
-    Dataset
-        A Dataset object containing the raw data, wavetracker data, and communication data.
-
-    Example
-    -------
-    >>> from gridtools.datasets import load
-    >>> ds = load(pathlib.Path("path/to/dataset"))
-    >>> # You can easily access wavetracker data using the dot notation
-    >>> ds.track.freqs
-    >>> # You can also access the raw data
-    >>> ds.rec.raw
-    >>> # Or the communication data
-    >>> ds.com.chirp.times
-    >>> ds.com.chirp.idents
-    >>> # Or the position estimates
-    >>> ds.track.xpos
+    Example:
+        from gridtools.datasets import load
+        ds = load(pathlib.Path("path/to/dataset"))
+        # You can easily access wavetracker data using the dot notation
+        ds.track.freqs
+        # You can also access the raw data
+        ds.rec.raw
+        # Or the communication data
+        ds.com.chirp.times
+        ds.com.chirp.idents
+        # Or the position estimates
+        ds.track.xpos
     """
     if isinstance(path, str):
         path = pathlib.Path(path)
@@ -690,7 +673,12 @@ def subset(
     )
     com_sub = subset_com(data.com, start_time, stop_time) if data.com else None
 
-    return Dataset(path=data.path, grid=raw_sub, track=wt_sub, com=com_sub)
+    new_path = (
+        data.path.parent
+        / f"subset_{data.path.name}_t0_{start_time}_t1_{stop_time}"
+    )
+
+    return Dataset(path=new_path, grid=raw_sub, track=wt_sub, com=com_sub)
 
 
 def save_wavetracker(
@@ -933,7 +921,7 @@ class WavetrackerData(BaseModel):
         Check if the wavetracker data is of equal length.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
 
     freqs: np.ndarray[float]
     powers: np.ndarray[float]
@@ -1103,7 +1091,7 @@ class GridData(BaseModel):
     >>> rec.samplerate
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
 
     rec: Union[np.ndarray, DataLoader]
     samplerate: int
@@ -1190,7 +1178,7 @@ class ChirpData(BaseModel):
     >>> chirps = ChirpData(times=times, idents=idents, detector=detector)
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
 
     times: np.ndarray
     idents: np.ndarray
@@ -1293,7 +1281,7 @@ class RiseData(BaseModel):
     >>> data = RiseData(times=times, idents=idents, detector=detector)
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
 
     times: np.ndarray
     idents: np.ndarray
@@ -1541,7 +1529,7 @@ class Dataset(BaseModel):
     >>> ds.track.freqs
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
 
     path: pathlib.Path
     grid: Optional[GridData]

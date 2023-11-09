@@ -6,6 +6,7 @@ the parameters from the configuration file.
 """
 
 import argparse
+import gc
 import pathlib
 import shutil
 
@@ -17,6 +18,7 @@ from rich import print as rprint
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
+
 from thunderfish.fakefish import wavefish_eods
 
 from .datasets import (
@@ -41,6 +43,30 @@ from .utils.filters import lowpass_filter
 np.random.seed(42)
 con = Console()
 model = chirp_model_v4
+
+
+def fftnoise(f):
+    f = np.array(f, dtype="complex")
+    Np = (len(f) - 1) // 2
+    phases = np.random.rand(Np) * 2 * np.pi
+    phases = np.cos(phases) + 1j * np.sin(phases)
+    f[1 : Np + 1] *= phases
+    f[-1 : -1 - Np : -1] = np.conj(f[1 : Np + 1])
+    return np.fft.ifft(f).real
+
+
+def band_limited_noise(min_freq, max_freq, samples=1024, samplerate=1, std=1):
+    freqs = np.abs(np.fft.fftfreq(samples, 1 / samplerate))
+    f = np.zeros(samples)
+    idx = np.where(np.logical_and(freqs >= min_freq, freqs <= max_freq))[0]
+    f[idx] = 1
+    noise = fftnoise(f)
+
+    # shift to 0 and make std 1
+    noise = (noise - np.mean(noise)) / np.std(noise)
+    noise *= std
+
+    return noise
 
 
 def get_random_timestamps(start_t, stop_t, n_timestamps, min_dt):
@@ -105,7 +131,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     directory.
     """
 
-    ngrids = 20  # number of grids to simulate as long as there are chirps left
+    ngrids = 100  # number of grids to simulate as long as there are chirps left
     samplerate = 20000  # Hz
     wavetracker_samplingrate = 3
     duration = 600  # s
@@ -188,6 +214,30 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
                     -contrasts[i],
                     *cp[i, 2:],
                 )
+
+            # make chirps particularly noisy
+            # to do this make noise and multiply it with the chirp
+            chirpnoise = (
+                band_limited_noise(0, 100, len(ftrace), samplerate, 1) * ftrace
+            )
+            # now scale it back down because chirps are too strong
+            chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(chirpnoise)
+
+            chirpnoise *= 5
+
+            # add the noise to the frequency trace
+            ftrace += chirpnoise
+
+            # add band limited noise to the frequency trace
+            ftrace += band_limited_noise(
+                0, 100, len(ftrace), samplerate, 1
+            )  # just for noise
+            ftrace += band_limited_noise(
+                0, 0.05, len(ftrace), samplerate, 5
+            )  # EOD fluctuations
+            # plt.plot(ftrace)
+            # plt.show()
+            # exit()
 
             # shift the freq trace to the eodf
             ftrace += eodf
@@ -454,6 +504,8 @@ def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
     # combine the simulated dataset with the real recording
     sd.grid.rec = sd.grid.rec + real_snippet
 
+    del rd
+
     # save the hybrid dataset
     return sd
 
@@ -511,8 +563,17 @@ def hybridgrid(
         while augmented_fake_dataset is None:
             real_dataset = load(np.random.choice(real_datasets), grid=True)
             augmented_fake_dataset = augment_grid(fake_dataset, real_dataset)
-            rprint("No valid snippet found, trying again...")
+            print("No valid snippet found, trying again...")
+
+            del real_dataset
+
         save(augmented_fake_dataset, save_path)
+
+        del fake_dataset
+        del real_dataset
+        del augmented_fake_dataset
+
+        gc.collect()
 
 
 def fakegrid_interface():
@@ -634,6 +695,7 @@ def hybridgrid_cli():
     args = hybridgrid_interface()
     if args.output_path.exists():
         shutil.rmtree(args.output_path)
+
     hybridgrid(
         fakegrid_path=args.simulation_path,
         realgrid_path=args.real_path,
