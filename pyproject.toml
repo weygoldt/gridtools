@@ -26,6 +26,9 @@ torchaudio = "^2.1.0"
 torchvision = "^0.16.0"
 pillow = "^10.1.0"
 albumentations = "^1.3.1"
+rich-argparse = "^1.4.0"
+click = "^8.1.7"
+rich-click = "^1.7.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.10.0"
@@ -39,6 +42,8 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
+gridtools = "gridtools.gridtools:cli"
+gdt = "gridtools.gridtools:cli"
 dataconverter = "gridtools.dataconverter:dataconverter_cli"
 fakegrid = "gridtools.fakegrid:fakegrid_cli"
 hybridgrid = "gridtools.fakegrid:hybridgrid_cli"

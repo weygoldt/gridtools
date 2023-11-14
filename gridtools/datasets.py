@@ -22,10 +22,6 @@ subclasses, making it easily extensible to other data types in the future.
 - **Data models**: The `Dataset` class is not just a dataclass but a data model:
 Upon instantiation, the data is checked for consistency and errors are raised
 if the data is inconsistent.
-- **Data is immutable**: The data is immutable, i.e. it cannot be changed after
-instantiation. This is to ensure that the data is consistent at all times. If 
-data is ought to be changed, e.g. in a preprocessing pipeline, a new instance
-of the `Dataset` class should be created.
 
 The Dataset class is a composition of:
 - `GridData`: The raw recording from the electrode grid.
@@ -76,8 +72,6 @@ wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
 subset = subset_wavetracker(wt, 0.1, 0.5)
 save_wavetracker(subset, pathlib.Path("path/to/save"))
 ```
-
-## API Reference
 """
 
 import argparse
@@ -310,25 +304,28 @@ def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
     """
     Load all data from a dataset and build a Dataset object.
 
-    Args:
-        path (Union[pathlib.Path, str]): The path to the dataset.
-        grid (bool, optional): Whether to load the grid data or not. Defaults to False.
+    Parameters
+    ----------
+    path : Union[pathlib.Path, str]
+        The path to the dataset.
+    grid : bool, optional
+        Whether to load the grid data or not. Defaults to False.
 
-    Returns:
-        Dataset: A Dataset object containing the raw data, wavetracker data, and communication data.
+    Returns
+    -------
+    Dataset
+        A Dataset object containing the raw data, wavetracker data, and communication data.
 
-    Example:
-        from gridtools.datasets import load
-        ds = load(pathlib.Path("path/to/dataset"))
-        # You can easily access wavetracker data using the dot notation
-        ds.track.freqs
-        # You can also access the raw data
-        ds.rec.raw
-        # Or the communication data
-        ds.com.chirp.times
-        ds.com.chirp.idents
-        # Or the position estimates
-        ds.track.xpos
+    Examples
+    --------
+    >>> import pathlib
+    >>> from gridtools.datasets import load
+    >>> ds = load(pathlib.Path("path/to/dataset"))
+    >>> ds.track.freqs
+    >>> ds.rec.raw
+    >>> ds.com.chirp.times
+    >>> ds.com.chirp.idents
+    >>> ds.track.xpos
     """
     if isinstance(path, str):
         path = pathlib.Path(path)
@@ -660,18 +657,20 @@ def subset(
         stop_time = stop
 
     assert start_time < stop_time, "Start time must be smaller than stop time."
-    # assert (
-    #     start_time >= data.track.times[0]
-    # ), "Start time must be larger than the beginning."
-    # assert (
-    #     stop_time <= data.track.times[-1]
-    # ), "Stop time must be smaller than the end."
 
-    wt_sub = subset_wavetracker(data.track, start_time, stop_time)
-    raw_sub = (
-        subset_grid(data.grid, start_time, stop_time) if data.grid else None
+    wt_sub = subset_wavetracker(
+        data.track, start_time, stop_time, samplerate=samplerate
     )
-    com_sub = subset_com(data.com, start_time, stop_time) if data.com else None
+    raw_sub = (
+        subset_grid(data.grid, start_time, stop_time, samplerate=samplerate)
+        if data.grid
+        else None
+    )
+    com_sub = (
+        subset_com(data.com, start_time, stop_time, samplerate=samplerate)
+        if data.com
+        else None
+    )
 
     new_path = (
         data.path.parent
@@ -685,7 +684,8 @@ def save_wavetracker(
     wt: "WavetrackerData", output_path: Union[pathlib.Path, str]
 ) -> None:
     """
-    Save WavetrackerData object to disk.
+    Save WavetrackerData object to disk as numpy files, like the original
+    wavetracker data.
 
     Parameters
     ----------
@@ -697,24 +697,6 @@ def save_wavetracker(
     Returns
     -------
     None
-
-    Notes
-    -----
-    This function saves the following attributes of the WavetrackerData object to disk:
-    - freqs: numpy.ndarray
-        Frequencies of each fish over time.
-    - powers: numpy.ndarray
-        Powers for each frequency.
-    - idents: numpy.ndarray
-        Identifiers of the fish.
-    - indices: numpy.ndarray
-        Indices to connect fish ID and freq/power/positions to the time axis.
-    - times: numpy.ndarray
-        Time axis.
-    - xpos: numpy.ndarray, optional
-        X-coordinates estimated for each fish, if available.
-    - ypos: numpy.ndarray, optional
-        Y-coordinates estimated for each fish, if available.
 
     Examples
     --------
@@ -1662,7 +1644,12 @@ class Dataset(BaseModel):
         _pprint(self)
 
 
-def subset_cli():
+def subset_cli(
+    input_path: pathlib.Path,
+    output_path: pathlib.Path,
+    start_time: float,
+    end_time: float,
+) -> None:
     """
     Subset a dataset to a given time range. Parameters are passed via the
     command line.
@@ -1675,42 +1662,13 @@ def subset_cli():
         Path to the directory where the subsetted dataset should be saved.
     start_time : float
         Start time of the subset in seconds.
-    stop_time : float
+    end_time : float
         Stop time of the subset in seconds.
 
     Returns
     -------
     None
     """
-    parser = argparse.ArgumentParser(
-        description="Subset a dataset to a given time range."
-    )
-    parser.add_argument(
-        "--input",
-        "-i",
-        type=pathlib.Path,
-        help="Path to the dataset to be subsetted.",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=pathlib.Path,
-        help="Path to the directory where the subsetted dataset should be saved.",
-    )
-    parser.add_argument(
-        "--start",
-        "-s",
-        type=float,
-        help="Start time of the subset in seconds.",
-    )
-    parser.add_argument(
-        "--end",
-        "-e",
-        type=float,
-        help="Stop time of the subset in seconds.",
-    )
-    args = parser.parse_args()
-
-    ds = load(args.input, grid=True)
-    ds_sub = subset(ds, args.start, args.end)
-    save(ds_sub, args.output)
+    ds = load(input_path, grid=True)
+    ds_sub = subset(ds, start_time, end_time)
+    save(ds_sub, output_path)
