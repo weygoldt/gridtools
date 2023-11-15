@@ -830,6 +830,9 @@ thunderfish @ git+https://github.com/weygoldt/thunderfish.git@HEAD ; python_vers
 tifffile==2023.9.26 ; python_version >= "3.11" and python_version < "3.13" \
     --hash=sha256:1de47fa945fddaade256e25ad4f375ae65547f3c1354063aded881c32a64cf89 \
     --hash=sha256:67e355e4595aab397f8405d04afe1b4ae7c6f62a44e22d933fee1a571a48c7ae
+toml==0.10.2 ; python_version >= "3.11" and python_version < "3.13" \
+    --hash=sha256:806143ae5bfb6a3c6e736a764057db0e6a0e05e338b5630894a5f779cabb4f9b \
+    --hash=sha256:b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f
 torch==2.1.0 ; python_version >= "3.11" and python_version < "3.13" \
     --hash=sha256:05661c32ec14bc3a157193d0f19a7b19d8e61eb787b33353cad30202c295e83b \
     --hash=sha256:0bd691efea319b14ef239ede16d8a45c246916456fa3ed4f217d8af679433cc6 \

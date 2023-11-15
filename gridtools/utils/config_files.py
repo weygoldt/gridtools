@@ -10,7 +10,6 @@ from typing import Union
 import numpy as np
 import yaml
 from rich import print as rprint
-
 from thunderfish.dataloader import DataLoader
 
 
