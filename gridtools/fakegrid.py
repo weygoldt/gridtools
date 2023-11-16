@@ -6,15 +6,14 @@ the parameters from the configuration file.
 """
 
 import argparse
-import gc
 import pathlib
 import shutil
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from IPython import embed
-from rich import print as rprint
+from pandas.io.formats.format import return_docstring
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
@@ -38,13 +37,14 @@ from .simulations import (
     make_steps,
 )
 from .utils.filters import lowpass_filter
+from .utils.configfiles import SimulationConfig, load_sim_config
 
 np.random.seed(42)
 con = Console()
 model = chirp_model_v4
 
 
-def fftnoise(f):
+def fftnoise(f: np.ndarray) -> np.ndarray:
     f = np.array(f, dtype="complex")
     Np = (len(f) - 1) // 2
     phases = np.random.rand(Np) * 2 * np.pi
@@ -54,7 +54,33 @@ def fftnoise(f):
     return np.fft.ifft(f).real
 
 
-def band_limited_noise(min_freq, max_freq, samples=1024, samplerate=1, std=1):
+def band_limited_noise(
+    min_freq: float,
+    max_freq: float,
+    samples: int = 1024,
+    samplerate: int = 1,
+    std: float = 1,
+) -> np.ndarray:
+    """Generate band limited noise.
+
+    Parameters
+    ----------
+    min_freq : float
+        The minimum frequency of the band.
+    max_freq : float
+        The maximum frequency of the band.
+    samples : int, Optional
+        The number of samples to generate. Default is 1024.
+    samplerate : int, Optional
+        The samplerate of the signal. Default is 1.
+    std : float, Optional
+        The standard deviation of the noise. Default is 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        An array of band limited noise.
+    """
     freqs = np.abs(np.fft.fftfreq(samples, 1 / samplerate))
     f = np.zeros(samples)
     idx = np.where(np.logical_and(freqs >= min_freq, freqs <= max_freq))[0]
@@ -102,14 +128,14 @@ def get_random_timestamps(start_t, stop_t, n_timestamps, min_dt):
             timestamps.sort()
 
 
-def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
+def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
     """
     Simulate a grid of electrodes and fish EOD signals.
 
     Parameters
     ----------
-    chirp_param_path : pathlib.Path
-        Path to the simulated chirp parameters.
+    config : SimulationConfig
+        The simulation configuration, to be placed in the output_path.
     output_path : pathlib.Path
         Path to save the simulated recordings to.
 
@@ -130,25 +156,37 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
     directory.
     """
 
-    ngrids = 100  # number of grids to simulate as long as there are chirps left
-    samplerate = 20000  # Hz
-    wavetracker_samplingrate = 3
-    duration = 600  # s
-    min_chirp_dt = 0.5  # s
-    max_chirp_freq = 0.5  # Hz
-    max_chirp_contrast = 0.6
-    eodfrange = np.array([300, 1600])
+    # general parameters
+    ngrids = config.meta.ngrids
+    samplerate = config.grid.samplerate
+    wavetracker_samplingrate = config.grid.wavetracker_samplerate
+    duration = config.grid.duration
+    eodfrange = config.fish.eodfrange
+    eodfnoise_std = config.fish.eodfnoise_std
+    eodfnoise_band = config.fish.eodfnoise_band
+    noise_std = config.fish.noise_std
+    downsample_lowpass = config.grid.downsample_lowpass
+
+    # chirp parameters
+    min_chirp_dt = config.chirps.min_chirp_dt
+    max_chirp_freq = config.chirps.max_chirp_freq
+    max_chirp_contrast = config.chirps.max_chirp_contrast
+    chirpnoise_std = config.chirps.chirpnoise_std
+    chirpnoise_band = config.chirps.chirpnoise_band
+
+    # load chirp parameters from model fits
+    chirp_param_path = pathlib.Path(config.chirps.chirp_params_path)
     simulated_chirp_params = pd.read_csv(chirp_param_path).to_numpy()
     np.random.shuffle(simulated_chirp_params)
 
     gridx, gridy = make_grid(
-        origin=(0, 0),
-        shape=(2, 2),
-        spacing=0.5,
-        style="square",
+        origin=config.grid.origin,
+        shape=config.grid.shape,
+        spacing=config.grid.spacing,
+        style=config.grid.style,
     )
     nelectrodes = len(np.ravel(gridx))
-    boundaries = (-2, 2, -2, 2)
+    boundaries = config.grid.boundaries
 
     for griditer in range(ngrids):
         nfish = np.random.randint(1, 5)
@@ -169,6 +207,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
         chirp_params = []
         detector = "gt"
 
+        fishiter = 0
         for fishiter in track(
             range(nfish),
             description=f"Grid {griditer + 1} of {ngrids}",
@@ -177,7 +216,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
             eodf = eodfs[fishiter]
 
             # simulate chirps
-            nchirps = np.random.randint(1, duration * max_chirp_freq)
+            nchirps = np.random.randint(1, int(duration * max_chirp_freq))
 
             # get n_chirps random chirp parameters and delete them from the list
             # of chirp parameters after each iteration to avoid duplicates
@@ -197,7 +236,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
             )
 
             # make chirps with the extracted parameters at these times
-            ftrace = np.zeros(duration * samplerate)
+            ftrace = np.zeros(int(duration * samplerate))
             contrasts = np.random.uniform(0, max_chirp_contrast, size=nchirps)
             amtrace = np.ones_like(ftrace)
             time = np.arange(len(ftrace)) / samplerate
@@ -217,26 +256,30 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
             # make chirps particularly noisy
             # to do this make noise and multiply it with the chirp
             chirpnoise = (
-                band_limited_noise(0, 100, len(ftrace), samplerate, 1) * ftrace
+                band_limited_noise(
+                    chirpnoise_band[0],
+                    chirpnoise_band[1],
+                    len(ftrace),
+                    samplerate,
+                    1,
+                )
+                * ftrace
             )
             # now scale it back down because chirps are too strong
             chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(chirpnoise)
-
-            chirpnoise *= 5
+            chirpnoise *= chirpnoise_std
 
             # add the noise to the frequency trace
             ftrace += chirpnoise
 
             # add band limited noise to the frequency trace
             ftrace += band_limited_noise(
-                0, 100, len(ftrace), samplerate, 1
-            )  # just for noise
-            ftrace += band_limited_noise(
-                0, 0.05, len(ftrace), samplerate, 5
+                eodfnoise_band[0],
+                eodfnoise_band[1],
+                len(ftrace),
+                samplerate,
+                eodfnoise_std,
             )  # EOD fluctuations
-            # plt.plot(ftrace)
-            # plt.show()
-            # exit()
 
             # shift the freq trace to the eodf
             ftrace += eodf
@@ -248,7 +291,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
                 samplerate=samplerate,
                 duration=duration,
                 phase0=0,
-                noise_std=0.01,
+                noise_std=noise_std,
             )
 
             # modulate the eod with the amplitude trace
@@ -288,6 +331,7 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
             attenuated_signals = grid_signals * dists
 
             # collect signals
+            signal = None
             if fishiter == 0:
                 signal = attenuated_signals
             else:
@@ -304,10 +348,15 @@ def fakegrid(chirp_param_path: pathlib.Path, output_path: pathlib.Path) -> None:
 
             # filter to remove resampling artifacts, particularly when there
             # are rises
-            f = lowpass_filter(f, 10, wavetracker_samplingrate)
+            f = lowpass_filter(f, downsample_lowpass, wavetracker_samplingrate)
             f[f < eodf] = eodf  # for filter oscillations
             p = np.vstack(
-                [lowpass_filter(pi, 10, wavetracker_samplingrate) for pi in p.T]
+                [
+                    lowpass_filter(
+                        pi, downsample_lowpass, wavetracker_samplingrate
+                    )
+                    for pi in p.T
+                ]
             ).T
             p[p < 0] = 0
 
@@ -663,40 +712,34 @@ def hybridgrid_interface():
     return args
 
 
-def fakegrid_cli():
+def fakegrid_cli(output_path):
     """
     Command line interface for the fakegrid function.
-
-    Examples
-    --------
-    To generate fake grid data from the command line:
-
-    $ fakegrid --chirp_path /path/to/chirp_param.csv --output_path /path/to/output/dir
     """
 
-    args = fakegrid_interface()
+    config_path = (pathlib.Path(output_path) / "gridtools_simulations.toml",)
+    config_path = config_path[0].resolve()
+    config = load_sim_config(str(config_path))
+
     fakegrid(
-        chirp_param_path=args.chirp_path,
-        output_path=args.output_path,
+        config=config,
+        output_path=output_path,
     )
 
 
-def hybridgrid_cli():
+def hybridgrid_cli(input_path, real_path, output_path):
     """
     Run the hybridgrid simulation using the command line interface.
-
-    Examples
-    --------
-    To run the hybridgrid simulation from the command line:
-    $ hybridgrid --simulation_path /path/to/simulated/dataset --real_path /path/to/real/recording --output_path /path/to/output/dir
     """
+    input_path = pathlib.Path(input_path)
+    real_path = pathlib.Path(real_path)
+    output_path = pathlib.Path(output_path)
 
-    args = hybridgrid_interface()
-    if args.output_path.exists():
-        shutil.rmtree(args.output_path)
+    if output_path.exists():
+        shutil.rmtree(output_path)
 
     hybridgrid(
-        fakegrid_path=args.simulation_path,
-        realgrid_path=args.real_path,
-        save_path=args.output_path,
+        fakegrid_path=input_path,
+        realgrid_path=real_path,
+        save_path=output_path,
     )

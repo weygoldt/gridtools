@@ -23,7 +23,7 @@ class MovementParams:
     All parameters for simulating the movement of a fish.
     """
 
-    duration: int = 1200
+    duration: float = 1200
     origin: Tuple[float, float] = (0, 0)
     boundaries: Tuple[float, float, float, float] = (-5, 5, -5, 5)
     forward_s: float = 0.2

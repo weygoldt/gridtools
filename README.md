@@ -113,6 +113,8 @@ pre-commit run --all-files
 - [ ] Add augmentations to the chirps that are simulated from the interpolated parameterspace, i.e. noise, etc. No real chirp is a perfect gaussian, just the average of all chirps are gaussians.
 - [ ] Fix interpolating the parameter space so that the training dataset is uniformly distributed.
 - [ ] Fix wrong track times in subset function 
+- [ ] Move simulation parameters to a config file
+- [ ] Fix the grid function once and for all 
 
 ## Project log 
 

@@ -1,0 +1,36 @@
+# Default config file for the chirp simulation
+# Author: Patrick Weygoldt, 2023-11-16 
+# Do NOT change the file name, structure or variable names.
+
+# Note: The amount of data scales quickly with the samplerate, duration and number of 
+# electrodes (determined by the grid shape). All of this data is kept in memory until 
+# saved. Be careful to not cause a memory overflow.
+
+[meta]
+ngrids = 100 # how many recordings to simulate
+
+[grid]
+samplerate = 20000 # in Hz, samplerate of the raw signal
+wavetracker_samplerate = 3 # in Hz, approx. samplerate of wavetracker output
+duration = 600 # in seconds
+origin = [0, 0] # origin of the grid, whhen (0,0) then coordinates are relative to the center
+shape = [2, 2] # shape of the grid (nrows, ncols)
+spacing = 0.5 # in meters, distance between grid points
+style = "square" # grid units can be square or hex
+boundaries = [-2, 2, -2, 2] # in meters, boundaries of the simualted world (x1,y1,x2,y2)
+downsample_lowpass = 10 # in Hz, lowpass filter to apply after downsampling the wavetracker output
+
+[fish]
+nfish = [1,5] # min and max number of fish per recording
+eodfrange = [300, 1600] # in Hz, range of EOD frequencies
+noise_std = 0.01 # std of random noise added to the EOD waveform
+eodfnoise_std = 5 # std of limited band noise added to the EOD frequency trace
+eodfnoise_band = [0,0.05] # band of the limited band noise added to the EOD frequency trace
+
+[chirps]
+min_chirp_dt = 0.5 # in seconds, minimum time between two chirps
+max_chirp_freq = 5 # in Hz, maximum chirp frequency
+max_chirp_contrast = 0.5 # maximum contrast of the chirp envelope drop
+chirpnoise_std = 1 # std of limited band noise added to the chirp frequency trace 
+chirpnoise_band = [0,100] # band of the limited band noise added to the chirp frequency trace
+chirp_params_path = "/home/weygoldt/Projects/mscthesis/data/interrim/chirpsimulations/chirp_fits_interpolated.csv" # where simulated chirp parameters are

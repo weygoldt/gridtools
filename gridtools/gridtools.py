@@ -11,6 +11,8 @@ import rich_click as click
 import toml
 
 from .datasets import subset_cli
+from .fakegrid import fakegrid_cli, hybridgrid_cli
+from .utils.configfiles import copy_config
 
 click.rich_click.USE_RICH_MARKUP = True
 click.rich_click.USE_MARKDOWN = True
@@ -62,6 +64,50 @@ def io():
     pass
 
 
+@cli.group()
+def show():
+    """Visualize datasets as spectrograms, position estimates, etc."""
+    pass
+
+
+@cli.group()
+def render():
+    """Render videos"""
+    pass
+
+
+@cli.group()
+def prepro():
+    """Preprocess datasets according to your prepro.toml file"""
+    pass
+
+
+@cli.group()
+def simulate():
+    """Simulate full grid datasets including wavetracker tracks, position estimates, etc."""
+    pass
+
+
+@cli.command()
+@click.option(
+    "--config_path",
+    "-c",
+    type=click.Path(),
+    required=True,
+    help="Path to the config file.",
+)
+@click.option(
+    "--mode",
+    "-m",
+    type=click.Choice(["prepro", "simulations"]),
+    required=True,
+    help="Mode of operation.",
+)
+def copyconfig(config_path, mode):
+    """Copy a config file to a directory."""
+    copy_config(config_path, mode)
+
+
 @io.command()
 @click.option(
     "--input_path",
@@ -96,12 +142,6 @@ def subset(input_path, output_path, start_time, end_time):
     subset_cli(input_path, output_path, start_time, end_time)
 
 
-@cli.group()
-def show():
-    """Visualize datasets as spectrograms, position estimates, etc."""
-    pass
-
-
 @show.command()
 @click.option(
     "--input_path",
@@ -118,18 +158,48 @@ def spec(input_path):
 @click.argument("input_path")
 def tracks(input_path):
     """Show the position estimates of the dataset."""
-
-
-@cli.group()
-def render():
-    """Render videos"""
     pass
 
 
-@cli.group()
-def prepro():
-    """Preprocess datasets according to your prepro.toml file"""
-    pass
+@simulate.command()
+@click.option(
+    "--output_path",
+    "-o",
+    type=click.Path(),
+    required=True,
+    help="Path to the output dataset.",
+)
+def grid(output_path):
+    """Simulate a grid dataset."""
+    fakegrid_cli(output_path)
+
+
+@simulate.command()
+@click.option(
+    "--input_path",
+    "-i",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to the simulated input dataset.",
+)
+@click.option(
+    "--real_path",
+    "-r",
+    type=click.Path(),
+    required=True,
+    help="Path to a real dataset to grap background noise from.",
+)
+@click.option(
+    "--output_path",
+    "-o",
+    type=click.Path(),
+    required=True,
+    help="Path to the output dataset.",
+)
+def noise(input_path, real_path, output_path):
+    """Add real noise to a simulated dataset (`input_path`) from a dataset of real
+    recordings (`real_path`) and save the result to `output_path`."""
+    hybridgrid_cli(input_path, real_path, output_path)
 
 
 if __name__ == "__main__":
