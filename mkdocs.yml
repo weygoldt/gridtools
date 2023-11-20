@@ -2,7 +2,8 @@ site_name: gridtools
 
 theme:
   name: material
-  logo: 
+  favicon: assets/logo.svg
+  logo: assets/logo.svg
   palette: 
     # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
@@ -35,7 +36,9 @@ theme:
 
 
 plugins:
-  - mkdocstrings
+  - mkdocstrings:
+      default_handler: python
+  - search
   
 extra:
   generator: false
@@ -48,6 +51,9 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
 
 repo_url: https://github.com/weygoldt/gridtools
 repo_name: weygoldt/gridtools
@@ -55,18 +61,9 @@ repo_name: weygoldt/gridtools
 nav:
     - Home: 'index.md'
     - 'User guide':
-        - 'Installation': 'installation.md'
-        - 'Getting started': 'getting_started.md'
-        - 'Datasets': 'datasets.md'
-        - 'Preprocessing': 'preprocessing.md'
-        - 'Visualization': 'visualization.md'
-        - 'Simulations': 'simulations.md'
+        - 'Detection': 'detection.md'
     - 'Example workflows':
         - 'Example 1': 'example1.md'
-        - 'Example 2': 'example2.md'
-        - 'Example 3': 'example3.md'
-    - 'Contributing':
-        - 'Code of conduct': 'code_of_conduct.md'
-        - 'Contributing guide': 'contributing.md'
+    - 'Contributing': 'contributing.md'
     - API reference: 'api/index.html'
 
