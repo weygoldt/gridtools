@@ -115,9 +115,11 @@ def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_wavetracker
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
+    ```
     """
 
     if isinstance(path, str):
@@ -173,9 +175,11 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets load_grid
     >>> rec = load_grid(pathlib.Path("path/to/raw"))
+    ```
     """
 
     if isinstance(path, str):
@@ -230,12 +234,14 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_com
     >>> com = load_com(pathlib.Path("path/to/communication"))
     >>> # get rise times and ids
     >>> com.rise.times
     >>> com.rise.idents
+    ```
     """
 
     if isinstance(path, str):
@@ -317,6 +323,7 @@ def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load
     >>> ds = load(pathlib.Path("path/to/dataset"))
@@ -325,6 +332,7 @@ def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
     >>> ds.com.chirp.times
     >>> ds.com.chirp.idents
     >>> ds.track.xpos
+    ```
     """
     if isinstance(path, str):
         path = pathlib.Path(path)
@@ -373,10 +381,12 @@ def subset_wavetracker(
 
     Example
     -------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_wavetracker, subset_wavetracker
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
     >>> wt_sub = subset_wavetracker(wt, 0.5, 1.5)
+    ```
     """
 
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
@@ -428,6 +438,7 @@ def subset_wavetracker(
         xpos = np.concatenate(xpos)
         ypos = np.concatenate(ypos)
     time = wt.times[(wt.times >= start_time) & (wt.times <= stop_time)]
+    time -= start_time
 
     if len(indices) == 0:
         raise GridDataMismatch("No data in the specified time range.")
@@ -477,10 +488,12 @@ def subset_grid(
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_grid,subset_grid
     >>> rec = load_grid(pathlib.Path("path/to/raw")
     >>> subset = subset_grid(rec, 0.1, 0.5)
+    ```
     """
 
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
@@ -538,10 +551,12 @@ def subset_com(
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_com, subset_com
     >>> com = load_com(pathlib.Path("path/to/communication"))
     >>> subset = subset_com(com, 0.1, 0.5)
+    ```
     """
 
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
@@ -638,11 +653,13 @@ def subset(
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load, subset, save
     >>> ds = load(pathlib.Path("path/to/dataset"))
     >>> subset = subset(ds, 0.1, 0.5)
     >>> save(subset, pathlib.Path("path/to/save"))
+    ```
     """
 
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
@@ -699,10 +716,12 @@ def save_wavetracker(
 
     Examples
     --------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_wavetracker
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
     >>> save_wavetracker(wt, pathlib.Path("path/to/save"))
+    ```
     """
 
     if isinstance(output_path, str):
@@ -731,16 +750,23 @@ def save_grid(rec: "GridData", output_path: Union[pathlib.Path, str]) -> None:
 
     Example
     -------
+    ```python
     >>> import pathlib
     >>> from gridtools.datasets import load_grid,save_grid
     >>> rec = load_grid(pathlib.Path("path/to/raw"))
     >>> save_grid(rec, pathlib.Path("path/to/save"))
+    ```
     """
 
     if isinstance(output_path, str):
         output_path = pathlib.Path(output_path)
 
-    write_data(str(output_path / "traces_grid1.wav"), rec.rec, rec.samplerate)
+    write_data(
+        str(output_path / "traces_grid1.wav"),
+        rec.rec,
+        rec.samplerate,
+        verbose=2,
+    )
 
 
 def save_com(
@@ -1670,4 +1696,5 @@ def subset_cli(
     """
     ds = load(input_path, grid=True)
     ds_sub = subset(ds, start_time, end_time)
+    print(f"Saving dataset to {output_path}")
     save(ds_sub, output_path)

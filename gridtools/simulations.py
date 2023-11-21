@@ -23,12 +23,12 @@ class MovementParams:
     All parameters for simulating the movement of a fish.
     """
 
-    duration: float = 1200
+    duration: float = 30
     origin: Tuple[float, float] = (0, 0)
-    boundaries: Tuple[float, float, float, float] = (-5, 5, -5, 5)
+    boundaries: Tuple[float, float, float, float] = (-5, -5, 5, 5)
     forward_s: float = 0.2
     backward_s: float = 0.1
-    backward_h: float = 0.1
+    backward_h: float = 0.2
     mode_veloc: float = 0.2
     max_veloc: float = 1
     measurement_fs: float = 30
@@ -75,8 +75,7 @@ def direction_pdf(
     forward_s: float,
     backward_s: float,
     backward_h: float,
-    measurement_fs: int = 30,
-    target_fs: int = 3,
+    fs: int = 10000,  # * 2 * np.pi = Number of possible directions
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Probability density function of the directions a fish can take.
@@ -92,7 +91,9 @@ def direction_pdf(
     backward_s : _type_
         Standard deviation of the backward direction.
     backward_h : _type_
-        Height of the curve for the backward direction.
+        Height of the curve for the backward direction relative to the forward
+        direction, e.g. 0.5 when the backward direction is half as likely as
+        the forward direction.
     measurement_fs : int, optional
         Samplerate to simulate steps, by default 30
     target_fs : int, optional
@@ -103,10 +104,12 @@ def direction_pdf(
     np.ndarray
         Directions and probabilities for each direction.
     """
-    forward_s = np.sqrt((1 / target_fs) / (1 / measurement_fs)) * forward_s
-    backward_s = np.sqrt((1 / target_fs) / (1 / measurement_fs)) * backward_s
 
-    directions = np.arange(0, 2 * np.pi, 0.0001)
+    assert forward_s > 0, "forward_s must be greater than 0"
+    assert backward_s > 0, "backward_s must be greater than 0"
+    assert backward_h >= 0, "backward_h must be greater than or equal to 0"
+
+    directions = np.arange(0, 2 * np.pi, 1 / fs)
     p_forward1 = norm.pdf(directions, 0, forward_s)
     p_forward2 = norm.pdf(directions, np.max(directions), forward_s)
     p_backward = norm.pdf(directions, np.pi, backward_s) * backward_h
@@ -137,8 +140,12 @@ def step_pdf(max_veloc: float, duration: int, target_fs: int = 3) -> np.ndarray:
     -------
     np.ndarray
         Array of step values.
-
     """
+
+    assert max_veloc > 0, "max_veloc must be greater than 0"
+    assert duration > 0, "duration must be greater than 0"
+    assert target_fs > 0, "target_fs must be greater than 0"
+    assert isinstance(target_fs, int), "target_fs must be an integer"
 
     # this is just a random gamma distribution
     # in the future, fit one to the real data and use that one
@@ -182,8 +189,6 @@ def make_steps(params: MovementParams):
         params.forward_s,
         params.backward_s,
         params.backward_h,
-        params.measurement_fs,
-        params.measurement_fs,
     )
 
     # make random step lengths according to a gamma distribution
@@ -206,7 +211,7 @@ def make_steps(params: MovementParams):
 def make_positions(
     trajectories: np.ndarray,
     steps: np.ndarray,
-    params: MovementParams,
+    origin: Tuple[float, float],
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Simulates a random walk with a given set of trajectories and step sizes.
@@ -218,10 +223,6 @@ def make_positions(
     ----------
     origin : Tuple[float, float]
         The (x, y) starting position of the agent.
-
-    boundaries : Tuple[float, float, float, float]
-        The minimum and maximum x and y positions allowed for the positions.
-        Everything outside these boundaries will be folded back to the boundaries.
 
     trajectories : np.ndarray
         A 1D array of angle values in radians specifying the direction of each
@@ -236,8 +237,10 @@ def make_positions(
         A tuple of two 1D arrays representing the final x and y
         positions of the trajectories.
     """
-    origin = params.origin
-    boundaries = params.boundaries
+
+    assert len(trajectories) == len(
+        steps
+    ), "trajectories and steps must be of equal length"
 
     x = np.full(len(trajectories) + 1, np.nan)
     y = np.full(len(trajectories) + 1, np.nan)
@@ -271,31 +274,109 @@ def make_positions(
     x = np.cumsum(x)
     y = np.cumsum(y)
 
-    # interpolate the position to the target fs
-    time_sim = np.arange(0, params.duration, 1 / params.measurement_fs)
-    time_target = np.arange(0, params.duration, 1 / params.target_fs)
+    return x, y
+
+
+def interpolate_positions(
+    x: np.ndarray, y: np.ndarray, t_tot: float, fss: int, fst: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Interpolate positions to a different sampling frequency.
+
+    This is particularly useful to modulate a simulated EOD amplitude
+    on multiple electrodes because the positions should then ideally be
+    sampled in the same way as the EOD amplitude.
+
+    Parameters
+    ----------
+    - `x` : `np.ndarray`
+        The x positions.
+    - `y` : `np.ndarray`
+        The y positions.
+    - `t_tot` : `float`
+        The total duration of the simulation.
+    - `fss` : `int`
+        The sampling frequency of the simulation.
+    - `fst` : `int`
+        The sampling frequency to interpolate to.
+
+    Returns
+    -------
+    - `Tuple[np.ndarray, np.ndarray]`
+        The interpolated x and y positions.
+    """
+
+    assert len(x) == len(y), "x and y must be of equal length"
+
+    time_sim = np.arange(0, t_tot, 1 / fss)
+    time_target = np.arange(0, t_tot, 1 / fst)
+
     xinterper = interp1d(time_sim, x, kind="cubic", fill_value="extrapolate")
     yinterper = interp1d(time_sim, y, kind="cubic", fill_value="extrapolate")
 
     x = xinterper(time_target)
     y = yinterper(time_target)
+    return x, y
+
+
+def fold_space(
+    x: np.ndarray, y: np.ndarray, boundaries: Tuple[float, float, float, float]
+):
+    """Fold back positions that are outside the boundaries.
+
+    This function folds the space in which x and y are defined back to the
+    boundaries. Imagine a 2D space with the x and y axes. If a point is outside
+    the boundaries, it is reflected back to the boundaries. For example, if
+    the boundaries are (0, 1, 0, 1) and a point is at (1.5, 0.5), it is
+    reflected back to (0.5, 0.5). If a point is outside the boundaries in
+    multiple dimensions, it is reflected back in all dimensions.
+
+    Parameters
+    ----------
+    - `x` : `np.ndarray`
+        The x positions.
+    - `y` : `np.ndarray`
+        The y positions.
+    - `boundaries` : `Tuple[float, float, float, float]`
+        The boundaries of the space in which x and y are defined.
+
+    Returns
+    -------
+    - `Tuple[np.ndarray, np.ndarray]`
+        The folded back x and y positions.
+    """
+
+    assert len(x) == len(y), "x and y must be of equal length"
+
+    # Check how narrow the boundaries are because this might take a while then
+    limit = 1000
+    minx, maxx = np.min(x), np.max(x)
+    miny, maxy = np.min(y), np.max(y)
+    if (
+        minx < boundaries[0] * limit
+        or miny < boundaries[1] * limit
+        or maxx > boundaries[2] * limit
+        or maxy > boundaries[3] * limit
+    ):
+        raise ValueError(
+            "The boundaries are too narrow. This might take a while."
+        )
 
     # fold back the positions if they are outside the boundaries
     boundaries = np.ravel(boundaries)
     while (
         np.any(x < boundaries[0])
-        or np.any(x > boundaries[1])
-        or np.any(y < boundaries[2])
+        or np.any(y < boundaries[1])
+        or np.any(x > boundaries[2])
         or np.any(y > boundaries[3])
     ):
         x[x < boundaries[0]] = boundaries[0] + (
             boundaries[0] - x[x < boundaries[0]]
         )
-        x[x > boundaries[1]] = boundaries[1] - (
-            x[x > boundaries[1]] - boundaries[1]
+        x[x > boundaries[2]] = boundaries[2] - (
+            x[x > boundaries[2]] - boundaries[2]
         )
-        y[y < boundaries[2]] = boundaries[2] + (
-            boundaries[2] - y[y < boundaries[2]]
+        y[y < boundaries[1]] = boundaries[1] + (
+            boundaries[1] - y[y < boundaries[1]]
         )
         y[y > boundaries[3]] = boundaries[3] - (
             y[y > boundaries[3]] - boundaries[3]
@@ -328,203 +409,26 @@ def gaussian(
     np.ndarray
         The value of the Gaussian function at the given points.
     """
+
     sigma = 0.5 * width / (2.0 * np.log(10.0)) ** (0.5 / kurt)
     curve = height * np.exp(-0.5 * (((x - mu) / sigma) ** 2.0) ** kurt)
+
     return curve
 
 
-def chirp_model_v2(x, m1, h1, w1, k1, m2, h2, w2, k2, m3, h3, w3, k3):
-    """Model a chirp as a combination of 3 Gaussians.
-
-    This model can be fit to the extracted instantaneous frequencies of real
-    chirps and is not supposed to be tuned "by hand".
-
-    This is the most complex model and is not that useful because of the
-    12 dimensonal parameter space. What motivated this model is the fact that
-    while the averaged chirp is most of the time a single Gaussian with a small
-    undershoot, the instantaneous frequency of real chirps rarely looks like
-    that. Instead, the instantaneous frequency of real chirps come in a variety
-    of shapes, to which a more complex model is better conform to. And when the
-    aim is to model realistic chirps, this variation in shape is important.
-
-    Parameters
-    ----------
-    x : np.array
-        The time axis.
-    m1 : float
-        The mean of the first Gaussian
-    h1 : float
-        The height of the first Gaussian
-    w1 : float
-        The width of the first Gaussian
-    k1 : float
-        The kurtosis of the first Gaussian
-    m2 : float
-        The mean of the second Gaussian
-    h2 : float
-        The height of the second Gaussian
-    w2 : float
-        The width of the second Gaussian
-    k2 : float
-        The kurtosis of the second Gaussian
-    m3 : float
-        The mean of the third Gaussian
-    h3 : float
-        The height of the third Gaussian
-    w3 : float
-        The width of the third Gaussian
-    k3 : float
-        The kurtosis of the third Gaussian
-
-    Returns
-    -------
-    np.array
-        The modeled chirp
-    """
-    g1 = gaussian(x, m1, h1, w1, k1)
-    g2 = gaussian(x, m2, h2, w2, k2)
-    g3 = gaussian(x, m3, h3, w3, k3)
-    return g1 + g2 + g3
-
-
-def chirp_model_v3(x, m1, h1, w1, k1, m2, h2, w2, k2):
-    """Model a chirp as a combination of 2 Gaussians. This model
-    can be fit to the extracted instantaneous frequencies of real chirps and
-    is not supposed to be tuned "by hand".
-
-    Parameters
-    ----------
-    x : np.array
-        The time axis.
-    m1 : float
-        The mean of the first Gaussian
-    h1 : float
-        The height of the first Gaussian
-    w1 : float
-        The width of the first Gaussian
-    k1 : float
-        The kurtosis of the first Gaussian
-    m2 : float
-        The mean of the second Gaussian
-    h2 : float
-        The height of the second Gaussian
-    w2 : float
-        The width of the second Gaussian
-    k2 : float
-        The kurtosis of the second Gaussian
-
-    Returns
-    -------
-    np.array
-        The modeled chirp
-    """
-    g1 = gaussian(x, m1, h1, w1, k1)
-    g2 = gaussian(x, m2, h2, w2, k2)
-    return g1 + g2
-
-
-def chirp_model_v4(x, m1, h1, w1, k1):
-    """Model a chirp as a combination of 1 Gaussians. This model
-    can be fit to the extracted instantaneous frequencies of real chirps and
-    is not supposed to be tuned "by hand".
-
-    It is overly simplistic and does not capture the variation in shape of
-    real chirps. But on the other hand, it is fast and easy to fit
-    and controlling the parameters is intuitive.
-
-    Parameters
-    ----------
-    x : np.array
-        The time axis.
-    m1 : float
-        The mean of the first Gaussian
-    h1 : float
-        The height of the first Gaussian
-    w1 : float
-        The width of the first Gaussian
-    k1 : float
-        The kurtosis of the first Gaussian
-
-    Returns
-    -------
-    np.array
-        The modeled chirp
-    """
-    return gaussian(x, m1, h1, w1, k1)
-
-
-def make_chirps(
-    eodf: float,
-    samplerate: float,
-    duration: float,
-    chirp_times: np.ndarray,
-    chirp_contrasts: np.ndarray,
-    chirp_params: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate a chirp frequency trace from a fitted chirp model.
-
-    This function essentially does the same as make_simple_chirps(), but
-    the model that generates the chirps cannot be fine tuned by hand. Instead,
-    the model is fitted to the extracted instantaneous frequencies of real
-    chirps. Use this function if this kind of data is available.
-
-    Parameters
-    ----------
-    eodf : float
-        Baseline EOD frequency of the fish.
-    samplerate : float
-        Samplerate of the frequency trace.
-    duration : float
-        Duration of the frequency trace.
-    chirp_times : np.ndarray
-        Times where chirps should be added to the frequency trace.
-    chirp_contrasts : np.ndarray
-        Contrasts of the chirps.
-    chirp_params : np.ndarray
-        Array of tuples, each containing the parameters for the chirp model.
-
-    Returns
-    -------
-    Tuple[np.ndarray, np.ndarray]
-        Chirp frequency trace and amplitude modulation.
-    """
-
-    n = int(duration * samplerate)
-    f = eodf * np.ones(n)
-    a = np.ones(n)
-
-    for time, contrasts, params in zip(
-        chirp_times, chirp_contrasts, chirp_params
-    ):
-        chirp_t = np.arange(-0.5, 0.5, 1.0 / samplerate)
-        chirp_f = chirp_model(chirp_t, *params)
-
-        index = int(time * samplerate)
-        i0 = index - len(chirp_f) // 2
-        i1 = i0 + len(chirp_f)
-        gi0 = 0
-        gi1 = len(chirp_f)
-        if i0 < 0:
-            gi0 -= i0
-            i0 = 0
-        if i1 >= len(f):
-            gi1 -= i1 - len(f)
-            i1 = len(f)
-        f[i0:i1] += chirp_f[gi0:gi1]
-        a[i0:i1] -= contrasts * chirp_f[gi0:gi1] / np.max(chirp_f)
-
-    return f, a
-
-
-def make_simple_chirps(params: ChirpParams) -> tuple[np.ndarray, np.ndarray]:
+def make_chirps(params: ChirpParams) -> tuple[np.ndarray, np.ndarray]:
     """Simulate frequency trace with chirps. Original code by Jan Benda et al.
 
+    I just added an undershoot parameter to the chirp model.
+
     A chirp is modeled as a combination of 2 Gaussians. This model is used to
-    simulate chirps "by hand". The first Gaussian is
+    easily simulate chirps "by hand". The first Gaussian is
     centered at the chirp time and has a width of chirp_width. The second Gaussian
     is centered at chirp_time + chirp_width / 2 and has the same width but a
     smaller amlitude determined by chirp_undershoot, which is a factor that
     is multiplied with the amplitude of the first Gaussian.
+
+    The result is a classical Type II chirp with a small undershoot.
 
     Parameters
     ----------
@@ -619,11 +523,21 @@ def make_rises(params: RiseParams) -> np.ndarray:
     return frequency
 
 
-def make_grid(origin, shape, spacing, style="hex"):
-    """
-    Simulate a grid of electrodes as points in space. The grid can be either
-    hexagonal or square. The grid is centered around the origin. Currently,
-    only symmetric grids with an even number of electrodes are supported.
+def make_grid(
+    origin: Tuple[float, float],
+    shape: Tuple[int, int],
+    spacing: float,
+    style="hex",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Simulate a grid of electrodes as points in space, each point consisting of
+    an x and a y coordinate.
+
+    The grid can be either be hexagonal or square. In a hexagonal grid, the
+    electrodes are arranged in triangles. In a square grid, the electrodes are
+    arranged in squares. This means, that all electrodes in a hexagonal grid
+    have 6 neighbors, while all electrodes in a square grid have 4 neighbors.
+
+    The grid is centered around the origin.
 
     Parameters
     ----------
@@ -644,23 +558,22 @@ def make_grid(origin, shape, spacing, style="hex"):
     """
 
     assert style in ["hex", "square"], "type must be 'hex' or 'square'"
-    assert (shape[0] % 2 == 0) or (style == "square"), "shape must be even"
-
-    # grid parameters
-    electrode_number = shape[0] * shape[1]
-    electrode_index = np.arange(0, electrode_number)
-    electrode_x = np.mod(electrode_index, shape[0]) * spacing
-    electrode_y = np.floor(electrode_index / shape[0]) * spacing
 
     if style == "hex":
-        # shift every second row to make a hexagonal grid
-        electrode_y[1::2] += spacing / 2
+        x = np.arange(shape[0]) * spacing
+        y = np.arange(shape[1]) * spacing
+        x, y = np.meshgrid(x, y)
+        x[::2] += spacing / 2  # shift every other row
+    else:  # square grid
+        x = np.arange(shape[0]) * spacing
+        y = np.arange(shape[1]) * spacing
+        x, y = np.meshgrid(x, y)
 
-    # shift the grid to the specified origin
-    electrode_x += origin[0] - np.mean(electrode_x)
-    electrode_y += origin[1] - np.mean(electrode_y)
+    # center the grid around the origin
+    x -= origin[0]
+    y -= origin[1]
 
-    return electrode_x, electrode_y
+    return np.dstack([x, y])
 
 
 def movement_demo():
@@ -689,7 +602,7 @@ def communication_demo():
     """
     cp = ChirpParams()
     rp = RiseParams()
-    cf, ca = make_simple_chirps(cp)
+    cf, ca = make_chirps(cp)
     rf = make_rises(rp)
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, constrained_layout=True)

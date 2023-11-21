@@ -6,14 +6,15 @@ the parameters from the configuration file.
 """
 
 import argparse
+import gc
 import pathlib
 import shutil
-from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from pandas.io.formats.format import return_docstring
+
+# from pandas.io.formats.format import return_docstring
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
@@ -31,20 +32,37 @@ from .datasets import (
 from .exceptions import GridDataMismatch
 from .simulations import (
     MovementParams,
-    chirp_model_v4,
+    fold_space,
+    gaussian,
+    interpolate_positions,
     make_grid,
     make_positions,
     make_steps,
 )
-from .utils.filters import lowpass_filter
 from .utils.configfiles import SimulationConfig, load_sim_config
+from .utils.filters import lowpass_filter
+
+# from typing import Optional
+
 
 np.random.seed(42)
 con = Console()
-model = chirp_model_v4
+model = gaussian
 
 
 def fftnoise(f: np.ndarray) -> np.ndarray:
+    """Generate noise with a given power spectrum.
+
+    Parameters
+    ----------
+    - `f` : `numpy.ndarray`
+        The power spectrum of the noise.
+
+    Returns
+    -------
+    - `numpy.ndarray`
+        The noise with the given power spectrum.
+    """
     f = np.array(f, dtype="complex")
     Np = (len(f) - 1) // 2
     phases = np.random.rand(Np) * 2 * np.pi
@@ -81,6 +99,23 @@ def band_limited_noise(
     numpy.ndarray
         An array of band limited noise.
     """
+
+    # Check for nyquist frequency
+    if max_freq >= samplerate / 2:
+        raise ValueError("max_freq must be less than samplerate / 2")
+
+    # Check for min_freq > max_freq
+    if min_freq >= max_freq:
+        raise ValueError("min_freq must be less than max_freq")
+
+    # Check for min_freq < 0
+    if (min_freq < 0) or (max_freq < 0):
+        raise ValueError("min_freq and max_freq must be greater than 0")
+
+    # Check for samples < 0
+    if samples < 0:
+        raise ValueError("samples must be greater than 0")
+
     freqs = np.abs(np.fft.fftfreq(samples, 1 / samplerate))
     f = np.zeros(samples)
     idx = np.where(np.logical_and(freqs >= min_freq, freqs <= max_freq))[0]
@@ -114,6 +149,29 @@ def get_random_timestamps(start_t, stop_t, n_timestamps, min_dt):
     numpy.ndarray
         An array of random timestamps between start_t and stop_t with a minimum time difference of min_dt.
     """
+
+    # Check for start_t > stop_t
+    if start_t >= stop_t:
+        raise ValueError("start_t must be less than stop_t")
+
+    # Check for n_timestamps < 0
+    if n_timestamps < 0:
+        raise ValueError("n_timestamps must be greater than 0")
+
+    # Check for min_dt < 0
+    if min_dt < 0:
+        raise ValueError("min_dt must be greater than 0")
+
+    # Check if min_dt is larger than the time difference between start_t and stop_t
+    if min_dt > (stop_t - start_t):
+        raise ValueError("min_dt must be less than stop_t - start_t")
+
+    # Check if the number of timestamps is larger than possible given the minimum time difference
+    if n_timestamps > ((stop_t - start_t) / min_dt):
+        raise ValueError(
+            "n_timestamps must be less than (stop_t - start_t) / min_dt"
+        )
+
     timestamps = np.sort(np.random.uniform(start_t, stop_t, n_timestamps))
     while True:
         time_diffs = np.diff(timestamps)
@@ -309,8 +367,12 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
                 boundaries=boundaries,
                 target_fs=samplerate,
             )
-            t, s = make_steps(mvm)
-            x, y = make_positions(t, s, mvm)
+            trajectories, steps = make_steps(mvm)
+            x, y = make_positions(trajectories, steps, mvm)
+            x, y = fold_space(x, y, boundaries)
+            x, y = interpolate_positions(
+                x, y, duration, mvm.measurement_fs, mvm.target_fs
+            )
 
             # compute the distance at every position to every electrode
             dists = np.sqrt(
@@ -461,8 +523,7 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
 
 
 def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
-    """
-    Augment a simulated dataset with a random snippet from a real recording.
+    """Augment a simulated dataset with a random snippet from a real recording.
 
     Parameters
     ----------
@@ -622,94 +683,6 @@ def hybridgrid(
         del augmented_fake_dataset
 
         gc.collect()
-
-
-def fakegrid_interface():
-    """
-    Simulate a grid of electrodes and fish EOD signals.
-
-    Parameters
-    ----------
-    chirp_path : pathlib.Path, optional
-        Path to the simulated chirp parameters. Default is
-        "/home/weygoldt/Projects/mscthesis/data/processed/chirpsimulations/chirp_fits_interpolated.csv".
-    output_path : pathlib.Path, optional
-        Path to save the simulated recordings to. Default is
-        "/home/weygoldt/Projects/mscthesis/data/raw/local/grid_simulations".
-
-    Returns
-    -------
-    argparse.Namespace
-        The parsed command-line arguments.
-    """
-
-    parser = argparse.ArgumentParser(
-        description="Simulate a grid of electrodes and fish EOD signals."
-    )
-    parser.add_argument(
-        "-c",
-        "--chirp_path",
-        type=pathlib.Path,
-        default=pathlib.Path(
-            "/home/weygoldt/Projects/mscthesis/data/processed/chirpsimulations/chirp_fits_interpolated.csv"
-        ),
-        help="Path to the simulated chirp parameters.",
-    )
-    parser.add_argument(
-        "-o",
-        "--output_path",
-        type=pathlib.Path,
-        default=pathlib.Path(
-            "/home/weygoldt/Projects/mscthesis/data/raw/local/grid_simulations"
-        ),
-        help="Path to save the simulated recordings to.",
-    )
-    args = parser.parse_args()
-    return args
-
-
-def hybridgrid_interface():
-    """
-    Parse command line arguments for creating a hybrid dataset by adding realistic background noise to a simulated dataset.
-
-    Parameters
-    ----------
-    simulation_path : str
-        Path to the simulated dataset.
-    real_path : str
-        Path to the real recording.
-    output_path : str
-        Path to save the hybrid dataset to.
-
-    Returns
-    -------
-    args : argparse.Namespace
-        An object containing the parsed command line arguments.
-    """
-
-    parser = argparse.ArgumentParser(
-        description="Add realistic background noise to a simulated dataset."
-    )
-    parser.add_argument(
-        "--simulation_path",
-        "-s",
-        type=pathlib.Path,
-        help="Path to the simulated dataset.",
-    )
-    parser.add_argument(
-        "--real_path",
-        "-r",
-        type=pathlib.Path,
-        help="Path to the real recording.",
-    )
-    parser.add_argument(
-        "--output_path",
-        "-o",
-        type=pathlib.Path,
-        help="Path to save the hybrid dataset to.",
-    )
-    args = parser.parse_args()
-    return args
 
 
 def fakegrid_cli(output_path):
