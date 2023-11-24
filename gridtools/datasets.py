@@ -92,6 +92,8 @@ from thunderfish.datawriter import write_data
 
 from .exceptions import GridDataMismatch
 
+chirp_detectors = ["gt", "cnn", "rcnn"]
+
 
 def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
     """
@@ -128,7 +130,8 @@ def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
     files = list(path.glob("*"))
 
     if not any("fund_v.npy" in str(f) for f in files):
-        raise FileNotFoundError("No wavetracker dataset found!")
+        msg = "No wavetracker dataset found in the provided directory!"
+        raise FileNotFoundError(msg)
 
     return WavetrackerData(
         freqs=np.load(path / "fund_v.npy"),
@@ -163,14 +166,14 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
 
     Notes
     -----
-    This function uses the thunderfish dataloader to easily access large binary files.
-    The function checks if the directory contains a "traces*" file.
+    This function uses the thunderfish dataloader to easily access large binary
+    files. The function checks if the directory contains a "traces*" file.
     The function is tested using .raw and .wav files.
     If neither file is found, a FileNotFoundError is raised.
-    If a "traces-grid1.raw" file is found, it is loaded using the thunderfish DataLoader.
-    The function returns a GridData object containing the loaded raw dataset.
-    Instead of directly passing the DataLoader object, I wrap it in this class
-    to later be able to add metadata such as electrode positions, etc. to the
+    If a "traces-grid1.raw" file is found, it is loaded using the thunderfish
+    DataLoader.The function returns a GridData object containing the loaded raw
+    dataset. Instead of directly passing the DataLoader object, I wrap it in
+    this class to later be able to add metadata such as electrode positions, etc. to the
     recording class.
 
     Examples
@@ -188,9 +191,11 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     files = list(path.glob("traces*"))
 
     if len(files) == 0:
-        raise FileNotFoundError("No raw dataset found!")
+        msg = "No raw dataset found in the provided directory!"
+        raise FileNotFoundError(msg)
     if len(files) > 1:
-        raise FileNotFoundError("More than one raw dataset found! Check path.")
+        msg = "More than one raw dataset found! Check path."
+        raise FileNotFoundError(msg)
 
     file = files[0]
     rec = DataLoader(str(path / file.name))
@@ -305,7 +310,7 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
     return CommunicationData(chirp=chps, rise=ris)
 
 
-def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
+def load(path: Union[pathlib.Path, str]) -> "Dataset":
     """
     Load all data from a dataset and build a Dataset object.
 
@@ -313,8 +318,6 @@ def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
     ----------
     path : Union[pathlib.Path, str]
         The path to the dataset.
-    grid : bool, optional
-        Whether to load the grid data or not. Defaults to False.
 
     Returns
     -------
@@ -339,7 +342,7 @@ def load(path: Union[pathlib.Path, str], grid: bool = False) -> "Dataset":
 
     ds = Dataset(
         path=path,
-        grid=load_grid(path) if grid else None,
+        grid=load_grid(path),
         track=load_wavetracker(path),
         com=load_com(path),
     )
@@ -684,7 +687,7 @@ def subset(
     )
     com_sub = (
         subset_com(data.com, start_time, stop_time, samplerate=samplerate)
-        if data.com
+        if hasattr(data, "com")
         else None
     )
 
