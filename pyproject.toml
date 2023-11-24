@@ -37,6 +37,9 @@ isort = "^5.12.0"
 pylint = "^3.0.1"
 pytest = "^7.4.2"
 pre-commit = "^3.5.0"
+ruff = "^0.1.6"
+pytest-coverage = "^0.0"
+pyright = "^1.1.337"
 
 [build-system]
 requires = ["poetry-core"]
@@ -55,12 +58,60 @@ subset-dataset = "gridtools.datasets:subset_cli"
 extract-chirps = "gridtools.chirpextraction:extract_cli"
 resample-chirps = "gridtools.chirpextraction:resample_cli"
 
-[tool.isort]
-profile = "black"
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+select = [
+    "W", # pycodestyle
+    "E", # pycodestyle
+    "F", # Pyflakes
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+    "SIM", # flake8-simplify
+    "ANN", # flake8-annotations
+    "A", # flake8-builtins
+    "COM", # flake8-commas
+    "C4", # flake8-comprehensions
+    "EM", # flake8-error-msg
+    "EXE", # flake8-executable
+    "ICN", # flake8-import-conventions
+    "PT", # flake8-pytest-style
+    "Q", # flake8-quotes
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "PD", # pandas-vet
+    "PL", # pylint
+    "TRY", # tryceratops
+    "NPY", # numpy-specific
+    "I", # isort
+    "C90", # complexity (McCabe)
+    "N", # pep8-naming
+    "D", # pydocstyle
+]
+ignore = [
+    "COM812", # missing trailing comma
+    "TD002", # missing todo author
+    "TD003", # missing todo link
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
 
 [tool.black]
-line-length = 80
-target-version = ["py311"]
+line-length = 79
 
-[tool.pylint]
-disable = ["W0511", "R0914"]
+[tool.pyright]
+include = ["chirpdetector", "tests"]
+defineConstant = { DEBUG = true }
+reportMissingImports = true
+reportMissingTypeStubs = false
+pythonVersion = "3.11"
+pythonPlatform = "Linux"

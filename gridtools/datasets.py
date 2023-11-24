@@ -1,9 +1,6 @@
-#!/usr/bin/env python3
+"""# Datasets.
 
-"""
-# Datasets
-
-Classes and functions to load, work with and save data associated with 
+Classes and functions to load, work with and save data associated with
 electrode grid recordings of wave-type weakly electric fish.
 
 The main functionalities include the following:
@@ -17,22 +14,25 @@ by the `wavetracker` as well as raw data, communication signals, etc.
 ## Architecture and design principles
 
 The architecture of the `datasets` module follows these design principles:
-- **Composition over inheritance**: The `Dataset` class is a composition of different
-subclasses, making it easily extensible to other data types in the future.
-- **Data models**: The `Dataset` class is not just a dataclass but a data model:
-Upon instantiation, the data is checked for consistency and errors are raised
-if the data is inconsistent.
+- **Composition over inheritance**: The `Dataset` class is a composition of
+different subclasses, making it easily extensible to other data types in the
+future.
+- **Data models**: The `Dataset` class is not just a dataclass but a data
+model: Upon instantiation, the data is checked for consistency and errors are
+raised if the data is inconsistent.
 
 The Dataset class is a composition of:
 - `GridData`: The raw recording from the electrode grid.
-- `WavetrackerData`: Tracking arrays produced by - and derived from - the [`wavetracker`](https://github.com/tillraab/wavetracker.git).
-- `CommunicationData`: Chirp and rise times, identifiers and optionally, extracted parameters such as height, width, etc.
+- `WavetrackerData`: Tracking arrays produced by - and derived from - the
+[`wavetracker`](https://github.com/tillraab/wavetracker.git).
+- `CommunicationData`: Chirp and rise times, identifiers and optionally,
+extracted parameters such as height, width, etc.
 
 ## Usage
 
-Loading a dataset is as easy as calling the `load` function with the path to the
-dataset as an argument. The function returns a `Dataset` object containing the
-loaded data.
+Loading a dataset is as easy as calling the `load` function with the path to
+the dataset as an argument. The function returns a `Dataset` object containing
+the loaded data.
 ```python
 from gridtools.datasets import load
 ds = load(pathlib.Path("path/to/dataset"))
@@ -64,19 +64,20 @@ subset = subset(ds, 0.1, 0.5)
 save(subset, pathlib.Path("path/to/save"))
 ```
 
-If you are just interested in some part of the dataset, such as the `wavetracker`
-arrays, you can simply use the subclass specific methods instead:
+If you are just interested in some part of the dataset, such as the
+`wavetracker` arrays, you can simply use the subclass specific methods instead:
 ```python
-from gridtools.datasets import load_wavetracker, subset_wavetracker, save_wavetracker
+from gridtools.datasets import (
+    load_wavetracker, subset_wavetracker, save_wavetracker
+)
 wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
 subset = subset_wavetracker(wt, 0.1, 0.5)
 save_wavetracker(subset, pathlib.Path("path/to/save"))
 ```
 """
 
-import argparse
 import pathlib
-from typing import Optional, Union
+from typing import Optional, Union, Any, Type
 
 import numpy as np
 from pydantic import (
@@ -92,11 +93,14 @@ from thunderfish.datawriter import write_data
 
 from .exceptions import GridDataMismatch
 
-chirp_detectors = ["gt", "cnn", "rcnn"]
+# The order determines the priority of the detectors.
+chirp_detectors = ["gt", "rcnn", "cnn", "None"]
+rise_detectors = ["gt", "rcnn", "pd", "None"]
 
 
 def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
-    """
+    """Load wavetracker files.
+
     Load data produced by the wavetracker and other data extracted from them,
     such as position estimates.
 
@@ -123,7 +127,6 @@ def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
     ```
     """
-
     if isinstance(path, str):
         path = pathlib.Path(path)
 
@@ -146,8 +149,7 @@ def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
 
 
 def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
-    """
-    Load a raw dataset from a given path.
+    """Load a raw dataset from a given path.
 
     Parameters
     ----------
@@ -173,8 +175,8 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     If a "traces-grid1.raw" file is found, it is loaded using the thunderfish
     DataLoader.The function returns a GridData object containing the loaded raw
     dataset. Instead of directly passing the DataLoader object, I wrap it in
-    this class to later be able to add metadata such as electrode positions, etc. to the
-    recording class.
+    this class to later be able to add metadata such as electrode positions,
+    etc. to the recording class.
 
     Examples
     --------
@@ -184,7 +186,6 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     >>> rec = load_grid(pathlib.Path("path/to/raw"))
     ```
     """
-
     if isinstance(path, str):
         path = pathlib.Path(path)
 
@@ -203,11 +204,105 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     return GridData(rec=rec, samplerate=rec.samplerate)
 
 
-def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
+def load_chirps(path: pathlib.Path) -> "ChirpData":
+    """Load the chirp data from a given path.
+
+    Parameters
+    ----------
+    - `path`: `pathlib.Path`
+        The path to the directory containing the chirp data.
+
+    Returns
+    -------
+    - `ChirpData`
+        An object containing the loaded chirp data.
+
+    Raises
+    ------
+    - `FileNotFoundError`
+        If no chirp dataset is found in the given directory.
     """
-    Load communication data from a given path. Loads chirps if available, loads
-    rises if available, or loads both if available. If no communication data is
-    available, returns None.
+    files = list(path.glob("*"))
+
+    # Load chirp data if available: Check if chirp data is available
+    # for any detector
+    det = None
+    exist = False
+    chirp_times = np.array([])
+    chirp_ids = np.array([])
+    params = np.array([])
+
+    for detector in chirp_detectors:
+        if any(f"chirp_times_{detector}.npy" in str(f) for f in files):
+            det = detector
+            exist = True
+            chirp_times = np.load(path / f"chirp_times_{det}.npy")
+            chirp_ids = np.load(path / f"chirp_ids_{det}.npy").astype(int)
+            if any(f"chirp_params_{det}.npy" in str(f) for f in files):
+                params = np.load(path / f"chirp_params_{det}.npy")
+            break
+
+    return ChirpData(
+        times=chirp_times,
+        idents=chirp_ids,
+        params=params,
+        detector=str(det),
+        exist=exist,
+    )
+
+
+def load_rises(path: pathlib.Path) -> "RiseData":
+    """Load the rise data from a given path.
+
+    Parameters
+    ----------
+    - `path`: `pathlib.Path`
+        The path to the directory containing the rise data.
+
+    Returns
+    -------
+    - `RiseData`
+        An object containing the loaded rise data.
+
+    Raises
+    ------
+    - `FileNotFoundError`
+        If no rise dataset is found in the given directory.
+    """
+    files = list(path.glob("*"))
+
+    # Load rise data if available: Check if rise data is available
+    # for any detector
+    det = None
+    exist = False
+    rise_times = np.array([])
+    rise_ids = np.array([])
+    params = np.array([])
+
+    for detector in rise_detectors:
+        if any(f"rise_times_{detector}.npy" in str(f) for f in files):
+            det = detector
+            exist = True
+            rise_times = np.load(path / f"rise_times_{det}.npy")
+            rise_ids = np.load(path / f"rise_ids_{det}.npy").astype(int)
+            if any(f"rise_params_{det}.npy" in str(f) for f in files):
+                params = np.load(path / f"rise_params_{det}.npy")
+            break
+
+    return RiseData(
+        times=rise_times,
+        idents=rise_ids,
+        params=params,
+        detector=str(det),
+        exist=exist,
+    )
+
+
+def load_com(path: pathlib.Path) -> "CommunicationData":
+    """Load communication data from a given path.
+
+    Loads chirps if available, loads
+    rises if available, or loads both if available.
 
     Data on disk must follow the following naming convention:
     - {signal type}_times_{detector handle}.npy
@@ -248,81 +343,25 @@ def load_com(path: Union[pathlib.Path, str]) -> "CommunicationData":
     >>> com.rise.idents
     ```
     """
-
-    if isinstance(path, str):
-        path = pathlib.Path(path)
-
-    files = list(path.glob("*"))
-
-    # Load chirp data if available
-    if any("chirp_times_" in str(f) for f in files):
-        if any("chirp_times_gt.npy" in str(f) for f in files):
-            det = "gt"
-        elif any("chirp_times_cnn.npy" in str(f) for f in files):
-            det = "cnn"
-        else:
-            raise FileNotFoundError(
-                "No chirp dataset with correct detector handle found!"
-            )
-
-        # Check if params file is available
-        if any("chirp_params_" in str(f) for f in files):
-            params = np.load(path / f"chirp_params_{det}.npy")
-        else:
-            params = None
-
-        chps = ChirpData(
-            times=np.load(path / f"chirp_times_{det}.npy"),
-            idents=np.load(path / f"chirp_ids_{det}.npy").astype(int),
-            detector=det,
-            params=params,
-        )
-    else:
-        chps = None
-
-    # Load rise data if available
-    if any("rise_times_" in str(f) for f in files):
-        if any("rise_times_gt.npy" in str(f) for f in files):
-            det = "gt"
-        elif any("rise_times_pd.npy" in str(f) for f in files):
-            det = "pd"
-        else:
-            raise FileNotFoundError(
-                "No rise dataset with correct detector handle found!"
-            )
-
-        # check if params file available
-        if any("rise_params_" in str(f) for f in files):
-            params = np.load(path / f"rise_params_{det}.npy")
-        else:
-            params = None
-        ris = RiseData(
-            times=np.load(path / f"rise_times_{det}.npy"),
-            idents=np.load(path / f"rise_ids_{det}.npy").astype(int),
-            detector=det,
-            params=None,
-        )
-    else:
-        ris = None
-
-    if chps is None and ris is None:
-        return None
-    return CommunicationData(chirp=chps, rise=ris)
+    chirp = load_chirps(path)
+    rise = load_rises(path)
+    return CommunicationData(chirp=chirp, rise=rise)
 
 
-def load(path: Union[pathlib.Path, str]) -> "Dataset":
+def load(path: pathlib.Path) -> "Dataset":
     """
     Load all data from a dataset and build a Dataset object.
 
     Parameters
     ----------
-    path : Union[pathlib.Path, str]
+    path : pathlib.Path
         The path to the dataset.
 
     Returns
     -------
     Dataset
-        A Dataset object containing the raw data, wavetracker data, and communication data.
+        A Dataset object containing the raw data, wavetracker data, and
+        communication data.
 
     Examples
     --------
@@ -337,16 +376,12 @@ def load(path: Union[pathlib.Path, str]) -> "Dataset":
     >>> ds.track.xpos
     ```
     """
-    if isinstance(path, str):
-        path = pathlib.Path(path)
-
-    ds = Dataset(
+    return Dataset(
         path=path,
         grid=load_grid(path),
         track=load_wavetracker(path),
         com=load_com(path),
     )
-    return ds
 
 
 def subset_wavetracker(
@@ -586,7 +621,11 @@ def subset_com(
             cp = None
         chirp = (
             ChirpData(
-                times=ct, idents=ci, params=cp, detector=com.chirp.detector
+                times=ct,
+                idents=ci,
+                params=cp,
+                detector=com.chirp.detector,
+                exist=com.chirp.exist,
             )
             if hasattr(com, "chirp")
             else None
@@ -607,7 +646,13 @@ def subset_com(
         else:
             rp = None
         rise = (
-            RiseData(times=rt, idents=ri, params=rp, detector=com.rise.detector)
+            RiseData(
+                times=rt,
+                idents=ri,
+                params=rp,
+                detector=com.rise.detector,
+                exist=com.rise.exist,
+            )
             if hasattr(com, "rise")
             else None
         )
@@ -893,8 +938,8 @@ def _pprint(obj: BaseModel) -> None:
 
 
 class WavetrackerData(BaseModel):
-    """
-    Contains data extracted by the wavetracker.
+    """Contains data extracted by the wavetracker.
+
     All check functions are automatically run when the object is instantiated.
 
     Parameters
@@ -1143,18 +1188,18 @@ class GridData(BaseModel):
 
 
 class ChirpData(BaseModel):
-    """
-    Contains data about chirps produced by fish in the dataset.
+    """Contains data about chirps produced by fish in the dataset.
 
     Parameters
     ----------
     times : np.ndarray
         A numpy array containing the times at which chirps were detected.
     idents : np.ndarray
-        A numpy array containing the identities of the fish that produced the chirps.
+        A numpy array containing the identities of the fish that produced
+        the chirps.
     detector : str
-        The type of detector used to detect the chirps. Must be either 'gt' or 'cnn'.
-        More detector types will probably follow.
+        The type of detector used to detect the chirps. Must be either 'gt'
+        or 'cnn'. More detector types will probably follow.
 
     Methods
     -------
@@ -1168,10 +1213,11 @@ class ChirpData(BaseModel):
     times : np.ndarray
         A numpy array containing the times at which chirps were detected.
     idents : np.ndarray
-        A numpy array containing the identities of the fish that produced the chirps.
+        A numpy array containing the identities of the fish that produced the
+        chirps.
     detector : str
-        The type of detector used to detect the chirps. Must be either 'gt' or 'cnn'.
-        More detector types will probably follow.
+        The type of detector used to detect the chirps. Must be either
+        'gt' or 'cnn'. More detector types will probably follow.
     model_config : ConfigDict
         A dictionary containing the configuration for the model.
 
@@ -1193,11 +1239,12 @@ class ChirpData(BaseModel):
     times: np.ndarray
     idents: np.ndarray
     detector: str
-    params: Optional[np.ndarray] = None
+    params: np.ndarray
+    exist: bool
 
-    @field_validator("times", "idents")
+    @field_validator("times", "idents", "params")
     @classmethod
-    def _check_numpy_array(cls, v):
+    def _check_numpy_array(cls: Type["ChirpData"], v: np.ndarray) -> np.ndarray:
         """
         Check if times and idents are numpy arrays.
 
@@ -1217,12 +1264,13 @@ class ChirpData(BaseModel):
             If the input value is not a numpy array.
         """
         if not isinstance(v, np.ndarray):
-            raise ValidationError("Value must be a numpy.ndarray")
+            msg = "Value must be a numpy.ndarray"
+            raise ValidationError(msg)
         return v
 
     @field_validator("detector")
     @classmethod
-    def _check_detector(cls, v):
+    def _check_detector(cls: Type["ChirpData"], v: str) -> str:
         """
         Check if detector is either 'gt' or 'cnn' and a string.
 
@@ -1242,36 +1290,20 @@ class ChirpData(BaseModel):
             If the input value is not a string or is not 'gt' or 'cnn'.
         """
         if not isinstance(v, str):
-            raise ValidationError("Detector must be a string.")
-        if v not in ["gt", "cnn"]:
-            raise ValidationError("Detector must be 'gt' or 'cnn'.")
+            msg = "Detector must be a string."
+            raise ValidationError(msg)
+        if v not in chirp_detectors:
+            msg = f"Detector must be in {chirp_detectors}."
+            raise ValidationError(msg)
         return v
 
-    @model_validator(mode="after")
-    def _delete_if_none(self):
-        """
-        Deletes attributes from the model if their values are None.
-
-        Returns:
-        --------
-        self : object
-            The modified instance of the object.
-        """
-        for key, value in self.model_dump().items():
-            if value is None:
-                delattr(self, key)
-        return self
-
-    def pprint(self) -> None:
-        """
-        Pretty-print the attributes of the object.
-        """
+    def pprint(self: "ChirpData") -> None:
+        """Pretty-print the attributes of the object."""
         _pprint(self)
 
 
 class RiseData(BaseModel):
-    """
-    Contains data of rises produced by fish in the dataset.
+    """Contains data of rises produced by fish in the dataset.
 
     Attributes
     ----------
@@ -1295,14 +1327,14 @@ class RiseData(BaseModel):
 
     times: np.ndarray
     idents: np.ndarray
-    params: Optional[np.ndarray] = None
+    params: np.ndarray
     detector: str
+    exist: bool
 
-    @field_validator("times", "idents")
+    @field_validator("times", "idents", "params")
     @classmethod
-    def _check_numpy_array(cls, v):
-        """
-        Check if times and idents are numpy arrays.
+    def _check_numpy_array(cls: Type["RiseData"], v: np.ndarray) -> np.ndarray:
+        """Check if times and idents are numpy arrays.
 
         Parameters
         ----------
@@ -1320,14 +1352,14 @@ class RiseData(BaseModel):
             If the value is not a numpy array.
         """
         if not isinstance(v, np.ndarray):
-            raise ValidationError("Value must be a numpy.ndarray")
+            msg = "Value must be a numpy.ndarray"
+            raise ValidationError(msg)
         return v
 
     @field_validator("detector")
     @classmethod
-    def _check_detector(cls, v):
-        """
-        Check if detector is either 'gt' or 'pd' and a string.
+    def _check_detector(cls: Type["RiseData"], v: str) -> str:
+        """Check if detector is either 'gt' or 'pd' and a string.
 
         Parameters
         ----------
@@ -1345,37 +1377,20 @@ class RiseData(BaseModel):
             If the value is not a string or is not 'gt' or 'pd'.
         """
         if not isinstance(v, str):
-            raise ValidationError("Detector must be a string.")
-        if v not in ["gt", "pd"]:
-            raise ValidationError("Detector must be 'gt' or 'pd'.")
+            msg = "Detector must be a string."
+            raise ValidationError(msg)
+        if v not in rise_detectors:
+            msg = f"Detector must be in {rise_detectors}."
+            raise ValidationError(msg)
         return v
 
-    @model_validator(mode="after")
-    def _delete_if_none(self):
-        """
-        Deletes attributes from the model if their values are None.
-
-        Returns:
-        --------
-        self : object
-            The modified instance of the object.
-        """
-        for key, value in self.model_dump().items():
-            if value is None:
-                delattr(self, key)
-        return self
-
-    def pprint(self) -> None:
-        """
-        Pretty-print the attributes of the object.
-        """
+    def pprint(self: "RiseData") -> None:
+        """Pretty-print the attributes of the object."""
         _pprint(self)
 
 
 class CommunicationData(BaseModel):
-    """
-    Contains data for communication signals produced by fish in the dataset.
-    If a variable is set to None, it is removed.
+    """Contains data for communication signals.
 
     Parameters
     ----------
@@ -1391,8 +1406,8 @@ class CommunicationData(BaseModel):
     typecheck_rise(v)
         Check if rise data is a RiseData object if it is not none.
     check_communication_data()
-        Check if chirp or rise data is provided. Class should not be instantiated
-        when no data is provided.
+        Check if chirp or rise data is provided. Class should not be
+        instantiated when no data is provided.
 
     Raises
     ------
@@ -1408,12 +1423,14 @@ class CommunicationData(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    chirp: Optional[ChirpData] = None
-    rise: Optional[RiseData] = None
+    chirp: ChirpData
+    rise: RiseData
 
     @field_validator("chirp")
     @classmethod
-    def _typecheck_chirp(cls, v):
+    def _typecheck_chirp(
+        cls: Type["CommunicationData"], v: Type["ChirpData"]
+    ) -> Type["ChirpData"]:
         """
         Check if chirp data is a ChirpData object if it is not none.
 
