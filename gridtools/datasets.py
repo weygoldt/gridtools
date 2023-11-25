@@ -77,9 +77,10 @@ save_wavetracker(subset, pathlib.Path("path/to/save"))
 """
 
 import pathlib
-from typing import Optional, Union, Any, Type
+from typing import Dict, Optional, Self, Type, TypeVar, Union
 
 import numpy as np
+import numpy.typing as npt
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -97,8 +98,11 @@ from .exceptions import GridDataMismatch
 chirp_detectors = ["gt", "rcnn", "cnn", "None"]
 rise_detectors = ["gt", "rcnn", "pd", "None"]
 
+# Define a few types for type hinting.
+GridType = TypeVar("GridType", npt.NDArray, DataLoader)
 
-def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
+
+def load_wavetracker(path: pathlib.Path) -> "WavetrackerData":
     """Load wavetracker files.
 
     Load data produced by the wavetracker and other data extracted from them,
@@ -127,14 +131,27 @@ def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
     >>> wt = load_wavetracker(pathlib.Path("path/to/wavetracker"))
     ```
     """
-    if isinstance(path, str):
-        path = pathlib.Path(path)
-
     files = list(path.glob("*"))
+    has_positions = True
 
     if not any("fund_v.npy" in str(f) for f in files):
         msg = "No wavetracker dataset found in the provided directory!"
         raise FileNotFoundError(msg)
+
+    if not any("xpos.npy" in str(f) for f in files):
+        has_positions = False
+    else:
+        xpos = np.load(path / "xpos.npy")
+        freqs = np.load(path / "fund_v.npy")
+        if len(xpos) == 0 and len(freqs) > 0:
+            has_positions = False
+
+    if has_positions:
+        xpos = np.load(path / "xpos.npy")
+        ypos = np.load(path / "ypos.npy")
+    else:
+        xpos = np.ndarray([])
+        ypos = np.ndarray([])
 
     return WavetrackerData(
         freqs=np.load(path / "fund_v.npy"),
@@ -143,12 +160,13 @@ def load_wavetracker(path: Union[pathlib.Path, str]) -> "WavetrackerData":
         indices=np.load(path / "idx_v.npy"),
         times=np.load(path / "times.npy"),
         ids=np.unique(np.load(path / "ident_v.npy")),
-        xpos=np.load(path / "xpos.npy") if "xpos.npy" in files else None,
-        ypos=np.load(path / "ypos.npy") if "ypos.npy" in files else None,
+        has_positions=has_positions,
+        xpos=xpos,
+        ypos=ypos,
     )
 
 
-def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
+def load_grid(path: pathlib.Path) -> "GridData":
     """Load a raw dataset from a given path.
 
     Parameters
@@ -186,9 +204,6 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
     >>> rec = load_grid(pathlib.Path("path/to/raw"))
     ```
     """
-    if isinstance(path, str):
-        path = pathlib.Path(path)
-
     files = list(path.glob("traces*"))
 
     if len(files) == 0:
@@ -200,8 +215,12 @@ def load_grid(path: Union[pathlib.Path, str]) -> "GridData":
 
     file = files[0]
     rec = DataLoader(str(path / file.name))
+    if not isinstance(rec.samplerate, float):
+        msg = "DataLoader samplerate must be a float."
+        raise TypeError(msg)
+    samplerate = float(rec.samplerate)
 
-    return GridData(rec=rec, samplerate=rec.samplerate)
+    return GridData(rec=rec, samplerate=samplerate)
 
 
 def load_chirps(path: pathlib.Path) -> "ChirpData":
@@ -227,7 +246,7 @@ def load_chirps(path: pathlib.Path) -> "ChirpData":
     # Load chirp data if available: Check if chirp data is available
     # for any detector
     det = None
-    exist = False
+    are_detected = False
     chirp_times = np.array([])
     chirp_ids = np.array([])
     params = np.array([])
@@ -235,7 +254,7 @@ def load_chirps(path: pathlib.Path) -> "ChirpData":
     for detector in chirp_detectors:
         if any(f"chirp_times_{detector}.npy" in str(f) for f in files):
             det = detector
-            exist = True
+            are_detected = True
             chirp_times = np.load(path / f"chirp_times_{det}.npy")
             chirp_ids = np.load(path / f"chirp_ids_{det}.npy").astype(int)
             if any(f"chirp_params_{det}.npy" in str(f) for f in files):
@@ -247,7 +266,7 @@ def load_chirps(path: pathlib.Path) -> "ChirpData":
         idents=chirp_ids,
         params=params,
         detector=str(det),
-        exist=exist,
+        are_detected=are_detected,
     )
 
 
@@ -274,7 +293,7 @@ def load_rises(path: pathlib.Path) -> "RiseData":
     # Load rise data if available: Check if rise data is available
     # for any detector
     det = None
-    exist = False
+    are_detected = False
     rise_times = np.array([])
     rise_ids = np.array([])
     params = np.array([])
@@ -282,7 +301,7 @@ def load_rises(path: pathlib.Path) -> "RiseData":
     for detector in rise_detectors:
         if any(f"rise_times_{detector}.npy" in str(f) for f in files):
             det = detector
-            exist = True
+            are_detected = True
             rise_times = np.load(path / f"rise_times_{det}.npy")
             rise_ids = np.load(path / f"rise_ids_{det}.npy").astype(int)
             if any(f"rise_params_{det}.npy" in str(f) for f in files):
@@ -294,7 +313,7 @@ def load_rises(path: pathlib.Path) -> "RiseData":
         idents=rise_ids,
         params=params,
         detector=str(det),
-        exist=exist,
+        are_detected=are_detected,
     )
 
 
@@ -345,7 +364,10 @@ def load_com(path: pathlib.Path) -> "CommunicationData":
     """
     chirp = load_chirps(path)
     rise = load_rises(path)
-    return CommunicationData(chirp=chirp, rise=rise)
+    are_detected = False
+    if chirp.are_detected or rise.are_detected:
+        are_detected = True
+    return CommunicationData(chirp=chirp, rise=rise, are_detected=are_detected)
 
 
 def load(path: pathlib.Path) -> "Dataset":
@@ -389,10 +411,9 @@ def subset_wavetracker(
     start: Union[float, int],
     stop: Union[float, int],
     mode: str = "time",
-    samplerate: int = 20000,
+    samplerate: float = 20000.0,
 ) -> "WavetrackerData":
-    """
-    Extracts a subset of a WavetrackerData object between start_time and stop_time.
+    """Extract a subset of a WavetrackerData object.
 
     Parameters
     ----------
@@ -410,7 +431,8 @@ def subset_wavetracker(
     Returns
     -------
     WavetrackerData
-        A new WavetrackerData object containing the subset of data between start_time and stop_time.
+        A new WavetrackerData object containing the subset of data between
+        start_time and stop_time.
 
     Raises
     ------
@@ -426,7 +448,6 @@ def subset_wavetracker(
     >>> wt_sub = subset_wavetracker(wt, 0.5, 1.5)
     ```
     """
-
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
 
     if mode == "index":
@@ -440,9 +461,8 @@ def subset_wavetracker(
     powers = []
     indices = []
     idents = []
-    if wt.xpos is not None:
-        xpos = []
-        ypos = []
+    xpos = []
+    ypos = []
 
     for track_id in np.unique(wt.idents[~np.isnan(wt.idents)]):
         freq = wt.freqs[wt.idents == track_id]
@@ -455,11 +475,11 @@ def subset_wavetracker(
         index = index[(time >= start_time) & (time <= stop_time)]
         ident = np.repeat(track_id, len(freq))
 
-        if wt.xpos is not None:
+        if wt.has_positions:
             x = wt.xpos[wt.idents == track_id]
             y = wt.ypos[wt.idents == track_id]
-            x = xpos[(time >= start_time) & (time <= stop_time)]
-            y = ypos[(time >= start_time) & (time <= stop_time)]
+            x = x[(time >= start_time) & (time <= stop_time)]
+            y = y[(time >= start_time) & (time <= stop_time)]
             xpos.append(x)
             ypos.append(y)
 
@@ -472,28 +492,33 @@ def subset_wavetracker(
     powers = np.concatenate(powers)
     indices = np.concatenate(indices)
     idents = np.concatenate(idents)
-    if wt.xpos is not None:
-        xpos = np.concatenate(xpos)
-        ypos = np.concatenate(ypos)
     time = wt.times[(wt.times >= start_time) & (wt.times <= stop_time)]
     time -= start_time
 
+    if wt.has_positions:
+        xpos = np.concatenate(xpos)
+        ypos = np.concatenate(ypos)
+    else:
+        xpos = np.ndarray([])
+        ypos = np.ndarray([])
+
     if len(indices) == 0:
-        raise GridDataMismatch("No data in the specified time range.")
+        msg = "No data in the specified time range."
+        raise GridDataMismatch(msg)
     indices -= indices[0]
 
     # rebuild wavetracker object
-    wt_sub = WavetrackerData(
+    return WavetrackerData(
         freqs=tracks,
         powers=powers,
         idents=idents,
         indices=indices,
         ids=np.unique(idents),
         times=time,
-        xpos=xpos if wt.xpos is not None else None,
-        ypos=ypos if wt.ypos is not None else None,
+        xpos=xpos,
+        ypos=ypos,
+        has_positions=wt.has_positions,
     )
-    return wt_sub
 
 
 def subset_grid(
@@ -501,10 +526,9 @@ def subset_grid(
     start: float,
     stop: float,
     mode: str = "time",
-    samplerate: int = 20000,
+    samplerate: float = 20000.0,
 ) -> "GridData":
-    """
-    Returns a subset of a raw dataset.
+    """Return a subset of a raw dataset.
 
     Parameters
     ----------
@@ -533,9 +557,9 @@ def subset_grid(
     >>> subset = subset_grid(rec, 0.1, 0.5)
     ```
     """
-
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
 
+    # make the boundaries for the subset
     if mode == "index":
         start_time = start / samplerate
         stop_time = stop / samplerate
@@ -543,17 +567,30 @@ def subset_grid(
         start_time = start
         stop_time = stop
 
+    # check if content of the thunderfish dataloader is correct
+    if isinstance(rec.samplerate, float):
+        rec.samplerate = float(rec.samplerate)
+    else:
+        msg = "Samplerate must be a float."
+        raise TypeError(msg)
+    rec_shape = rec.rec.shape
+    if not isinstance(rec_shape, tuple):
+        msg = "Raw data must have a shape."
+        raise TypeError(msg)
+    if not isinstance(rec_shape[0], int):
+        msg = "Raw data must have at least one dimension."
+        raise TypeError(msg)
+
+    # check that boundaries make sense given the data
     assert start_time < stop_time, "Start time must be smaller than stop time."
     assert start_time >= 0, "Start time must be larger or equal to 0."
     assert (
-        stop_time <= rec.rec.shape[0] / rec.samplerate
+        stop_time <= rec_shape[0] / rec.samplerate
     ), "Stop time must be smaller than the end."
-
     start_idx = int(start_time * rec.samplerate)
     stop_idx = int(stop_time * rec.samplerate)
-
-    assert start_idx < rec.rec.shape[0], "Start index out of bounds."
-    assert stop_idx <= rec.rec.shape[0], "Stop index out of bounds."
+    assert start_idx < rec_shape[0], "Start index out of bounds."
+    assert stop_idx <= rec_shape[0], "Stop index out of bounds."
 
     raw = rec.rec[start_idx:stop_idx, :]
     return GridData(rec=raw, samplerate=rec.samplerate)
@@ -564,10 +601,9 @@ def subset_com(
     start: float,
     stop: float,
     mode: str = "time",
-    samplerate: int = 20000,
+    samplerate: float = 20000.0,
 ) -> "CommunicationData":
-    """
-    Makes a subset of a communication dataset.
+    """Make a subset of a communication dataset.
 
     Parameters
     ----------
@@ -596,7 +632,6 @@ def subset_com(
     >>> subset = subset_com(com, 0.1, 0.5)
     ```
     """
-
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
 
     if mode == "index":
@@ -606,69 +641,70 @@ def subset_com(
         start_time = start
         stop_time = stop
 
-    if hasattr(com, "chirp"):
+    com_are_detected = False
+    if com.chirp.are_detected:
+        com_are_detected = True
         ci = com.chirp.idents[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
         ]
         ct = com.chirp.times[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
         ]
-        if hasattr(com.chirp, "params"):
-            cp = com.chirp.params[
-                (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
-            ]
-        else:
-            cp = None
-        chirp = (
-            ChirpData(
-                times=ct,
-                idents=ci,
-                params=cp,
-                detector=com.chirp.detector,
-                exist=com.chirp.exist,
-            )
-            if hasattr(com, "chirp")
-            else None
+        cp = com.chirp.params[
+            (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
+        ]
+        chirp = ChirpData(
+            times=ct,
+            idents=ci,
+            params=cp,
+            detector=com.chirp.detector,
+            are_detected=com.chirp.are_detected,
         )
     else:
-        chirp = None
-    if hasattr(com, "rise"):
+        chirp = ChirpData(
+            times=np.array([]),
+            idents=np.array([]),
+            params=np.array([]),
+            detector="None",
+            are_detected=False,
+        )
+
+    if com.rise.are_detected:
+        com_are_detected = True
         ri = com.rise.idents[
             (com.rise.times >= start_time) & (com.rise.times <= stop_time)
         ]
         rt = com.rise.times[
             (com.rise.times >= start_time) & (com.rise.times <= stop_time)
         ]
-        if hasattr(com.rise, "params"):
-            rp = com.rise.params[
-                (com.rise.times >= start_time) & (com.rise.times <= stop_time)
-            ]
-        else:
-            rp = None
-        rise = (
-            RiseData(
-                times=rt,
-                idents=ri,
-                params=rp,
-                detector=com.rise.detector,
-                exist=com.rise.exist,
-            )
-            if hasattr(com, "rise")
-            else None
+        rp = com.rise.params[
+            (com.rise.times >= start_time) & (com.rise.times <= stop_time)
+        ]
+        rise = RiseData(
+            times=rt,
+            idents=ri,
+            params=rp,
+            detector=com.rise.detector,
+            are_detected=com.rise.are_detected,
         )
     else:
-        rise = None
+        rise = RiseData(
+            times=np.array([]),
+            idents=np.array([]),
+            params=np.array([]),
+            detector="None",
+            are_detected=False,
+        )
 
-    if not hasattr(com, "chirp") and not hasattr(com, "rise"):
-        return None
-    return CommunicationData(chirp=chirp, rise=rise)
+    return CommunicationData(
+        chirp=chirp, rise=rise, are_detected=com_are_detected
+    )
 
 
 def subset(
     data: "Dataset", start: float, stop: float, mode: str = "time"
 ) -> "Dataset":
-    """
-    Makes a subset of a full dataset.
+    """Make a subset of a full dataset.
 
     Parameters
     ----------
@@ -709,7 +745,6 @@ def subset(
     >>> save(subset, pathlib.Path("path/to/save"))
     ```
     """
-
     assert mode in ["time", "index"], "Mode must be either 'time' or 'index'."
     samplerate = data.grid.samplerate
 
@@ -725,16 +760,10 @@ def subset(
     wt_sub = subset_wavetracker(
         data.track, start_time, stop_time, samplerate=samplerate
     )
-    raw_sub = (
-        subset_grid(data.grid, start_time, stop_time, samplerate=samplerate)
-        if data.grid
-        else None
+    raw_sub = subset_grid(
+        data.grid, start_time, stop_time, samplerate=samplerate
     )
-    com_sub = (
-        subset_com(data.com, start_time, stop_time, samplerate=samplerate)
-        if hasattr(data, "com")
-        else None
-    )
+    com_sub = subset_com(data.com, start_time, stop_time, samplerate=samplerate)
 
     new_path = (
         data.path.parent
@@ -744,12 +773,10 @@ def subset(
     return Dataset(path=new_path, grid=raw_sub, track=wt_sub, com=com_sub)
 
 
-def save_wavetracker(
-    wt: "WavetrackerData", output_path: Union[pathlib.Path, str]
-) -> None:
-    """
-    Save WavetrackerData object to disk as numpy files, like the original
-    wavetracker data.
+def save_wavetracker(wt: "WavetrackerData", output_path: pathlib.Path) -> None:
+    """Save WavetrackerData object to disk as numpy files.
+
+    ...like the original wavetracker data.
 
     Parameters
     ----------
@@ -771,27 +798,22 @@ def save_wavetracker(
     >>> save_wavetracker(wt, pathlib.Path("path/to/save"))
     ```
     """
-
-    if isinstance(output_path, str):
-        output_path = pathlib.Path(output_path)
-
     np.save(output_path / "fund_v.npy", wt.freqs)
     np.save(output_path / "sign_v.npy", wt.powers)
     np.save(output_path / "ident_v.npy", wt.idents)
     np.save(output_path / "idx_v.npy", wt.indices)
     np.save(output_path / "times.npy", wt.times)
-    if wt.xpos is not None:
+    if wt.has_positions:
         np.save(output_path / "xpos.npy", wt.xpos)
         np.save(output_path / "ypos.npy", wt.ypos)
 
 
-def save_grid(rec: "GridData", output_path: Union[pathlib.Path, str]) -> None:
-    """
-    Save raw data to a WAV file using `thunderfish.datawriter`.
+def save_grid(rec: "GridData", output_path: pathlib.Path) -> None:
+    """Save raw data to a WAV file using `thunderfish.datawriter`.
 
     Parameters
     ----------
-    rec :GridData
+    rec : GridData
         The raw data to be saved.
     output_path : pathlib.Path
         The path to save the file to.
@@ -805,10 +827,6 @@ def save_grid(rec: "GridData", output_path: Union[pathlib.Path, str]) -> None:
     >>> save_grid(rec, pathlib.Path("path/to/save"))
     ```
     """
-
-    if isinstance(output_path, str):
-        output_path = pathlib.Path(output_path)
-
     write_data(
         str(output_path / "traces_grid1.wav"),
         rec.rec,
@@ -817,11 +835,8 @@ def save_grid(rec: "GridData", output_path: Union[pathlib.Path, str]) -> None:
     )
 
 
-def save_com(
-    com: "CommunicationData", output_path: Union[pathlib.Path, str]
-) -> None:
-    """
-    Save communication data to disk.
+def save_com(com: "CommunicationData", output_path: pathlib.Path) -> None:
+    """Save communication data to disk.
 
     Parameters
     ----------
@@ -841,8 +856,7 @@ def save_com(
     >>> com = load_com(pathlib.Path("path/to/communication"))
     >>> save_com(com, pathlib.Path("path/to/save"))
     """
-
-    if hasattr(com, "chirp"):
+    if com.chirp.are_detected:
         np.save(
             output_path / f"chirp_times_{com.chirp.detector}.npy",
             com.chirp.times,
@@ -851,29 +865,28 @@ def save_com(
             output_path / f"chirp_ids_{com.chirp.detector}.npy",
             com.chirp.idents,
         )
-        if hasattr(com.chirp, "params"):
-            np.save(
-                output_path / f"chirp_params_{com.chirp.detector}.npy",
-                com.chirp.params,
-            )
+        np.save(
+            output_path / f"chirp_params_{com.chirp.detector}.npy",
+            com.chirp.params,
+        )
 
-    if hasattr(com, "rise"):
+    if com.rise.are_detected:
         np.save(
             output_path / f"rise_times_{com.rise.detector}.npy", com.rise.times
         )
         np.save(
             output_path / f"rise_ids_{com.rise.detector}.npy", com.rise.idents
         )
-        if hasattr(com.rise, "params"):
-            np.save(
-                output_path / f"rise_params_{com.rise.detector}.npy",
-                com.rise.params,
-            )
+        np.save(
+            output_path / f"rise_params_{com.rise.detector}.npy",
+            com.rise.params,
+        )
 
 
-def save(dataset: "Dataset", output_path: Union[pathlib.Path, str]) -> None:
-    """
-    Save a Dataset object to disk. This function saves the wavetracker data,
+def save(dataset: "Dataset", output_path: pathlib.Path) -> None:
+    """Save a Dataset object to disk.
+
+    This function saves the wavetracker data,
     the raw data and the communication data to disk, depending on what is
     available in the Dataset object.
 
@@ -896,32 +909,27 @@ def save(dataset: "Dataset", output_path: Union[pathlib.Path, str]) -> None:
     >>> ds = load(pathlib.Path("path/to/dataset"))
     >>> save(ds, pathlib.Path("path/to/save"))
     """
-
-    if isinstance(output_path, str):
-        output_path = pathlib.Path(output_path)
-
     output_dir = output_path / dataset.path.name
 
     if output_dir.exists():
-        raise FileExistsError(f"Output directory {output_dir} already exists.")
+        msg = f"Output directory {output_dir} already exists."
+        raise FileExistsError(msg)
 
     output_dir.mkdir(parents=True)
 
     save_wavetracker(dataset.track, output_dir)
 
-    if dataset.grid is not None:
-        save_grid(dataset.grid, output_dir)
+    save_grid(dataset.grid, output_dir)
 
-    if dataset.com is not None:
+    if dataset.com.are_detected:
         save_com(dataset.com, output_dir)
 
 
 def _pprint(obj: BaseModel) -> None:
-    """
-    Pretty-print the attributes of the object.
-    """
+    """Pretty-print the attributes of the object."""
 
-    def collect_vars(obj):
+    def collect_vars(obj: BaseModel) -> Optional[Dict[str, str]]:
+        """Collect all variables of a BaseModel object."""
         if isinstance(obj, BaseModel):
             result = {}
             for key, value in obj.__dict__.items():
@@ -929,10 +937,9 @@ def _pprint(obj: BaseModel) -> None:
                     if isinstance(value, BaseModel):
                         result[key] = collect_vars(value)
                     else:
-                        result[key] = type(value).__name__
+                        result[key] = str(type(value).__name__)
             return result
-        else:
-            return None
+        return None
 
     return rpprint(collect_vars(obj), expand_all=True)
 
@@ -944,22 +951,22 @@ class WavetrackerData(BaseModel):
 
     Parameters
     ----------
-    freqs : np.ndarray[float]
+    freqs : numpy.ndarray[float]
         Array of frequencies.
-    powers : np.ndarray[float]
+    powers : numpy.ndarray[float]
         Array of powers.
-    idents : np.ndarray[float]
+    idents : numpy.ndarray[float]
         Array of idents.
-    indices : np.ndarray[int]
+    indices : numpy.ndarray[int]
         Array of indices.
-    ids : np.ndarray[int]
+    ids : numpy.ndarray[int]
         Array of ids.
-    times : np.ndarray[float]
+    times : numpy.ndarray[float]
         Array of times.
-    xpos : Optional[np.ndarray[float]], optional
-        Array of x positions, by default None.
-    ypos : Optional[np.ndarray[float]], optional
-        Array of y positions, by default None.
+    xpos : numpy.ndarray[float]]
+        Array of x positions
+    ypos : numpy.ndarray[float]
+        Array of y positions
 
     Methods
     -------
@@ -977,19 +984,23 @@ class WavetrackerData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
+    freqs: npt.NDArray[np.float_]
+    powers: npt.NDArray[np.float_]
+    idents: npt.NDArray[np.float_]
+    indices: npt.NDArray[np.int_]
+    ids: npt.NDArray[np.float_]
+    times: npt.NDArray[np.float_]
+    xpos: npt.NDArray[np.float_]
+    ypos: npt.NDArray[np.float_]
+    has_positions: bool
 
-    freqs: np.ndarray[float]
-    powers: np.ndarray[float]
-    idents: np.ndarray[float]
-    indices: np.ndarray[int]
-    ids: np.ndarray[int]
-    times: np.ndarray[float]
-    xpos: Optional[np.ndarray[float]] = None
-    ypos: Optional[np.ndarray[float]] = None
-
-    @field_validator("freqs", "powers", "idents", "indices", "ids", "times")
+    @field_validator(
+        "freqs", "powers", "idents", "indices", "ids", "times", "xpos", "ypos"
+    )
     @classmethod
-    def _check_numpy_array(cls, v):
+    def _check_numpy_array(
+        cls: type["WavetrackerData"], v: np.ndarray
+    ) -> np.ndarray:
         """
         Check if all the arrays are numpy arrays.
 
@@ -1009,39 +1020,16 @@ class WavetrackerData(BaseModel):
             If the input is not a numpy array.
         """
         if not isinstance(v, np.ndarray):
-            raise ValidationError("Value must be a numpy.ndarray")
-        return v
-
-    @field_validator("xpos", "ypos")
-    @classmethod
-    def _check_numpy_array_pos(cls, v):
-        """
-        Check if xpos and ypos are numpy arrays when they are not none.
-
-        Parameters
-        ----------
-        v : np.ndarray
-            Array to be checked.
-
-        Returns
-        -------
-        np.ndarray
-            The input array.
-
-        Raises
-        ------
-        ValidationError
-            If the input is not a numpy array.
-        """
-        if v is not None and not isinstance(v, np.ndarray):
-            raise ValidationError("Value must be a numpy.ndarray")
+            msg = "Value must be a numpy.ndarray"
+            raise ValidationError(msg)
         return v
 
     @field_validator("times")
     @classmethod
-    def _check_times_sorted(cls, v):
-        """
-        Checks that the times are monotonically increasing.
+    def _check_times_sorted(
+        cls: type["WavetrackerData"], v: np.ndarray
+    ) -> np.ndarray:
+        """Check that the times are monotonically increasing.
 
         Parameters
         ----------
@@ -1059,14 +1047,14 @@ class WavetrackerData(BaseModel):
             If the times are not monotonically increasing.
         """
         if not np.all(np.diff(v) > 0):
-            raise GridDataMismatch(
-                "Wavetracker times are not monotonically increasing!"
-            )
+            msg = "Wavetracker times are not monotonically increasing!"
+            raise GridDataMismatch(msg)
         return v
 
     @model_validator(mode="after")
-    def _check_times_indices(self):
-        """
+    def _check_times_indices(self: Self) -> Self:
+        """Check that index and time array match.
+
         Checks that the indices in the indices array cannot go out of bounds
         of the times array.
 
@@ -1078,18 +1066,17 @@ class WavetrackerData(BaseModel):
         Raises
         ------
         GridDataMismatch
-            If the number of times is smaller than the number of unique indices.
+            If the number of times is smaller than the number of unique
+            indices.
         """
         if self.times.shape[0] < len(set(self.indices)):
-            raise GridDataMismatch(
-                "Number of times is smaller than number of unique indices!"
-            )
+            msg = "Number of times is smaller than number of unique indices!"
+            raise GridDataMismatch(msg)
         return self
 
     @model_validator(mode="after")
-    def _check_wavetracker_data(self) -> "WavetrackerData":
-        """
-        Check if the wavetracker data is of correct length.
+    def _check_wavetracker_data(self: Self) -> Self:
+        """Check if the wavetracker data is of correct length.
 
         Returns
         -------
@@ -1106,19 +1093,17 @@ class WavetrackerData(BaseModel):
             for x in [self.freqs, self.powers, self.idents, self.indices]
         ]
         if len(set(lengths)) > 1:
-            raise GridDataMismatch("Wavetracker data is not of equal length!")
+            msg = "Wavetracker data is not of equal length!"
+            raise GridDataMismatch(msg)
         return self
 
-    def pprint(self) -> None:
-        """
-        Pretty-print the attributes of the object.
-        """
+    def pprint(self: Self) -> None:
+        """Pretty-print the attributes of the object."""
         _pprint(self)
 
 
 class GridData(BaseModel):
-    """
-    Contains raw data from the electrode grid recordings.
+    """Contains raw data from the electrode grid recordings.
 
     Parameters
     ----------
@@ -1147,15 +1132,14 @@ class GridData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
-
-    rec: Union[np.ndarray, DataLoader]
-    samplerate: int
+    rec: Union[npt.NDArray, DataLoader]
+    samplerate: float
 
     @field_validator("rec")
     @classmethod
     def _check_raw(
-        cls, v: Union[np.ndarray, DataLoader]
-    ) -> Union[np.ndarray, DataLoader]:
+        cls: type[Self], v: Union[npt.NDArray, DataLoader]
+    ) -> Union[npt.NDArray, DataLoader]:
         """
         Check if the raw data is a numpy array or a DataLoader object.
 
@@ -1175,15 +1159,12 @@ class GridData(BaseModel):
             If the raw data is not a numpy array or a DataLoader object.
         """
         if not isinstance(v, (np.ndarray, DataLoader)):
-            raise ValidationError(
-                "Raw data must be a numpy array or a DataLoader."
-            )
+            msg = "Raw data must be a numpy array or a DataLoader."
+            raise ValidationError(msg)
         return v
 
-    def pprint(self) -> None:
-        """
-        Pretty-print the attributes of the object.
-        """
+    def pprint(self: Self) -> None:
+        """Pretty-print the attributes of the object."""
         _pprint(self)
 
 
@@ -1235,27 +1216,28 @@ class ChirpData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
-
-    times: np.ndarray
-    idents: np.ndarray
+    times: npt.NDArray[np.float_]
+    idents: npt.NDArray[np.int_]
+    params: npt.NDArray[np.float_]
+    are_detected: bool
     detector: str
-    params: np.ndarray
-    exist: bool
 
     @field_validator("times", "idents", "params")
     @classmethod
-    def _check_numpy_array(cls: Type["ChirpData"], v: np.ndarray) -> np.ndarray:
+    def _check_numpy_array(
+        cls: Type["ChirpData"], v: npt.NDArray
+    ) -> npt.NDArray:
         """
         Check if times and idents are numpy arrays.
 
         Parameters
         ----------
-        v : Any
+        v : npt.NDArray
             The value to be checked.
 
         Returns
         -------
-        np.ndarray
+        npt.NDArray
             The input value if it is a numpy array.
 
         Raises
@@ -1276,7 +1258,7 @@ class ChirpData(BaseModel):
 
         Parameters
         ----------
-        v : Any
+        v : ChirpData
             The value to be checked.
 
         Returns
@@ -1324,16 +1306,15 @@ class RiseData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
-
-    times: np.ndarray
-    idents: np.ndarray
-    params: np.ndarray
+    times: npt.NDArray[np.float_]
+    idents: npt.NDArray[np.int_]
+    params: npt.NDArray[np.float_]
+    are_detected: bool
     detector: str
-    exist: bool
 
     @field_validator("times", "idents", "params")
     @classmethod
-    def _check_numpy_array(cls: Type["RiseData"], v: np.ndarray) -> np.ndarray:
+    def _check_numpy_array(cls: type[Self], v: npt.NDArray) -> npt.NDArray:
         """Check if times and idents are numpy arrays.
 
         Parameters
@@ -1358,7 +1339,7 @@ class RiseData(BaseModel):
 
     @field_validator("detector")
     @classmethod
-    def _check_detector(cls: Type["RiseData"], v: str) -> str:
+    def _check_detector(cls: Type[Self], v: str) -> str:
         """Check if detector is either 'gt' or 'pd' and a string.
 
         Parameters
@@ -1422,15 +1403,15 @@ class CommunicationData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
     chirp: ChirpData
     rise: RiseData
+    are_detected: bool
 
     @field_validator("chirp")
     @classmethod
     def _typecheck_chirp(
-        cls: Type["CommunicationData"], v: Type["ChirpData"]
-    ) -> Type["ChirpData"]:
+        cls: Type[Self], v: Type[ChirpData]
+    ) -> Type[ChirpData]:
         """
         Check if chirp data is a ChirpData object if it is not none.
 
@@ -1450,12 +1431,13 @@ class CommunicationData(BaseModel):
             The value that was passed in.
         """
         if v is not None and not isinstance(v, ChirpData):
-            raise ValidationError("Chirp data must be a ChirpData object.")
+            msg = "Chirp data must be a ChirpData object."
+            raise ValidationError(msg)
         return v
 
     @field_validator("rise")
     @classmethod
-    def _typecheck_rise(cls, v):
+    def _typecheck_rise(cls: type[Self], v: type[RiseData]) -> type[RiseData]:
         """
         Check if rise data is a RiseData object if it is not none.
 
@@ -1475,56 +1457,17 @@ class CommunicationData(BaseModel):
             The value that was passed in.
         """
         if v is not None and not isinstance(v, RiseData):
-            raise ValidationError("Rise data must be a RiseData object.")
+            msg = "Rise data must be a RiseData object."
+            raise ValidationError(msg)
         return v
 
-    @model_validator(mode="after")
-    def _check_communication_data(self):
-        """
-        Check if chirp or rise data is provided. Class should not be instantiated when no data is provided.
-
-        Raises
-        ------
-        ValidationError
-            If neither chirp nor rise data is provided.
-
-        Returns
-        -------
-        CommunicationData
-            An instance of the CommunicationData class.
-        """
-        if self.chirp is None and self.rise is None:
-            raise ValidationError(
-                "Communication data must contain either chirp or rise data."
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _delete_if_none(self):
-        """
-        Deletes attributes from the model if their values are None.
-
-        Returns:
-        --------
-        self : object
-            The modified instance of the object.
-        """
-        for key, value in self.model_dump().items():
-            if value is None:
-                delattr(self, key)
-        return self
-
-    def pprint(self) -> None:
-        """
-        Pretty-print the attributes of the object.
-        """
+    def pprint(self: Self) -> None:
+        """Pretty-print the attributes of the object."""
         _pprint(self)
 
 
 class Dataset(BaseModel):
-    """
-    The main dataset class to load data extracted from electrode grid recordings
-    of wave-type weakly electric fish.
+    """The main dataset class to load data extracted from electrode grids.
 
     Parameters
     ----------
@@ -1539,11 +1482,11 @@ class Dataset(BaseModel):
 
     Notes
     -----
-    Every dataset must at least get a path to a wavetracker dataset. Optionally,
-    a raw dataset and/or a chirp dataset can be provided. The raw dataset can
-    be used to extract e.g. the chirp times from the raw data. Best instantiated
-    with the `load` function as demonstrated in the examples. If a variable is
-    set to None, it is removed.
+    Every dataset must at least get a path to a wavetracker dataset.
+    Optionally,a raw dataset and/or a chirp dataset can be provided. The raw
+    dataset can be used to extract e.g. the chirp times from the raw data.
+    Best instantiated with the `load` function as demonstrated in the examples.
+    If a variable is set to None, it is removed.
 
     Examples
     --------
@@ -1559,15 +1502,14 @@ class Dataset(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
 
     path: pathlib.Path
-    grid: Optional[GridData]
+    grid: GridData
     track: WavetrackerData
-    com: Optional[CommunicationData]
+    com: CommunicationData
 
     @field_validator("path")
     @classmethod
-    def _check_path(cls, v):
-        """
-        Check if path is a pathlib.Path object.
+    def _check_path(cls: type[Self], v: pathlib.Path) -> pathlib.Path:
+        """Check if path is a pathlib.Path object.
 
         Parameters
         ----------
@@ -1585,14 +1527,14 @@ class Dataset(BaseModel):
             If the value is not a pathlib.Path object.
         """
         if not isinstance(v, pathlib.Path):
-            raise ValidationError("Path must be a pathlib.Path object.")
+            msg = "Path must be a pathlib.Path object."
+            raise ValidationError(msg)
         return v
 
     @field_validator("grid")
     @classmethod
-    def _check_rec(cls, v):
-        """
-        Check if raw data is a GridData object or none.
+    def _check_rec(cls: type[Self], v: GridData) -> GridData:
+        """Check if raw data is a GridData object or none.
 
         Parameters
         ----------
@@ -1610,14 +1552,14 @@ class Dataset(BaseModel):
             If the value is not a GridData object.
         """
         if v is not None and not isinstance(v, GridData):
-            raise ValidationError("Raw data must be a GridData object.")
+            msg = "Raw data must be a GridData object."
+            raise ValidationError(msg)
         return v
 
     @field_validator("track")
     @classmethod
-    def _check_track(cls, v):
-        """
-        Check if wavetracker data is a WavetrackerData object.
+    def _check_track(cls: type[Self], v: WavetrackerData) -> WavetrackerData:
+        """Check if wavetracker data is a WavetrackerData object.
 
         Parameters
         ----------
@@ -1635,16 +1577,14 @@ class Dataset(BaseModel):
             If the value is not a WavetrackerData object.
         """
         if v is not None and not isinstance(v, WavetrackerData):
-            raise ValidationError(
-                "Wavetracker data must be a WavetrackerData object."
-            )
+            msg = "Wavetracker data must be a WavetrackerData object."
+            raise ValidationError(msg)
         return v
 
     @field_validator("com")
     @classmethod
-    def _check_com(cls, v):
-        """
-        Check if communication data is a CommunicationData object or none.
+    def _check_com(cls: type[Self], v: CommunicationData) -> CommunicationData:
+        """Check if communication data is a CommunicationData object or none.
 
         Parameters
         ----------
@@ -1662,30 +1602,12 @@ class Dataset(BaseModel):
             If the value is not a CommunicationData object.
         """
         if v is not None and not isinstance(v, CommunicationData):
-            raise ValidationError(
-                "Communication data must be a CommunicationData object."
-            )
+            msg = "Communication data must be a CommunicationData object."
+            raise ValidationError(msg)
         return v
 
-    @model_validator(mode="after")
-    def _delete_if_none(self):
-        """
-        Deletes attributes from the model if their values are None.
-
-        Returns:
-        --------
-        self : object
-            The modified instance of the object.
-        """
-        for key, value in self.model_dump().items():
-            if value is None:
-                delattr(self, key)
-        return self
-
-    def pprint(self) -> None:
-        """
-        Pretty-print the attributes of the object.
-        """
+    def pprint(self: Self) -> None:
+        """Pretty-print the attributes of the object."""
         _pprint(self)
 
 
@@ -1695,9 +1617,9 @@ def subset_cli(
     start_time: float,
     end_time: float,
 ) -> None:
-    """
-    Subset a dataset to a given time range. Parameters are passed via the
-    command line.
+    """Subset a dataset to a given time range.
+
+    Parameters are passed via the command line.
 
     Parameters
     ----------
@@ -1714,7 +1636,7 @@ def subset_cli(
     -------
     None
     """
-    ds = load(input_path, grid=True)
+    ds = load(input_path)
     ds_sub = subset(ds, start_time, end_time)
     print(f"Saving dataset to {output_path}")
     save(ds_sub, output_path)
