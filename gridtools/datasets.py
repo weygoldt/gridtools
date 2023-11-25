@@ -77,7 +77,7 @@ save_wavetracker(subset, pathlib.Path("path/to/save"))
 """
 
 import pathlib
-from typing import Dict, Optional, Self, Type, TypeVar, Union
+from typing import Dict, Optional, Self, Type, TypeVar, Union, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -217,6 +217,12 @@ def load_grid(path: pathlib.Path) -> "GridData":
     rec = DataLoader(str(path / file.name))
     if not isinstance(rec.samplerate, float):
         msg = "DataLoader samplerate must be a float."
+        raise TypeError(msg)
+    if not isinstance(rec.shape, tuple):
+        msg = "DataLoader shape must be a tuple."
+        raise TypeError(msg)
+    if not isinstance(rec.shape[0], int):
+        msg = "DataLoader shape must have at least one dimension."
         raise TypeError(msg)
     samplerate = float(rec.samplerate)
 
@@ -568,9 +574,7 @@ def subset_grid(
         stop_time = stop
 
     # check if content of the thunderfish dataloader is correct
-    if isinstance(rec.samplerate, float):
-        rec.samplerate = float(rec.samplerate)
-    else:
+    if not isinstance(rec.samplerate, float):
         msg = "Samplerate must be a float."
         raise TypeError(msg)
     rec_shape = rec.rec.shape
@@ -1158,8 +1162,21 @@ class GridData(BaseModel):
         ValidationError
             If the raw data is not a numpy array or a DataLoader object.
         """
+        n_dimensions = 2
         if not isinstance(v, (np.ndarray, DataLoader)):
             msg = "Raw data must be a numpy array or a DataLoader."
+            raise ValidationError(msg)
+        if not isinstance(v.shape, tuple):
+            msg = "Raw data must have a shape."
+            raise ValidationError(msg)
+        if len(v.shape) != n_dimensions:
+            msg = "Raw data must have two dimensions."
+            raise ValidationError(msg)
+        if not isinstance(v.shape[0], int):
+            msg = "Raw data must have at least one dimension."
+            raise ValidationError(msg)
+        if not isinstance(v.shape[1], int):
+            msg = "Raw data must have at least one dimension."
             raise ValidationError(msg)
         return v
 
