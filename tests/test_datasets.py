@@ -60,7 +60,7 @@ def test_load_com():
 
 def test_load():
     # Happy path, load mock data
-    ds = load(datapath, grid=True)
+    ds = load(datapath)
     assert isinstance(ds, Dataset)
     assert isinstance(ds.grid, GridData)
     assert isinstance(ds.track, WavetrackerData)
@@ -90,7 +90,7 @@ def test_subset_com():
 
 def test_subset():
     # Happy path, subset mock data
-    ds = load(datapath, grid=True)
+    ds = load(datapath)
     ds_subset = subset(ds, 0, 10)
     assert isinstance(ds_subset, Dataset)
     assert isinstance(ds_subset.grid, GridData)

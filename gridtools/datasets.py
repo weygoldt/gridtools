@@ -253,6 +253,7 @@ def load_chirps(path: pathlib.Path) -> "ChirpData":
     # for any detector
     det = None
     are_detected = False
+    have_params = False
     chirp_times = np.array([])
     chirp_ids = np.array([])
     params = np.array([])
@@ -265,6 +266,7 @@ def load_chirps(path: pathlib.Path) -> "ChirpData":
             chirp_ids = np.load(path / f"chirp_ids_{det}.npy").astype(int)
             if any(f"chirp_params_{det}.npy" in str(f) for f in files):
                 params = np.load(path / f"chirp_params_{det}.npy")
+                have_params = True
             break
 
     return ChirpData(
@@ -273,6 +275,7 @@ def load_chirps(path: pathlib.Path) -> "ChirpData":
         params=params,
         detector=str(det),
         are_detected=are_detected,
+        have_params=have_params,
     )
 
 
@@ -300,6 +303,7 @@ def load_rises(path: pathlib.Path) -> "RiseData":
     # for any detector
     det = None
     are_detected = False
+    have_params = False
     rise_times = np.array([])
     rise_ids = np.array([])
     params = np.array([])
@@ -312,6 +316,7 @@ def load_rises(path: pathlib.Path) -> "RiseData":
             rise_ids = np.load(path / f"rise_ids_{det}.npy").astype(int)
             if any(f"rise_params_{det}.npy" in str(f) for f in files):
                 params = np.load(path / f"rise_params_{det}.npy")
+                have_params = True
             break
 
     return RiseData(
@@ -320,6 +325,7 @@ def load_rises(path: pathlib.Path) -> "RiseData":
         params=params,
         detector=str(det),
         are_detected=are_detected,
+        have_params=have_params,
     )
 
 
@@ -654,15 +660,19 @@ def subset_com(
         ct = com.chirp.times[
             (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
         ]
-        cp = com.chirp.params[
-            (com.chirp.times >= start_time) & (com.chirp.times <= stop_time)
-        ]
+        cp = np.array([])
+        if com.chirp.have_params:
+            cp = com.chirp.params[
+                (com.chirp.times >= start_time)
+                & (com.chirp.times <= stop_time)
+            ]
         chirp = ChirpData(
             times=ct,
             idents=ci,
             params=cp,
             detector=com.chirp.detector,
             are_detected=com.chirp.are_detected,
+            have_params=com.chirp.have_params,
         )
     else:
         chirp = ChirpData(
@@ -671,6 +681,7 @@ def subset_com(
             params=np.array([]),
             detector="None",
             are_detected=False,
+            have_params=False,
         )
 
     if com.rise.are_detected:
@@ -681,15 +692,18 @@ def subset_com(
         rt = com.rise.times[
             (com.rise.times >= start_time) & (com.rise.times <= stop_time)
         ]
-        rp = com.rise.params[
-            (com.rise.times >= start_time) & (com.rise.times <= stop_time)
-        ]
+        rp = np.array([])
+        if com.rise.have_params:
+            rp = com.rise.params[
+                (com.rise.times >= start_time) & (com.rise.times <= stop_time)
+            ]
         rise = RiseData(
             times=rt,
             idents=ri,
             params=rp,
             detector=com.rise.detector,
             are_detected=com.rise.are_detected,
+            have_params=com.rise.have_params,
         )
     else:
         rise = RiseData(
@@ -698,6 +712,7 @@ def subset_com(
             params=np.array([]),
             detector="None",
             are_detected=False,
+            have_params=False,
         )
 
     return CommunicationData(
@@ -767,7 +782,9 @@ def subset(
     raw_sub = subset_grid(
         data.grid, start_time, stop_time, samplerate=samplerate
     )
-    com_sub = subset_com(data.com, start_time, stop_time, samplerate=samplerate)
+    com_sub = subset_com(
+        data.com, start_time, stop_time, samplerate=samplerate
+    )
 
     new_path = (
         data.path.parent
@@ -869,10 +886,11 @@ def save_com(com: "CommunicationData", output_path: pathlib.Path) -> None:
             output_path / f"chirp_ids_{com.chirp.detector}.npy",
             com.chirp.idents,
         )
-        np.save(
-            output_path / f"chirp_params_{com.chirp.detector}.npy",
-            com.chirp.params,
-        )
+        if com.chirp.have_params:
+            np.save(
+                output_path / f"chirp_params_{com.chirp.detector}.npy",
+                com.chirp.params,
+            )
 
     if com.rise.are_detected:
         np.save(
@@ -881,10 +899,11 @@ def save_com(com: "CommunicationData", output_path: pathlib.Path) -> None:
         np.save(
             output_path / f"rise_ids_{com.rise.detector}.npy", com.rise.idents
         )
-        np.save(
-            output_path / f"rise_params_{com.rise.detector}.npy",
-            com.rise.params,
-        )
+        if com.rise.have_params:
+            np.save(
+                output_path / f"rise_params_{com.rise.detector}.npy",
+                com.rise.params,
+            )
 
 
 def save(dataset: "Dataset", output_path: pathlib.Path) -> None:
@@ -1237,6 +1256,7 @@ class ChirpData(BaseModel):
     idents: npt.NDArray[np.int_]
     params: npt.NDArray[np.float_]
     are_detected: bool
+    have_params: bool
     detector: str
 
     @field_validator("times", "idents", "params")
@@ -1327,6 +1347,7 @@ class RiseData(BaseModel):
     idents: npt.NDArray[np.int_]
     params: npt.NDArray[np.float_]
     are_detected: bool
+    have_params: bool
     detector: str
 
     @field_validator("times", "idents", "params")

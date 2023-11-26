@@ -96,7 +96,7 @@ pre-commit run --all-files
 ```
 ## To do
 
-- [ ] Refactor gridtools datasets to new format without Nonetypes
+- [x] Refactor gridtools datasets to new format without Nonetypes
 - [ ] Build unit tests for `gridtools.datasets`
 - [ ] Make a datavis module that provides functions to visualize the data
     -  [ ] Spec, track, pos terminal commands to quickly visualize datasets
