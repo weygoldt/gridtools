@@ -515,9 +515,13 @@ def subset_wavetracker(
         ypos = np.ndarray([])
 
     if len(indices) == 0:
-        msg = "No data in the specified time range."
-        raise GridDataMismatch(msg)
-    indices -= indices[0]
+        msg = "No track data in the specified time range."
+        # raise GridDataMismatch(msg)
+    else:
+        # TODO: Check if this works as expected 
+        # e.g. when there is no data for the first index
+        # wavetracker tracks should just always be interpolated ...
+        indices -= indices[0]
 
     # rebuild wavetracker object
     return WavetrackerData(
