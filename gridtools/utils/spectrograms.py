@@ -163,7 +163,7 @@ def specshow(spec, time, freq, ax, **kwargs):
     return im
 
 
-def spectrogram(data, samplingrate, nfft, hop_length, trycuda=True):
+def compute_spectrogram(data, samplingrate, nfft, hop_length, trycuda=True):
     """Compute the spectrogram of a signal.
 
     Parameters
@@ -201,7 +201,7 @@ def spectrogram(data, samplingrate, nfft, hop_length, trycuda=True):
     return spec, time, freq
 
 
-def decibel(spec, trycuda=True):
+def to_decibel(spec, trycuda=True):
     """Convert a spectrogram to decibel scale.
 
     Parameters
