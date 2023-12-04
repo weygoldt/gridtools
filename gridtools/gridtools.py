@@ -1,16 +1,12 @@
-#!/usr/bin/env python
-
-"""
-Gridtools - A command line tool for electrode grid recordings.
-This is the main entry point of the gridtools command line tool.
-"""
+"""Gridtools - A command line tool for electrode grid recordings."""
 
 from pathlib import Path
+from typing import Callable
 
 import rich_click as click
 import toml
 
-from .datasets import subset_cli
+from .datasets import pathlib, subset_cli
 from .fakegrid import fakegrid_cli, hybridgrid_cli
 from .utils.configfiles import copy_config
 
@@ -22,10 +18,8 @@ pyproject = toml.load(Path(__file__).parent.parent / "pyproject.toml")
 __version__ = pyproject["tool"]["poetry"]["version"]
 
 
-def add_version(f):
-    """
-    Add the version of the gridtools to the help heading.
-    """
+def add_version(f: Callable) -> Callable:
+    """Add the version of the gridtools to the help heading."""
     doc = f.__doc__
     f.__doc__ = "Welcome to Gridtools Version: " + __version__ + "\n\n" + doc
 
@@ -37,7 +31,7 @@ def add_version(f):
     __version__, "-V", "--version", message="Gridtools, version %(version)s"
 )
 @add_version
-def cli():
+def cli() -> None:
     """Interact with electrode grid recordings a bit more easily.
 
     The gridtools command line tool is a collection of commands that
@@ -59,32 +53,32 @@ def cli():
 
 
 @cli.group()
-def io():
+def io() -> None:
     """Dataset managing operations, such as conversion, subsetting, etc."""
     pass
 
 
 @cli.group()
-def show():
+def show() -> None:
     """Visualize datasets as spectrograms, position estimates, etc."""
     pass
 
 
 @cli.group()
-def render():
-    """Render videos"""
+def render() -> None:
+    """Render animated plots of the dataset."""
     pass
 
 
 @cli.group()
-def prepro():
-    """Preprocess datasets according to your prepro.toml file"""
+def prepro() -> None:
+    """Preprocess datasets according to your prepro.toml file."""
     pass
 
 
 @cli.group()
-def simulate():
-    """Simulate full grid datasets including wavetracker tracks, position estimates, etc."""
+def simulate() -> None:
+    """Simulate full grid datasets."""
     pass
 
 
@@ -92,7 +86,7 @@ def simulate():
 @click.option(
     "--config_path",
     "-c",
-    type=click.Path(),
+    type=pathlib.Path,
     required=True,
     help="Path to the config file.",
 )
@@ -103,7 +97,7 @@ def simulate():
     required=True,
     help="Mode of operation.",
 )
-def copyconfig(config_path, mode):
+def copyconfig(config_path: pathlib.Path, mode: str) -> None:
     """Copy a config file to a directory."""
     copy_config(config_path, mode)
 
@@ -112,14 +106,14 @@ def copyconfig(config_path, mode):
 @click.option(
     "--input_path",
     "-i",
-    type=click.Path(exists=True),
+    type=pathlib.Path,
     required=True,
     help="Path to the input dataset.",
 )
 @click.option(
     "--output_path",
     "-o",
-    type=click.Path(),
+    type=pathlib.Path,
     required=True,
     help="Path to the output dataset.",
 )
@@ -137,7 +131,12 @@ def copyconfig(config_path, mode):
     required=True,
     help="End time of the subset.",
 )
-def subset(input_path, output_path, start_time, end_time):
+def subset(
+        input_path: pathlib.Path,
+        output_path: pathlib.Path,
+        start_time: float,
+        end_time: float,
+) -> None:
     """Create a subset of a dataset and save it to a new location."""
     subset_cli(input_path, output_path, start_time, end_time)
 
@@ -146,18 +145,22 @@ def subset(input_path, output_path, start_time, end_time):
 @click.option(
     "--input_path",
     "-i",
-    type=click.Path(exists=True),
+    type=pathlib.Path,
     required=True,
     help="Path to the input dataset.",
 )
-def spec(input_path):
+def spec(input_path: pathlib.Path) -> None:
     """Show a spectrogram of the dataset."""
+    print(f"{input_path}")
+    print("Sorry, not implemented yet.")
 
 
 @show.command()
-@click.argument("input_path")
-def tracks(input_path):
+@click.argument("input_path", type=pathlib.Path)
+def tracks(input_path: pathlib.Path) -> None:
     """Show the position estimates of the dataset."""
+    print(f"{input_path}")
+    print("Sorry, not implemented yet.")
     pass
 
 
@@ -165,11 +168,11 @@ def tracks(input_path):
 @click.option(
     "--output_path",
     "-o",
-    type=click.Path(),
+    type=pathlib.Path,
     required=True,
     help="Path to the output dataset.",
 )
-def grid(output_path):
+def grid(output_path: pathlib.Path) -> None:
     """Simulate a grid dataset."""
     fakegrid_cli(output_path)
 
@@ -196,9 +199,12 @@ def grid(output_path):
     required=True,
     help="Path to the output dataset.",
 )
-def noise(input_path, real_path, output_path):
-    """Add real noise to a simulated dataset (`input_path`) from a dataset of real
-    recordings (`real_path`) and save the result to `output_path`."""
+def noise(
+    input_path: pathlib.Path,
+    real_path: pathlib.Path,
+    output_path: pathlib.Path,
+) -> None:
+    """Add real noise to a simulated dataset."""
     hybridgrid_cli(input_path, real_path, output_path)
 
 

@@ -1,13 +1,13 @@
 """
-Simulations to generate electrode grids and simulate fish movement 
+Simulations to generate electrode grids and simulate fish movement
 and electric organ discharge (EOD) waveforms, including chirps and rises.
-Most of the code concerning EOD generation is just slightly modified from 
-the original code by Jan Benda et al. in the thunderfish package. The original 
+Most of the code concerning EOD generation is just slightly modified from
+the original code by Jan Benda et al. in the thunderfish package. The original
 code can be found here: https://github.com/janscience/thunderfish
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Union
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -104,7 +104,6 @@ def direction_pdf(
     np.ndarray
         Directions and probabilities for each direction.
     """
-
     assert forward_s > 0, "forward_s must be greater than 0"
     assert backward_s > 0, "backward_s must be greater than 0"
     assert backward_h >= 0, "backward_h must be greater than or equal to 0"
@@ -141,7 +140,6 @@ def step_pdf(max_veloc: float, duration: int, target_fs: int = 3) -> np.ndarray:
     np.ndarray
         Array of step values.
     """
-
     assert max_veloc > 0, "max_veloc must be greater than 0"
     assert duration > 0, "duration must be greater than 0"
     assert target_fs > 0, "target_fs must be greater than 0"
@@ -237,7 +235,6 @@ def make_positions(
         A tuple of two 1D arrays representing the final x and y
         positions of the trajectories.
     """
-
     assert len(trajectories) == len(
         steps
     ), "trajectories and steps must be of equal length"
@@ -304,7 +301,6 @@ def interpolate_positions(
     - `Tuple[np.ndarray, np.ndarray]`
         The interpolated x and y positions.
     """
-
     assert len(x) == len(y), "x and y must be of equal length"
 
     time_sim = np.arange(0, t_tot, 1 / fss)
@@ -344,7 +340,6 @@ def fold_space(
     - `Tuple[np.ndarray, np.ndarray]`
         The folded back x and y positions.
     """
-
     assert len(x) == len(y), "x and y must be of equal length"
 
     # Check how narrow the boundaries are because this might take a while then
@@ -409,7 +404,6 @@ def gaussian(
     np.ndarray
         The value of the Gaussian function at the given points.
     """
-
     sigma = 0.5 * width / (2.0 * np.log(10.0)) ** (0.5 / kurt)
     curve = height * np.exp(-0.5 * (((x - mu) / sigma) ** 2.0) ** kurt)
 
@@ -496,7 +490,6 @@ def make_rises(params: RiseParams) -> np.ndarray:
     numpy.ndarray
         Generate frequency trace that can be passed on to wavefish_eods().
     """
-
     n = int(params.duration * params.samplerate)
 
     # baseline eod frequency:
@@ -556,7 +549,6 @@ def make_grid(
     np.ndarray
         x coordinates of the electrodes and y coordinates of the electrodes.
     """
-
     assert style in ["hex", "square"], "type must be 'hex' or 'square'"
 
     if style == "hex":

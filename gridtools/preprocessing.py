@@ -1,8 +1,6 @@
-#!/usr/bin/env python3
+"""Contains the preprocessing functions for the gridtools package.
 
-"""
-This module contains the preprocessing functions for the gridtools package.
-The functions act on just the tracked data and should thus be usable on all 
+The functions act on just the tracked data and should thus be usable on all
 dataset classes, whether they contain raw data or chirp data or not.
 """
 
@@ -17,7 +15,7 @@ logger = make_logger(__name__)
 
 
 def remove_unassigned_tracks(data: Dataset) -> Dataset:
-    """Removes unassinged frequencies from the dataset.
+    """Remove unassinged frequencies from the dataset.
 
     Parameters
     ----------
@@ -48,7 +46,7 @@ def remove_unassigned_tracks(data: Dataset) -> Dataset:
 
 
 def remove_short_tracks(data: Dataset, min_length: int) -> Dataset:
-    """Removes tracks shorter than a given threshold.
+    """Remove tracks shorter than a given threshold.
 
     Parameters
     ----------
@@ -70,7 +68,7 @@ def remove_short_tracks(data: Dataset, min_length: int) -> Dataset:
     index_ids_del = []
     index_ident_del = []
 
-    for track_id in track(data.ids, description="Removing short tracks"):
+    for track_id in track(data.track.ids, description="Removing short tracks"):
         track_times = data.track.times[
             data.track.indices[data.track.idents == track_id]
         ]
@@ -95,7 +93,7 @@ def remove_short_tracks(data: Dataset, min_length: int) -> Dataset:
 
 
 def remove_low_power_tracks(data: Dataset, min_power: float) -> Dataset:
-    """Removes tracks with a maximum power below a given threshold.
+    """Remove tracks with a maximum power below a given threshold.
 
     Parameters
     ----------
@@ -138,8 +136,10 @@ def remove_low_power_tracks(data: Dataset, min_power: float) -> Dataset:
     return data
 
 
-def remove_poorly_tracked_tracks(data: Dataset, min_coverage: float) -> Dataset:
-    """Removes tracks with a coverage below a given threshold.
+def remove_poorly_tracked_tracks(
+        data: Dataset, min_coverage: float
+) -> Dataset:
+    """Remove tracks with a coverage below a given threshold.
 
     Parameters
     ----------
@@ -153,7 +153,6 @@ def remove_poorly_tracked_tracks(data: Dataset, min_coverage: float) -> Dataset:
     Dataset
         The processed dataset.
     """
-
     logger.info("Removing tracks with a coverage below %s.", min_coverage)
 
     counter = 0

@@ -1,48 +1,35 @@
-"""
-Specific exceptions for the gridtools package.
-"""
+"""Specific exceptions for the gridtools package."""
+
+from typing import Self
 
 
-class GridDataMismatch(Exception):
-    """
-    GridDataMismatchError to raise an exception if
-    parameters of the dataset do not match each other.
-    """
+class GridDataMismatchError(Exception):
+    """Raise if params of the dataset do not match each other."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self: Self, message: str) -> None:
         self.message = message
         super().__init__(message)
 
 
-class GridDataMissing(Exception):
-    """
-    To raise an exception if
-    parameters of the dataset are missing for the specific operation.
-    """
+class GridDataMissingError(Exception):
+    """If parameters of the dataset are missing for the specific operation."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self: Self, message: str) -> None:
         self.message = message
         super().__init__(message)
 
 
 class NotOnTimeError(Exception):
-    """
-    Error is called when the time point that is searched for is not on the
-    supplied time array.
-    """
+    """When the time point that is searched for is not on the time array."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self: Self, message: str) -> None:
         self.message = message
         super().__init__(message)
 
 
-class BadOutputDir(Exception):
-    """
-    Error is called when the save directory either contains raw data or is the
-    directory from which the function is called. This prevents accidentally
-    overwriting data.
-    """
+class BadOutputDirError(Exception):
+    """When files in the output would be overwritten."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self: Self, message: str) -> None:
         self.message = message
         super().__init__(message)

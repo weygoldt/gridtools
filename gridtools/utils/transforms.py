@@ -24,6 +24,7 @@ def instantaneous_frequency(
         Signal to compute the instantaneous frequency from.
     samplerate : int
         Samplerate of the signal.
+
     Returns
     -------
     tuple[np.ndarray, np.ndarray]

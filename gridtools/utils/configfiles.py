@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-
-"""
-A module that keeps common tools to handle the two kinds of config 
-files used in this project: simulation config files and preprocessing
-config files.
-"""
+"""Methods to handle the two kinds of config files."""
 
 import pathlib
 import shutil
@@ -13,21 +7,20 @@ import toml
 from pydantic import BaseModel, ConfigDict
 
 
-def copy_config(path: str, configfile: str) -> None:
-    """
-    Copy the default config file from the package root directory into a
-    specified path. Depenting on the configfile str, the preprocessing
+def copy_config(destination: pathlib.Path, configfile: str) -> None:
+    """Copy the default config into a specified path.
+
+    Depenting on the configfile str, the preprocessing
     or simulation config file is copied.
     """
-
-    assert isinstance(path, str), "The path argument must be a string."
     assert isinstance(
         configfile, str
     ), "The configfile argument must be a string."
     assert configfile in [
         "preprocessing",
         "simulations",
-    ], "The configfile argument must be either 'preprocessing' or 'simulation'."
+    ], """The configfile argument must be
+    either 'preprocessing' or 'simulation'."""
 
     if configfile == "preprocessing":
         configfile = configfile + ".toml"
@@ -36,39 +29,39 @@ def copy_config(path: str, configfile: str) -> None:
 
     origin = pathlib.Path(__file__).parent.parent / configfile
     if not origin.exists():
-        raise FileNotFoundError(
+        msg = (
             f"Could not find the default config file for {configfile}. "
             f"Please make sure that the file '{configfile}.toml' exists in "
             "the package root directory."
         )
-
-    destination = pathlib.Path(path)
+        raise FileNotFoundError(msg)
 
     if destination.is_dir():
         shutil.copy(origin, destination / f"gridtools_{configfile}")
 
     elif destination.is_file():
-        raise FileExistsError(
+        msg = (
             "The specified path already exists and is a file. "
             "Please specify a directory or a non-existing path."
         )
+        raise FileExistsError(msg)
 
     elif not destination.exists():
-        raise FileNotFoundError("Please specify an existing directory.")
+        msg = (
+            "The specified path does not exist. "
+            "Please specify a directory or a non-existing path."
+        )
+        raise FileNotFoundError(msg)
 
 
 class SimulationConfigMeta(BaseModel):
-    """
-    Load the meta chapter in the simulation config file.
-    """
+    """Load the meta chapter in the simulation config file."""
 
     ngrids: int
 
 
 class SimulationConfigGrid(BaseModel):
-    """
-    Load the grid chapter in the simulation config file.
-    """
+    """Load the grid chapter in the simulation config file."""
 
     samplerate: int
     wavetracker_samplerate: int
@@ -82,9 +75,7 @@ class SimulationConfigGrid(BaseModel):
 
 
 class SimulationConfigFish(BaseModel):
-    """
-    Simulation parameters for the fish.
-    """
+    """Simulation parameters for the fish."""
 
     nfish: tuple
     eodfrange: tuple
@@ -94,9 +85,7 @@ class SimulationConfigFish(BaseModel):
 
 
 class SimulationConfigChirps(BaseModel):
-    """
-    Load chirp config for the simulation.
-    """
+    """Load chirp config for the simulation."""
 
     min_chirp_dt: float
     max_chirp_freq: float
@@ -107,9 +96,7 @@ class SimulationConfigChirps(BaseModel):
 
 
 class SimulationConfig(BaseModel):
-    """
-    The main config object for the simulation.
-    """
+    """The main config object for the simulation."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
     path: str
@@ -120,16 +107,13 @@ class SimulationConfig(BaseModel):
 
 
 class PreprocessingConfig(BaseModel):
-    """
-    The main config object for preprocessing.
-    """
+    """The main config object for preprocessing."""
 
     pass
 
 
 def load_sim_config(config_file: str) -> SimulationConfig:
-    """
-    Load the simulation config file.
+    """Load the simulation config file.
 
     Parameters
     ----------
@@ -146,15 +130,13 @@ def load_sim_config(config_file: str) -> SimulationConfig:
     grid = SimulationConfigGrid(**config_dict["grid"])
     fish = SimulationConfigFish(**config_dict["fish"])
     chirps = SimulationConfigChirps(**config_dict["chirps"])
-    config = SimulationConfig(
+    return SimulationConfig(
         path=config_file, meta=meta, grid=grid, fish=fish, chirps=chirps
     )
-    return config
 
 
 def load_prepro_config(config_file: str) -> PreprocessingConfig:
-    """
-    Load the preprocessing config file.
+    """Load the preprocessing config file.
 
     Parameters
     ----------
@@ -167,4 +149,4 @@ def load_prepro_config(config_file: str) -> PreprocessingConfig:
         The preprocessing config.
     """
     config_dict = toml.load(config_file)
-    config = PreprocessingConfig(**config_dict)
+    return PreprocessingConfig(**config_dict)

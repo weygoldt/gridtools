@@ -77,7 +77,7 @@ save_wavetracker(subset, pathlib.Path("path/to/save"))
 """
 
 import pathlib
-from typing import Dict, Optional, Self, Type, TypeVar, Union, Tuple
+from typing import Dict, Optional, Self, Type, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -514,13 +514,8 @@ def subset_wavetracker(
         xpos = np.ndarray([])
         ypos = np.ndarray([])
 
-    if len(indices) == 0:
-        msg = "No track data in the specified time range."
-        # raise GridDataMismatch(msg)
-    else:
-        # TODO: Check if this works as expected 
-        # e.g. when there is no data for the first index
-        # wavetracker tracks should just always be interpolated ...
+    # reset index array so that it fits on the now shorter time array
+    if len(indices) > 0:
         indices -= indices[0]
 
     # rebuild wavetracker object

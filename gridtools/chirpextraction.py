@@ -2,7 +2,7 @@
 
 """
 This file extracts the evolution of the instantaneous frequency and amplitude
-of chirps from a real labeled dataset. The extracted parameters can then 
+of chirps from a real labeled dataset. The extracted parameters can then
 be used to simulate chirps with the same characteristics.
 """
 
@@ -20,7 +20,7 @@ from scipy.signal import find_peaks
 from scipy.signal.windows import tukey
 
 from .datasets import Dataset, load
-from .simulations import chirp_model_v4, gaussian
+from .simulations import gaussian
 from .utils.filters import bandpass_filter
 from .utils.transforms import instantaneous_frequency
 
@@ -125,7 +125,6 @@ def extract_frequency(data: "Dataset") -> np.ndarray:
     np.ndarray
         An array of the instantaneous frequencies of the chirps in the dataset.
     """
-
     # get the fish with the highest baseline frequency
     time_window = 1
     upper_fish = get_upper_fish(data)
@@ -273,7 +272,6 @@ def estimate_params(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     to estimate the center and amplitude of the signal. It also estimates the standard
     deviation of the largest peak and sets an initial value for the kurtosis.
     """
-
     # compute mean and standard deviation of signal for peak detection
     y_mean = np.mean(y)
     y_std = np.std(y)
@@ -317,7 +315,6 @@ def fit_model(freqs: np.ndarray, model: object) -> np.ndarray:
     np.ndarray
         Array of fitted parameter values for each frequency data set.
     """
-
     fits = []
 
     for iter, freq in track(
@@ -386,7 +383,6 @@ def extract_chirp_params(
     >>> output_dir = pathlib.Path('/path/to/output/directory')
     >>> extract_chirp_params(input_dir, output_dir)
     """
-
     # load a dataset
     data = load(input_dir, grid=True)
 
@@ -448,7 +444,6 @@ def load_chirp_fits(path: pathlib.Path) -> np.ndarray:
     np.ndarray
         A numpy array containing the concatenated chirp fit datasets.
     """
-
     files = list(path.glob("*_chirp_fits.csv"))
     fits = []
     for file in files:
@@ -479,7 +474,6 @@ def resample_chirp_fits(input: pathlib.Path, output: pathlib.Path) -> None:
     then plots the distributions of the parameters of the original and new fits,
     and plots the resulting chirps. Finally, it saves the new fits to a CSV file.
     """
-
     # load chirp fits
     fits = load_chirp_fits(input)
 

@@ -9,7 +9,6 @@ def make_logger(name: str):
     """
     Create a logger for the gridtools package.
     """
-
     # create logger formats for file and terminal
     file_formatter = logging.Formatter(
         "[ %(levelname)s ] ~ %(asctime)s ~ %(module)s.%(funcName)s: %(message)s"

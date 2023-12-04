@@ -1,11 +1,5 @@
-#!/usr/bin/env python3
+"""Simulate an electrode grid recording of wave-type weakly electric fish."""
 
-"""
-Simulate an electrode grid recording of wave-type weakly electric fish based on 
-the parameters from the configuration file.
-"""
-
-import argparse
 import gc
 import pathlib
 import shutil
@@ -13,8 +7,6 @@ import shutil
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-# from pandas.io.formats.format import return_docstring
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
@@ -29,7 +21,6 @@ from .datasets import (
     load,
     save,
 )
-from .exceptions import GridDataMismatch
 from .simulations import (
     MovementParams,
     fold_space,
@@ -42,13 +33,8 @@ from .simulations import (
 from .utils.configfiles import SimulationConfig, load_sim_config
 from .utils.filters import lowpass_filter
 
-# from typing import Optional
-
-
-np.random.seed(42)
 con = Console()
 model = gaussian
-
 
 def fftnoise(f: np.ndarray) -> np.ndarray:
     """Generate noise with a given power spectrum.
@@ -99,7 +85,6 @@ def band_limited_noise(
     numpy.ndarray
         An array of band limited noise.
     """
-
     # Check for nyquist frequency
     if max_freq >= samplerate / 2:
         raise ValueError("max_freq must be less than samplerate / 2")
@@ -149,7 +134,6 @@ def get_random_timestamps(start_t, stop_t, n_timestamps, min_dt):
     numpy.ndarray
         An array of random timestamps between start_t and stop_t with a minimum time difference of min_dt.
     """
-
     # Check for start_t > stop_t
     if start_t >= stop_t:
         raise ValueError("start_t must be less than stop_t")
@@ -213,7 +197,6 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
     The function saves the simulated signals to disk in the specified output
     directory.
     """
-
     # general parameters
     ngrids = config.meta.ngrids
     samplerate = config.grid.samplerate
@@ -551,7 +534,6 @@ def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
     simulated dataset. A future version should choose a snipped from the real
     recording that contains as little communication as possible.
     """
-
     # normalize the simulated dataset
     sd.track.powers = (sd.track.powers - np.mean(sd.track.powers)) / np.std(
         sd.track.powers
@@ -650,7 +632,6 @@ def hybridgrid(
     The function saves the hybrid dataset to disk in the specified output
     directory.
     """
-
     # list subdirectories of fakegrid_path
     fake_datasets = list(fakegrid_path.iterdir())
     real_datasets = list(realgrid_path.iterdir())
@@ -689,7 +670,6 @@ def fakegrid_cli(output_path):
     """
     Command line interface for the fakegrid function.
     """
-
     config_path = (pathlib.Path(output_path) / "gridtools_simulations.toml",)
     config_path = config_path[0].resolve()
     config = load_sim_config(str(config_path))

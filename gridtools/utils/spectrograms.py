@@ -124,7 +124,6 @@ def sint(num):
     ValueError
         Fails if the input number is not an integer.
     """
-
     if isinstance(num, int):
         return num
     elif num.is_integer():
