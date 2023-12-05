@@ -1,26 +1,23 @@
-#! /usr/bin/env python3
-
-"""
-Helper functions for spectrograms.
-"""
+"""Helper functions for spectrograms."""
 
 import math
+from typing import Tuple, Union
 
 import numpy as np
 import torch
 from torchaudio.transforms import AmplitudeToDB, Spectrogram
 
 
-def check_device():
-    """
-    Check if a CUDA-enabled GPU is available, and return the appropriate device.
+def check_device() -> torch.device:
+    """Check if a CUDA-enabled GPU is available, and return the device.
 
     Returns
     -------
     device : torch.device
-        The device to use for tensor operations. If a CUDA-enabled GPU is available, returns a device object for that
-        GPU. If an Apple M1 GPU is available, returns a device object for that GPU. Otherwise, returns a device object
-        for the CPU.
+        The device to use for tensor operations. If a CUDA-enabled GPU is
+        available, returns a device object for that GPU. If an Apple M1
+        GPU is available, returns a device object for that GPU. Otherwise,
+        returns a device object for the CPU.
     """
     if torch.cuda.is_available() is True:
         device = torch.device("cuda")  # nvidia / amd gpu
@@ -31,8 +28,8 @@ def check_device():
     return device
 
 
-def next_power_of_two(num):
-    """Computes the next power of two for a given number.
+def next_power_of_two(num: float) -> int:
+    """Compute the next power of two for a given number.
 
     Parameters
     ----------
@@ -45,14 +42,13 @@ def next_power_of_two(num):
         The next power of two.
     """
     if math.log2(num).is_integer():
-        return num
+        return int(num)
     next_pow = math.ceil(math.log2(num))
-    return 2**next_pow
+    return int(2**next_pow)
 
 
-def freqres_to_nfft(freq_res, samplingrate):
-    """Convert the frequency resolution of a spectrogram to
-    the number of FFT bins.
+def freqres_to_nfft(freq_res: int, samplingrate: float) -> int:
+    """Convert the frequency resolution to the number of FFT bins.
 
     Parameters
     ----------
@@ -66,12 +62,11 @@ def freqres_to_nfft(freq_res, samplingrate):
     int
         The number of FFT bins.
     """
-    return int(next_power_of_two(samplingrate / freq_res))
+    return next_power_of_two(samplingrate / freq_res)
 
 
-def nfft_to_freqres(nfft, samplingrate):
-    """Convert the number of FFT bins of a spectrogram to
-    the frequency resolution.
+def nfft_to_freqres(nfft: int, samplingrate: float) -> float:
+    """Convert the number of FFT bins to the frequency resolution.
 
     Parameters
     ----------
@@ -88,7 +83,7 @@ def nfft_to_freqres(nfft, samplingrate):
     return samplingrate / nfft
 
 
-def overlap_to_hoplen(overlap, nfft):
+def overlap_to_hoplen(overlap: float, nfft: int) -> int:
     """Convert the overlap of a spectrogram to the hop length.
 
     Parameters
@@ -106,7 +101,7 @@ def overlap_to_hoplen(overlap, nfft):
     return int(np.floor(nfft * (1 - overlap)))
 
 
-def sint(num):
+def sint(num: float) -> int:
     """Convert a float to an int without rounding.
 
     Parameters
@@ -126,13 +121,19 @@ def sint(num):
     """
     if isinstance(num, int):
         return num
-    elif num.is_integer():
+    if num.is_integer():
         return int(num)
-    else:
-        raise ValueError("Number is not an integer.")
+    msg = "Number is not an integer."
+    raise ValueError(msg)
 
 
-def specshow(spec, time, freq, ax, **kwargs):
+def specshow(
+    spec: np.ndarray,
+    time: np.ndarray,
+    freq: np.ndarray,
+    ax,
+    **kwargs: dict
+    ):
     """Plot a spectrogram.
 
     Parameters
@@ -162,7 +163,12 @@ def specshow(spec, time, freq, ax, **kwargs):
     return im
 
 
-def compute_spectrogram(data, samplingrate, nfft, hop_length, trycuda=True):
+def compute_spectrogram(
+    data: Union[np.ndarray, torch.Tensor],
+    samplingrate: float,
+    nfft: int,
+    hop_length: int,
+) -> Tuple[torch.Tensor, np.ndarray, np.ndarray]:
     """Compute the spectrogram of a signal.
 
     Parameters
@@ -181,12 +187,17 @@ def compute_spectrogram(data, samplingrate, nfft, hop_length, trycuda=True):
     torch.Tensor
         The spectrogram matrix.
     """
-    if trycuda:
-        device = check_device()
+    device = check_device()
+    if isinstance(data, np.ndarray):
+        data = torch.from_numpy(data).to(device)
+    elif isinstance(data, torch.Tensor):
+        pass
     else:
-        device = torch.device("cpu")
+        msg = "data must be a numpy array or a torch tensor."
+        raise TypeError(msg)
 
-    data = torch.from_numpy(data).to(device)
+    data = data.to(device)
+
     spectrogram_of = Spectrogram(
         n_fft=nfft,
         hop_length=hop_length,
@@ -200,7 +211,7 @@ def compute_spectrogram(data, samplingrate, nfft, hop_length, trycuda=True):
     return spec, time, freq
 
 
-def to_decibel(spec, trycuda=True):
+def to_decibel(spec: torch.Tensor) -> torch.Tensor:
     """Convert a spectrogram to decibel scale.
 
     Parameters
@@ -213,10 +224,6 @@ def to_decibel(spec, trycuda=True):
     torch.Tensor
         The spectrogram matrix in decibel scale.
     """
-    if trycuda:
-        device = check_device()
-    else:
-        device = torch.device("cpu")
-
+    device = check_device()
     decibel_of = AmplitudeToDB(stype="power", top_db=60).to(device)
     return decibel_of(spec)

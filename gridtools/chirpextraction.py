@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
+"""Extract chirp parameterst.
 
-"""
-This file extracts the evolution of the instantaneous frequency and amplitude
+Extract the evolution of the instantaneous frequency and amplitude
 of chirps from a real labeled dataset. The extracted parameters can then
 be used to simulate chirps with the same characteristics.
 """
@@ -28,9 +27,8 @@ model = gaussian
 con = Console()
 
 
-def get_upper_fish(dataset):
-    """
-    Return the fish with the highest frequency.
+def get_upper_fish(dataset: Dataset) -> int:
+    """Return the fish with the highest frequency.
 
     Parameters
     ----------
@@ -48,16 +46,17 @@ def get_upper_fish(dataset):
     dataset and returns the id of the fish with the highest minimum frequency.
     """
     min_fs = []
-    track_ids = np.unique(dataset.track.idents[~np.isnan(dataset.track.idents)])
+    track_ids = np.unique(
+        dataset.track.idents[~np.isnan(dataset.track.idents)]
+    )
     for track_id in track_ids:
         f = dataset.track.freqs[dataset.track.idents == track_id]
         min_fs.append(np.min(f))
     return track_ids[np.argmax(min_fs)]
 
 
-def get_next_lower_fish(dataset, upper_fish):
-    """Return the fish that, in the frequency domain, is directly below the
-    upper fish.
+def get_next_lower_fish(dataset: Dataset, upper_fish: int) -> int:
+    """Return the fish that is directly below the upper fish.
 
     Parameters
     ----------
@@ -72,7 +71,9 @@ def get_next_lower_fish(dataset, upper_fish):
         Id of the lower fish.
     """
     min_fs = []
-    track_ids = np.unique(dataset.track.idents[~np.isnan(dataset.track.idents)])
+    track_ids = np.unique(
+        dataset.track.idents[~np.isnan(dataset.track.idents)]
+    )
     assert upper_fish in track_ids
 
     for track_id in track_ids:
@@ -81,12 +82,14 @@ def get_next_lower_fish(dataset, upper_fish):
         else:
             f = dataset.track.freqs[dataset.track.idents == track_id]
             min_fs.append(np.min(f))
+
     return track_ids[np.argmin(min_fs)]
 
 
-def get_fish_freq(dataset, time, fish_id):
-    """Get the baseline EODf as estimated by the wavetracker
-    of a fish at a given time.
+def get_fish_freq(
+    dataset: Dataset, time: float, fish_id: int
+) -> float:
+    """Get the baseline EODf of a fish at a given time.
 
     Parameters
     ----------
@@ -110,10 +113,8 @@ def get_fish_freq(dataset, time, fish_id):
     return track_freqs[track_index]
 
 
-def extract_frequency(data: "Dataset") -> np.ndarray:
-    """
-    Extracts the instantaneous frequency of the chirps of the fish with the
-    highest baseline EODf in a dataset.
+def extract_frequency(data: Dataset) -> np.ndarray:
+    """Extract frequency of the highest frequency fish.
 
     Parameters
     ----------

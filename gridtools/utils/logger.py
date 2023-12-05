@@ -1,17 +1,12 @@
-"""
-A simple logger for the gridtools package.
-"""
+"""A simple logger for the gridtools package."""
 
 import logging
 
 
-def make_logger(name: str):
-    """
-    Create a logger for the gridtools package.
-    """
-    # create logger formats for file and terminal
+def make_logger(name: str) -> logging.Logger:
+    """Create a logger for the gridtools package."""
     file_formatter = logging.Formatter(
-        "[ %(levelname)s ] ~ %(asctime)s ~ %(module)s.%(funcName)s: %(message)s"
+        "[ %(levelname)s ] ~ %(asctime)s ~ %(module)s.%(funcName)s: %(message)s" # noqa
     )
     console_formatter = logging.Formatter(
         "[ %(levelname)s ] in %(module)s.%(funcName)s: %(message)s"

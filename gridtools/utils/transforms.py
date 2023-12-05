@@ -1,8 +1,4 @@
-#!/usr/bin/env python3
-
-"""
-Some common transforms for use with time series data.
-"""
+"""Some common transforms for use with time series data."""
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
@@ -14,8 +10,9 @@ def instantaneous_frequency(
     samplerate: int,
     smoothing_window: int,
 ) -> np.ndarray:
-    """
-    Compute the instantaneous frequency of a signal that is approximately
+    """Compute the instantaneous frequency of a signal.
+
+    The signal must be approximately
     sinusoidal and symmetric around 0.
 
     Parameters
@@ -28,7 +25,6 @@ def instantaneous_frequency(
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-
     """
     # calculate instantaneous frequency with zero crossings
     roll_signal = np.roll(signal, shift=1)
@@ -55,9 +51,7 @@ def instantaneous_frequency(
     # dimensions of the input array
     old_x = np.arange(0, len(inst_freq))
     new_x = np.linspace(0, len(inst_freq), len(signal))
-    freq = np.interp(new_x, old_x, inst_freq)
-
-    return freq
+    return np.interp(new_x, old_x, inst_freq)
 
 
 def envelope(
@@ -84,6 +78,4 @@ def envelope(
 
     old_x = np.arange(0, len(env))
     new_x = np.linspace(0, len(env), len(signal))
-    env = np.interp(new_x, old_x, env)
-
-    return env
+    return np.interp(new_x, old_x, env)

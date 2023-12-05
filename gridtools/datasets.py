@@ -92,7 +92,7 @@ from rich.pretty import pprint as rpprint
 from thunderfish.dataloader import DataLoader
 from thunderfish.datawriter import write_data
 
-from .exceptions import GridDataMismatch
+from .exceptions import GridDataMismatchError
 
 # The order determines the priority of the detectors.
 chirp_detectors = ["gt", "rcnn", "cnn", "None"]
@@ -1070,7 +1070,7 @@ class WavetrackerData(BaseModel):
         """
         if not np.all(np.diff(v) > 0):
             msg = "Wavetracker times are not monotonically increasing!"
-            raise GridDataMismatch(msg)
+            raise GridDataMismatchError(msg)
         return v
 
     @model_validator(mode="after")
@@ -1093,7 +1093,7 @@ class WavetrackerData(BaseModel):
         """
         if self.times.shape[0] < len(set(self.indices)):
             msg = "Number of times is smaller than number of unique indices!"
-            raise GridDataMismatch(msg)
+            raise GridDataMismatchError(msg)
         return self
 
     @model_validator(mode="after")
@@ -1116,7 +1116,7 @@ class WavetrackerData(BaseModel):
         ]
         if len(set(lengths)) > 1:
             msg = "Wavetracker data is not of equal length!"
-            raise GridDataMismatch(msg)
+            raise GridDataMismatchError(msg)
         return self
 
     def pprint(self: Self) -> None:

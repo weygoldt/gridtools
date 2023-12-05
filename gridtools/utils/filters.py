@@ -1,6 +1,4 @@
-"""
-A collection of functions for filtering signals.
-"""
+"""A collection of functions for filtering signals."""
 
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
@@ -31,9 +29,7 @@ def bandpass_filter(
         The filtered data
     """
     sos = butter(3, (lowf, highf), "bandpass", fs=samplerate, output="sos")
-    filtered_signal = sosfiltfilt(sos, signal)
-
-    return filtered_signal
+    return sosfiltfilt(sos, signal)
 
 
 def highpass_filter(
@@ -58,9 +54,7 @@ def highpass_filter(
         The filtered data
     """
     sos = butter(2, cutoff, "highpass", fs=samplerate, output="sos")
-    filtered_signal = sosfiltfilt(sos, signal)
-
-    return filtered_signal
+    return sosfiltfilt(sos, signal)
 
 
 def lowpass_filter(
@@ -83,9 +77,7 @@ def lowpass_filter(
         The filtered data
     """
     sos = butter(2, cutoff, "lowpass", fs=samplerate, output="sos")
-    filtered_signal = sosfiltfilt(sos, signal)
-
-    return filtered_signal
+    return sosfiltfilt(sos, signal)
 
 
 def envelope(
@@ -108,6 +100,4 @@ def envelope(
         The envelope of the signal
     """
     sos = butter(2, cutoff_frequency, "lowpass", fs=samplerate, output="sos")
-    env = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
-
-    return env
+    return np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
