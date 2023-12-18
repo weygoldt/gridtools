@@ -47,7 +47,7 @@ def next_power_of_two(num: float) -> int:
     return int(2**next_pow)
 
 
-def freqres_to_nfft(freq_res: int, samplingrate: float) -> int:
+def freqres_to_nfft(freq_res: float, samplingrate: float) -> int:
     """Convert the frequency resolution to the number of FFT bins.
 
     Parameters
@@ -98,8 +98,11 @@ def overlap_to_hoplen(overlap: float, nfft: int) -> int:
     int
         The hop length on the spectrogram.
     """
-    return int(np.floor(nfft * (1 - overlap)))
 
+    overlap = int(np.floor(nfft * (1 - overlap)))
+    if overlap % 2 == 0:
+        return overlap
+    return overlap + 1
 
 def sint(num: float) -> int:
     """Convert a float to an int without rounding.
@@ -225,5 +228,7 @@ def to_decibel(spec: torch.Tensor) -> torch.Tensor:
         The spectrogram matrix in decibel scale.
     """
     device = check_device()
+    if isinstance(spec, np.ndarray):
+        spec = torch.from_numpy(spec).to(device)
     decibel_of = AmplitudeToDB(stype="power", top_db=60).to(device)
     return decibel_of(spec)
