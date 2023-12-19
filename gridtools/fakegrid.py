@@ -269,6 +269,9 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
             simulated_chirp_params = simulated_chirp_params[nchirps:]
 
             # make random chirp times at least max_chirp_dt apart
+            print(nchirps)
+            print(duration)
+            print(max_chirp_freq)
             ctimes = get_random_timestamps(
                 start_t=0,
                 stop_t=duration,
