@@ -98,7 +98,6 @@ def overlap_to_hoplen(overlap: float, nfft: int) -> int:
     int
         The hop length on the spectrogram.
     """
-
     overlap = int(np.floor(nfft * (1 - overlap)))
     if overlap % 2 == 0:
         return overlap
@@ -134,9 +133,9 @@ def specshow(
     spec: np.ndarray,
     time: np.ndarray,
     freq: np.ndarray,
-    ax,
+    ax: "matplotlib.axes.Axes",
     **kwargs: dict
-    ):
+    ) -> np.ndarray:
     """Plot a spectrogram.
 
     Parameters

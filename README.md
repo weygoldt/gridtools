@@ -1,6 +1,7 @@
 # Gridtools 
 
-A high-level API to handle the different types of data recorded with, and extracted from electrode grid recordings of wave-type weakly electric fish.
+A high-level API to handle the different types of data recorded with, and 
+extracted from electrode grid recordings of wave-type weakly electric fish.
 
 ## Installation
 
@@ -17,7 +18,9 @@ cd gridtools && pip install .
 
 `gridtools` can easily load `wavetracker` datasets including 
 position estimates, communication signals, and the raw recordings 
-into a single data model that verifies the dataset upon instantiation and automatically loads everything that is presend in the directory. The data model can be manipulated and saved to disk.
+into a single data model that verifies the dataset upon instantiation and 
+automatically loads everything that is presend in the directory. The data 
+model can be manipulated and saved to disk.
 
 As an example loading a dataset, creating a subset, and saving it to disk is as easy as:
 
@@ -76,7 +79,9 @@ Under construction.
 
 ## Contributing
 
-Contributions are welcome. To develop the package, clone the repository and install it in editable mode. Dev dependencies are managed with `poetry`. To install them, run:
+Contributions are welcome. To develop the package, clone the repository and 
+install it in editable mode. Dev dependencies are managed with `poetry`. 
+To install them, run:
 
 ```bash
 poetry install
@@ -88,7 +93,9 @@ poetry run black gridtools
 poetry run pylint gridtools
 poetry run pytest
 ```
-Only commit if all tests pass and the linter does not report any errors. To make this easier, you can install a pre-commit hook that runs the linter and the tests before every commit:
+Only commit if all tests pass and the linter does not report any errors. 
+To make this easier, you can install a pre-commit hook that runs the linter 
+and the tests before every commit:
 
 ```bash
 pre-commit install

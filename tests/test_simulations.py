@@ -2,19 +2,14 @@
 
 """Tests `simulations` module."""
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from gridtools.simulations import (
     MovementParams,
     direction_pdf,
     fold_space,
-    gaussian,
     interpolate_positions,
-    make_chirps,
-    make_grid,
     make_positions,
-    make_rises,
     make_steps,
     step_pdf,
 )
@@ -22,8 +17,8 @@ from gridtools.simulations import (
 
 def test_direction_pdf():
     """Test the function that generates a pdf for the directions of
-    a moving fish at a point in time."""
-
+    a moving fish at a point in time.
+    """
     # Happy path: Test case 1: Test with a single direction
     fs = 10000
     dirs, probs = direction_pdf(
@@ -99,7 +94,6 @@ def test_direction_pdf():
 
 def test_step_pdf():
     """Test generating gamma distributed step lengths of a moving fish."""
-
     # Happy path: Test case 1: Test with usual parameters
     max_veloc = 1  # m/s
     duration = 6000  # s
@@ -137,7 +131,6 @@ def test_step_pdf():
 
 def test_make_steps():
     """Test the generation of trajectories and steps."""
-
     # Happy path: Test case 1: Test with usual parameters
     mvm = MovementParams()
     traj, steps = make_steps(mvm)
@@ -150,7 +143,6 @@ def test_make_positions():
     """Test the generation of x and y coordinates from steps and
     trajectories.
     """
-
     mvm = MovementParams()
     t, s = make_steps(mvm)
 
@@ -179,7 +171,6 @@ def test_make_positions():
 
 def test_interpolate_positions():
     """Test the interpolation of the positions to a target frequency."""
-
     mvm = MovementParams(target_fs=20000)
     t, s = make_steps(mvm)
     x, y = make_positions(t, s, origin=(0, 0))
@@ -206,7 +197,6 @@ def test_interpolate_positions():
 
 def test_fold_space():
     """Test folding the virtual 2D space."""
-
     mvm = MovementParams()
     t, s = make_steps(mvm)
     x, y = make_positions(t, s, origin=(0, 0))

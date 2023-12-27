@@ -1,5 +1,5 @@
 """
-This module provides dataset generation functions for the testing suite 
+This module provides dataset generation functions for the testing suite
 of the gridtools package.
 """
 import shutil
@@ -18,7 +18,6 @@ def fixture_data_dir(tmp_path):
     each test. This is a pytest fixture, so it is automatically passed to
     each test function that uses it.
     """
-
     data_dir = tmp_path / "test_data"
     data_dir.mkdir()
     yield data_dir  # Provide the data directory to the test functions
@@ -32,7 +31,6 @@ def fixture_chirp_data(tmp_path):
     data is created. This is a pytest fixture, so it is automatically passed to
     each test function that uses it.
     """
-
     # Create temporary data for testing
     data_dir = tmp_path / "data"
     data_dir.mkdir()
