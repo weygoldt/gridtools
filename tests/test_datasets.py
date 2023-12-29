@@ -1,21 +1,25 @@
-"""
-Test the datasets module.
-"""
+"""Test the datasets module."""
 
 import pathlib
 import shutil
 
-from gridtools.datasets import (
+from gridtools.datasets.models import (
     CommunicationData,
     Dataset,
     GridData,
     WavetrackerData,
+)
+from gridtools.datasets.loaders import (
     load,
     load_com,
     load_grid,
     load_wavetracker,
+)
+from gridtools.datasets.savers import (
     save_com,
     save_wavetracker,
+)
+from gridtools.datasets.subsetters import (
     subset,
     subset_com,
     subset_grid,
@@ -28,7 +32,7 @@ tmppath = path / "tmp"
 datapath = path / "2020-03-16-10_00_subset"
 
 
-def clear_tmp():
+def clear_tmp() -> None:
     if tmppath.exists():
         shutil.rmtree(tmppath)
 

@@ -1,6 +1,39 @@
 """A simple logger for the gridtools package."""
 
 import logging
+from typing import Self
+from rich.console import Console
+
+import time
+from contextlib import ContextDecorator
+
+
+class Timer(ContextDecorator):
+    """A simple timer class to time the execution of a block of code."""
+
+    def __init__(self: Self, console: Console, message: str) -> None:
+        """Initialize the timer."""
+        self.console = console
+        self.message = message
+
+    def __enter__(self: Self) -> Self:
+        """Start the timer."""
+        self.start_time = time.time()
+        return self
+
+    def __exit__(
+            self: Self, exc_type: None, exc_value: None, traceback: None
+        ) -> None:
+        """Stop the timer and log the elapsed time."""
+        elapsed_time = time.time() - self.start_time
+        msg = f"[bold]Timing:[/bold] {self.message} - [bold green]Execution time:[/bold green] {elapsed_time:.4f} seconds"
+        self.console.log(msg)
+
+        if exc_type is not None:
+            self.console.log(
+                f"[bold red]Exception:[/bold red] {exc_type.__name__}: {exc_value}"
+            )
+            self.console.log(f"[bold red]Traceback:[/bold red] {traceback}")
 
 
 def make_logger(name: str) -> logging.Logger:

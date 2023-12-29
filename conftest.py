@@ -1,13 +1,14 @@
-"""
-This module provides dataset generation functions for the testing suite
-of the gridtools package.
-"""
+"""Provides dataset generation functions.
+
+For the testing suite
+of the gridtools package."""
+
 import shutil
 
 import numpy as np
 import pytest
 
-from gridtools.datasets import ChirpData
+from gridtools.datasets.models import ChirpData
 
 
 # Define a pytest fixture for creating a temporary data directory

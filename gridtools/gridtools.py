@@ -6,8 +6,8 @@ from typing import Callable
 import rich_click as click
 import toml
 
-from .datasets import pathlib, subset_cli
-from .fakegrid import fakegrid_cli, hybridgrid_cli
+from gridtools.datasets.subsetters import subset_cli
+from gridtools.simulations.fakegrid import fakegrid_cli, hybridgrid_cli
 from .utils.configfiles import copy_config
 
 click.rich_click.USE_RICH_MARKUP = True
@@ -86,7 +86,7 @@ def simulate() -> None:
 @click.option(
     "--config_path",
     "-c",
-    type=pathlib.Path,
+    type=Path,
     required=True,
     help="Path to the config file.",
 )
@@ -97,7 +97,7 @@ def simulate() -> None:
     required=True,
     help="Mode of operation.",
 )
-def copyconfig(config_path: pathlib.Path, mode: str) -> None:
+def copyconfig(config_path: Path, mode: str) -> None:
     """Copy a config file to a directory."""
     copy_config(config_path, mode)
 
@@ -106,14 +106,14 @@ def copyconfig(config_path: pathlib.Path, mode: str) -> None:
 @click.option(
     "--input_path",
     "-i",
-    type=pathlib.Path,
+    type=Path,
     required=True,
     help="Path to the input dataset.",
 )
 @click.option(
     "--output_path",
     "-o",
-    type=pathlib.Path,
+    type=Path,
     required=True,
     help="Path to the output dataset.",
 )
@@ -132,8 +132,8 @@ def copyconfig(config_path: pathlib.Path, mode: str) -> None:
     help="End time of the subset.",
 )
 def subset(
-        input_path: pathlib.Path,
-        output_path: pathlib.Path,
+        input_path: Path,
+        output_path: Path,
         start_time: float,
         end_time: float,
 ) -> None:
@@ -145,19 +145,19 @@ def subset(
 @click.option(
     "--input_path",
     "-i",
-    type=pathlib.Path,
+    type=Path,
     required=True,
     help="Path to the input dataset.",
 )
-def spec(input_path: pathlib.Path) -> None:
+def spec(input_path: Path) -> None:
     """Show a spectrogram of the dataset."""
     print(f"{input_path}")
     print("Sorry, not implemented yet.")
 
 
 @show.command()
-@click.argument("input_path", type=pathlib.Path)
-def tracks(input_path: pathlib.Path) -> None:
+@click.argument("input_path", type=Path)
+def tracks(input_path: Path) -> None:
     """Show the position estimates of the dataset."""
     print(f"{input_path}")
     print("Sorry, not implemented yet.")
@@ -168,11 +168,11 @@ def tracks(input_path: pathlib.Path) -> None:
 @click.option(
     "--output_path",
     "-o",
-    type=pathlib.Path,
+    type=Path,
     required=True,
     help="Path to the output dataset.",
 )
-def grid(output_path: pathlib.Path) -> None:
+def grid(output_path: Path) -> None:
     """Simulate a grid dataset."""
     fakegrid_cli(output_path)
 
@@ -200,9 +200,9 @@ def grid(output_path: pathlib.Path) -> None:
     help="Path to the output dataset.",
 )
 def noise(
-    input_path: pathlib.Path,
-    real_path: pathlib.Path,
-    output_path: pathlib.Path,
+    input_path: Path,
+    real_path: Path,
+    output_path: Path,
 ) -> None:
     """Add real noise to a simulated dataset."""
     hybridgrid_cli(input_path, real_path, output_path)

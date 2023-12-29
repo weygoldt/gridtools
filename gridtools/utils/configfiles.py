@@ -27,7 +27,7 @@ def copy_config(destination: pathlib.Path, configfile: str) -> None:
     if configfile == "simulations":
         configfile = configfile + ".toml"
 
-    origin = pathlib.Path(__file__).parent.parent / configfile
+    origin = pathlib.Path(__file__).parent.parent / "config" / configfile
     if not origin.exists():
         msg = (
             f"Could not find the default config file for {configfile}. "

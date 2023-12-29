@@ -3,6 +3,7 @@
 import gc
 import pathlib
 import shutil
+from joblib import Parallel, delayed
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,15 +13,17 @@ from rich.progress import track
 from scipy.signal import resample
 from thunderfish.fakefish import wavefish_eods
 
-from .datasets import (
+from gridtools.datasets.models import (
     ChirpData,
     CommunicationData,
     Dataset,
     GridData,
     WavetrackerData,
-    load,
-    save,
+    RiseData,
 )
+from gridtools.datasets.loaders import load
+from gridtools.datasets.savers import save
+
 from .simulations import (
     MovementParams,
     fold_space,
@@ -30,144 +33,16 @@ from .simulations import (
     make_positions,
     make_steps,
 )
-from .utils.configfiles import SimulationConfig, load_sim_config
-from .utils.filters import lowpass_filter
+from gridtools.utils.configfiles import SimulationConfig, load_sim_config
+from gridtools.utils.filters import lowpass_filter
+from gridtools.simulations.noise import band_limited_noise
+from gridtools.simulations.utils import get_random_timestamps
+from gridtools.utils.logger import Timer
 
 con = Console()
-model = gaussian
-
-def fftnoise(f: np.ndarray) -> np.ndarray:
-    """Generate noise with a given power spectrum.
-
-    Parameters
-    ----------
-    - `f` : `numpy.ndarray`
-        The power spectrum of the noise.
-
-    Returns
-    -------
-    - `numpy.ndarray`
-        The noise with the given power spectrum.
-    """
-    f = np.array(f, dtype="complex")
-    Np = (len(f) - 1) // 2
-    phases = np.random.rand(Np) * 2 * np.pi
-    phases = np.cos(phases) + 1j * np.sin(phases)
-    f[1 : Np + 1] *= phases
-    f[-1 : -1 - Np : -1] = np.conj(f[1 : Np + 1])
-    return np.fft.ifft(f).real
+model = gaussian # Model used for chirp generation
 
 
-def band_limited_noise(
-    min_freq: float,
-    max_freq: float,
-    samples: int = 1024,
-    samplerate: int = 1,
-    std: float = 1,
-) -> np.ndarray:
-    """Generate band limited noise.
-
-    Parameters
-    ----------
-    min_freq : float
-        The minimum frequency of the band.
-    max_freq : float
-        The maximum frequency of the band.
-    samples : int, Optional
-        The number of samples to generate. Default is 1024.
-    samplerate : int, Optional
-        The samplerate of the signal. Default is 1.
-    std : float, Optional
-        The standard deviation of the noise. Default is 1.
-
-    Returns
-    -------
-    numpy.ndarray
-        An array of band limited noise.
-    """
-    # Check for nyquist frequency
-    if max_freq >= samplerate / 2:
-        raise ValueError("max_freq must be less than samplerate / 2")
-
-    # Check for min_freq > max_freq
-    if min_freq >= max_freq:
-        raise ValueError("min_freq must be less than max_freq")
-
-    # Check for min_freq < 0
-    if (min_freq < 0) or (max_freq < 0):
-        raise ValueError("min_freq and max_freq must be greater than 0")
-
-    # Check for samples < 0
-    if samples < 0:
-        raise ValueError("samples must be greater than 0")
-
-    freqs = np.abs(np.fft.fftfreq(samples, 1 / samplerate))
-    f = np.zeros(samples)
-    idx = np.where(np.logical_and(freqs >= min_freq, freqs <= max_freq))[0]
-    f[idx] = 1
-    noise = fftnoise(f)
-
-    # shift to 0 and make std 1
-    noise = (noise - np.mean(noise)) / np.std(noise)
-    noise *= std
-
-    return noise
-
-
-def get_random_timestamps(start_t, stop_t, n_timestamps, min_dt):
-    """
-    Generate an array of random timestamps between start_t and stop_t with a minimum time difference of min_dt.
-
-    Parameters
-    ----------
-    start_t : float
-        The start time for the timestamps.
-    stop_t : float
-        The stop time for the timestamps.
-    n_timestamps : int
-        The number of timestamps to generate.
-    min_dt : float
-        The minimum time difference between timestamps.
-
-    Returns
-    -------
-    numpy.ndarray
-        An array of random timestamps between start_t and stop_t with a minimum time difference of min_dt.
-    """
-    # Check for start_t > stop_t
-    if start_t >= stop_t:
-        raise ValueError("start_t must be less than stop_t")
-
-    # Check for n_timestamps < 0
-    if n_timestamps < 0:
-        raise ValueError("n_timestamps must be greater than 0")
-
-    # Check for min_dt < 0
-    if min_dt < 0:
-        raise ValueError("min_dt must be greater than 0")
-
-    # Check if min_dt is larger than the time difference between start_t and stop_t
-    if min_dt > (stop_t - start_t):
-        raise ValueError("min_dt must be less than stop_t - start_t")
-
-    # Check if the number of timestamps is larger than possible given the minimum time difference
-    if n_timestamps > ((stop_t - start_t) / min_dt):
-        raise ValueError(
-            "n_timestamps must be less than (stop_t - start_t) / min_dt"
-        )
-
-    timestamps = np.sort(np.random.uniform(start_t, stop_t, n_timestamps))
-    while True:
-        time_diffs = np.diff(timestamps)
-        if np.all(time_diffs >= min_dt):
-            return timestamps
-        else:
-            # Resample the timestamps that don't meet the minimum time difference criteria
-            invalid_indices = np.where(time_diffs < min_dt)[0]
-            num_invalid = len(invalid_indices)
-            new_timestamps = np.random.uniform(start_t, stop_t, num_invalid)
-            timestamps[invalid_indices] = new_timestamps
-            timestamps.sort()
 
 
 def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
@@ -229,6 +104,9 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
     nelectrodes = len(np.ravel(gridx))
     boundaries = config.grid.boundaries
 
+    msg = f"Simulating {ngrids} grids with {nelectrodes} electrodes each ..."
+    con.log(msg)
+
     for griditer in range(ngrids):
         nfish = np.random.randint(1, 5)
 
@@ -240,6 +118,10 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
         track_powers = []
         track_idents = []
         track_indices = []
+        xpos_orig = []
+        ypos_orig = []
+        xpos_fine = []
+        ypos_fine = []
         xpos = []
         ypos = []
 
@@ -249,11 +131,13 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
         detector = "gt"
 
         fishiter = 0
-        for fishiter in track(
-            range(nfish),
-            description=f"Grid {griditer + 1} of {ngrids}",
-            total=nfish,
-        ):
+
+        msg = f"Grid {griditer + 1}: Simulating {nfish} fish ..."
+        con.log(msg)
+
+        signal = None
+
+        for fishiter in range(nfish):
             eodf = eodfs[fishiter]
 
             # simulate chirps
@@ -269,74 +153,76 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
             simulated_chirp_params = simulated_chirp_params[nchirps:]
 
             # make random chirp times at least max_chirp_dt apart
-            print(nchirps)
-            print(duration)
-            print(max_chirp_freq)
-            ctimes = get_random_timestamps(
-                start_t=0,
-                stop_t=duration,
-                n_timestamps=nchirps,
-                min_dt=min_chirp_dt,
-            )
+            with Timer(con, "Generating chirp times"):
+                ctimes = get_random_timestamps(
+                    start_t=0,
+                    stop_t=duration,
+                    n_timestamps=nchirps,
+                    min_dt=min_chirp_dt,
+                )
 
             # make chirps with the extracted parameters at these times
             ftrace = np.zeros(int(duration * samplerate))
             contrasts = np.random.uniform(0, max_chirp_contrast, size=nchirps)
             amtrace = np.ones_like(ftrace)
             time = np.arange(len(ftrace)) / samplerate
-            for i, ctime in enumerate(ctimes):
-                ftrace += model(
-                    time,
-                    ctime,
-                    *cp[i, 1:],
-                )
-                amtrace += model(
-                    time,
-                    ctime,
-                    -contrasts[i],
-                    *cp[i, 2:],
-                )
+
+            with Timer(con, f"Simulating {nchirps} chirps"):
+                for i, ctime in enumerate(ctimes):
+                    ftrace += model(
+                        time,
+                        ctime,
+                        *cp[i, 1:],
+                    )
+                    amtrace += model(
+                        time,
+                        ctime,
+                        -contrasts[i],
+                        *cp[i, 2:],
+                    )
 
             # make chirps particularly noisy
             # to do this make noise and multiply it with the chirp
-            chirpnoise = (
-                band_limited_noise(
-                    chirpnoise_band[0],
-                    chirpnoise_band[1],
+            with Timer(con, "Adding noise to frequency trace"):
+                chirpnoise = (
+                    band_limited_noise(
+                        chirpnoise_band[0],
+                        chirpnoise_band[1],
+                        len(ftrace),
+                        samplerate,
+                        1,
+                    )
+                    * ftrace
+                )
+                # now scale it back down because chirps are too strong
+                chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(chirpnoise)
+                chirpnoise *= chirpnoise_std
+
+                # add the noise to the frequency trace
+                ftrace += chirpnoise
+
+                # add band limited noise to the frequency trace
+                ftrace += band_limited_noise(
+                    eodfnoise_band[0],
+                    eodfnoise_band[1],
                     len(ftrace),
                     samplerate,
-                    1,
-                )
-                * ftrace
-            )
-            # now scale it back down because chirps are too strong
-            chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(chirpnoise)
-            chirpnoise *= chirpnoise_std
+                    eodfnoise_std,
+                )  # EOD fluctuations
 
-            # add the noise to the frequency trace
-            ftrace += chirpnoise
-
-            # add band limited noise to the frequency trace
-            ftrace += band_limited_noise(
-                eodfnoise_band[0],
-                eodfnoise_band[1],
-                len(ftrace),
-                samplerate,
-                eodfnoise_std,
-            )  # EOD fluctuations
-
-            # shift the freq trace to the eodf
-            ftrace += eodf
+                # shift the freq trace to the eodf
+                ftrace += eodf
 
             # make an eod from the frequency trace
-            eod = wavefish_eods(
-                fish="Alepto",
-                frequency=ftrace,
-                samplerate=samplerate,
-                duration=duration,
-                phase0=0,
-                noise_std=noise_std,
-            )
+            with Timer(con, "Simulating EOD"):
+                eod = wavefish_eods(
+                    fish="Alepto",
+                    frequency=ftrace,
+                    samplerate=samplerate,
+                    duration=duration,
+                    phase0=0,
+                    noise_std=noise_std,
+                )
 
             # modulate the eod with the amplitude trace
             eod *= amtrace
@@ -347,66 +233,97 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
                 np.random.uniform(boundaries[0], boundaries[1]),
                 np.random.uniform(boundaries[2], boundaries[3]),
             )
+            # check if duration and samplerate can make int number of samples
+            if (duration * samplerate) % 1 != 0:
+                msg = (
+                    "Duration and samplerate must make an integer number of samples"
+                    "Please modify the parameters in the config file so"
+                    "that the movement target fs multiplied by the duration"
+                    "is an integer."
+                )
+                raise ValueError(msg)
+            duration = int(duration)
+            samplerate = int(samplerate)
             mvm = MovementParams(
                 duration=duration,
                 origin=origin,
                 boundaries=boundaries,
                 target_fs=samplerate,
             )
-            trajectories, steps = make_steps(mvm)
-            x, y = make_positions(trajectories, steps, mvm)
-            x, y = fold_space(x, y, boundaries)
-            x, y = interpolate_positions(
-                x, y, duration, mvm.measurement_fs, mvm.target_fs
-            )
 
-            # compute the distance at every position to every electrode
-            dists = np.sqrt(
-                (x[:, None] - gridx[None, :]) ** 2
-                + (y[:, None] - gridy[None, :]) ** 2
-            )
+            with Timer(con, "Simulating positions"):
+                origx = np.random.uniform(boundaries[0], boundaries[1])
+                origy = np.random.uniform(boundaries[2], boundaries[3])
+                con.log(f"Random origin: {origx}, {origy}")
+                trajectories, steps = make_steps(mvm)
+                x, y = make_positions(trajectories, steps, (origx, origy))
 
-            # make the distance sqared and invert it
-            dists = -(dists**2)
+            con.log(f"Max x: {np.max(x)}")
+            con.log(f"Min x: {np.min(x)}")
+            con.log(f"Max y: {np.max(y)}")
+            con.log(f"Min y: {np.min(y)}")
+            con.log(f"Bounaries: {boundaries}")
+            con.log(f"Grid xmin and xmax: {np.min(gridx)} {np.max(gridx)}")
+            con.log(f"Grid ymin and ymax: {np.min(gridy)} {np.max(gridy)}")
 
-            # normalize the distances between 0 and 1
-            dists = (dists - np.min(dists)) / (np.max(dists) - np.min(dists))
+            with Timer(con, "Folding space"):
+                boundaries = np.array(boundaries)
+                x_orig, y_orig = fold_space(x, y, boundaries)
 
-            # add the fish signal onto all electrodes
-            grid_signals = np.tile(eod, (nelectrodes, 1)).T
+            with Timer(con, "Interpolating positions"):
+                x_fine, y_fine = interpolate_positions(
+                    x_orig, y_orig, duration, mvm.measurement_fs, mvm.target_fs
+                )
 
-            # attentuate the signals by the squared distances
-            attenuated_signals = grid_signals * dists
+            with Timer(con, "Attenuating signals with distance to electrodes"):
+                # compute the distance at every position to every electrode
+                dists = np.sqrt(
+                    (x_fine[:, None] - gridx[None, :]) ** 2
+                    + (y_fine[:, None] - gridy[None, :]) ** 2
+                )
+
+                # make the distance sqared and invert it
+                dists = -(dists**2)
+
+                # normalize the distances between 0 and 1
+                dists = (dists - np.min(dists)) / (np.max(dists) - np.min(dists))
+
+                # add the fish signal onto all electrodes
+                grid_signals = np.tile(eod, (nelectrodes, 1)).T
+
+                # attentuate the signals by the squared distances
+                attenuated_signals = grid_signals * dists
 
             # collect signals
-            signal = None
+            # signal = None
             if fishiter == 0:
                 signal = attenuated_signals
             else:
                 signal += attenuated_signals
 
-            # downsample the tracking arrays
-            num = int(
-                np.round(wavetracker_samplingrate / samplerate * len(ftrace))
-            )
-            f = resample(np.ones_like(ftrace) * eodf, num)
-            p = resample(dists, num, axis=0)
-            x = resample(x, num)
-            y = resample(y, num)
+            with Timer(con, "Downsampling signals"):
+                # downsample the tracking arrays
+                num = int(
+                    np.round(wavetracker_samplingrate / samplerate * len(ftrace))
+                )
+                f = resample(np.ones_like(ftrace) * eodf, num)
+                p = resample(dists, num, axis=0)
+                x = resample(x_orig, num)
+                y = resample(y_orig, num)
 
-            # filter to remove resampling artifacts, particularly when there
-            # are rises
-            f = lowpass_filter(f, downsample_lowpass, wavetracker_samplingrate)
-            f[f < eodf] = eodf  # for filter oscillations
-            p = np.vstack(
-                [
-                    lowpass_filter(
-                        pi, downsample_lowpass, wavetracker_samplingrate
-                    )
-                    for pi in p.T
-                ]
-            ).T
-            p[p < 0] = 0
+                # filter to remove resampling artifacts, particularly when there
+                # are rises
+                f = lowpass_filter(f, downsample_lowpass, wavetracker_samplingrate)
+                f[f < eodf] = eodf  # for filter oscillations
+                p = np.vstack(
+                    [
+                        lowpass_filter(
+                            pi, downsample_lowpass, wavetracker_samplingrate
+                        )
+                        for pi in p.T
+                    ]
+                ).T
+                p[p < 0] = 0
 
             track_freqs.append(f)
             track_powers.append(p)
@@ -414,30 +331,36 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
             track_indices.append(np.arange(len(f)))
             xpos.append(x)
             ypos.append(y)
+            xpos_orig.append(x_orig)
+            ypos_orig.append(y_orig)
+            xpos_fine.append(x_fine)
+            ypos_fine.append(y_fine)
 
             chirp_times.append(ctimes)
             chirp_idents.append(np.ones_like(ctimes) * fishiter)
             chirp_params.append(cp)
 
+            msg = f"Grid {griditer}: Simulated {fishiter + 1} fish"
+            con.log(msg)
+
             if stop:
                 break
         if stop:
-            con.log(
-                f"Grid {griditer}: Stopped after {fishiter} fish, no more chirps left"
-            )
+            msg = f"Grid {griditer}: Stopped after {fishiter} fish, no more chirps left"
+            con.log(msg)
             break
 
-        track_freqs = np.concatenate(track_freqs)
-        track_powers = np.concatenate(track_powers)
-        track_idents = np.concatenate(track_idents)
-        track_indices = np.concatenate(track_indices)
-        xpos = np.concatenate(xpos)
-        ypos = np.concatenate(ypos)
-        track_times = np.arange(len(track_freqs)) / wavetracker_samplingrate
-
-        chirp_times = np.concatenate(chirp_times)
-        chirp_idents = np.concatenate(chirp_idents)
-        chirp_params = np.concatenate(chirp_params)
+        with Timer(con, "Concatenating arrays"):
+            track_freqs = np.concatenate(track_freqs)
+            track_powers = np.concatenate(track_powers)
+            track_idents = np.concatenate(track_idents)
+            track_indices = np.concatenate(track_indices)
+            xpos = np.concatenate(xpos)
+            ypos = np.concatenate(ypos)
+            track_times = np.arange(len(track_freqs)) / wavetracker_samplingrate
+            chirp_times = np.concatenate(chirp_times)
+            chirp_idents = np.concatenate(chirp_idents)
+            chirp_params = np.concatenate(chirp_params)
 
         # norm the signal between -1 and 1
         signal = (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
@@ -451,6 +374,7 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
             times=track_times,
             xpos=xpos,
             ypos=ypos,
+            has_positions=True,
         )
 
         chps = ChirpData(
@@ -458,13 +382,29 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
             idents=chirp_idents,
             params=chirp_params,
             detector=detector,
+            are_detected=True,
+            have_params=True,
         )
 
-        com = CommunicationData(chirp=chps)
+        rs = RiseData(
+            times=np.array([]),
+            idents=np.array([]),
+            params=np.array([]),
+            detector="None",
+            are_detected=False,
+            have_params=False,
+        )
+
+        com = CommunicationData(
+            chirp=chps,
+            rise=rs,
+            are_detected=True,
+        )
 
         grid = GridData(
             rec=signal,
             samplerate=samplerate,
+            shape=signal.shape,
         )
 
         path = pathlib.Path(f"{output_path}/simulated_grid_{griditer:03d}")
@@ -482,7 +422,7 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
 
         # plot dataset
         _, ax = plt.subplots(1, 2, figsize=(15, 7.5), constrained_layout=True)
-        for fish_id in np.unique(data.track.ids):
+        for idx, fish_id in enumerate(np.unique(data.track.ids)):
             ax[0].plot(
                 data.track.times[
                     data.track.indices[data.track.idents == fish_id]
@@ -494,18 +434,45 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
                 data.track.xpos[data.track.idents == fish_id],
                 data.track.ypos[data.track.idents == fish_id],
             )
+            ax[1].plot(
+                xpos_orig[idx],
+                ypos_orig[idx],
+                color="black",
+                linestyle="dashed",
+                linewidth=1,
+                alpha=0.5,
+                label="Original",
+            )
+            ax[1].plot(
+                xpos_fine[idx],
+                ypos_fine[idx],
+                color="black",
+                linestyle="dotted",
+                linewidth=1,
+                alpha=0.5,
+                label="Interpolated",
+            )
+
+        ax[1].scatter(
+            gridx,
+            gridy,
+            color="black",
+            marker="o",
+            label="Electrodes",
+        )
 
         ax[0].set_ylim(300, 2000)
         ax[0].set_title("Frequency")
         ax[0].set_xlabel("Time (s)")
         ax[0].set_ylabel("Frequency (Hz)")
         ax[0].legend()
-        ax[1].set_xlim(boundaries[0], boundaries[1])
-        ax[1].set_ylim(boundaries[2], boundaries[3])
+        ax[1].set_xlim(boundaries[0], boundaries[2])
+        ax[1].set_ylim(boundaries[1], boundaries[3])
         ax[1].set_title("Position")
         ax[1].set_xlabel("x (m)")
         ax[1].set_ylabel("y (m)")
         plt.savefig(path / "overview.png")
+        plt.show()
 
 
 def augment_grid(sd: Dataset, rd: Dataset) -> Dataset:
@@ -653,10 +620,15 @@ def hybridgrid(
         fake_dataset = load(fake_dataset, grid=True)
         real_dataset = load(np.random.choice(real_datasets), grid=True)
         augmented_fake_dataset = augment_grid(fake_dataset, real_dataset)
+
+        # I use a while loop to grab random snippets from random real datasets
+        # until I find one that has a long enough chirpless window
         while augmented_fake_dataset is None:
             real_dataset = load(np.random.choice(real_datasets), grid=True)
             augmented_fake_dataset = augment_grid(fake_dataset, real_dataset)
-            print("No valid snippet found, trying again...")
+
+            msg = "No valid snippet found, trying again..."
+            con.log(msg)
 
             del real_dataset
 
@@ -665,7 +637,6 @@ def hybridgrid(
         del fake_dataset
         del real_dataset
         del augmented_fake_dataset
-
         gc.collect()
 
 

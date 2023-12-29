@@ -4,6 +4,8 @@ gridtools_old
 *.log
 wavetracker
 *.temp
+*.trash
+.trash/*
 
 ### LaTeX ###
 ## Core latex/pdflatex auxiliary files:

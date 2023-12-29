@@ -1,6 +1,7 @@
 """Functions for making subsets of grid datasets."""
 
 from typing import Union
+import pathlib
 
 import numpy as np
 
@@ -12,6 +13,8 @@ from gridtools.datasets.models import (
     RiseData,
     WavetrackerData,
 )
+from gridtools.datasets.loaders import load
+from gridtools.datasets.savers import save
 
 def subset_wavetracker(
     wt: WavetrackerData,
@@ -386,3 +389,34 @@ def subset(
     )
 
     return Dataset(path=new_path, grid=raw_sub, track=wt_sub, com=com_sub)
+
+
+def subset_cli(
+    input_path: pathlib.Path,
+    output_path: pathlib.Path,
+    start_time: float,
+    end_time: float,
+) -> None:
+    """Subset a dataset to a given time range.
+
+    Parameters are passed via the command line.
+
+    Parameters
+    ----------
+    input_path : pathlib.Path
+        Path to the dataset to be subsetted.
+    output_path : pathlib.Path
+        Path to the directory where the subsetted dataset should be saved.
+    start_time : float
+        Start time of the subset in seconds.
+    end_time : float
+        Stop time of the subset in seconds.
+
+    Returns
+    -------
+    None
+    """
+    ds = load(input_path)
+    ds_sub = subset(ds, start_time, end_time)
+    print(f"Saving dataset to {output_path}")
+    save(ds_sub, output_path)

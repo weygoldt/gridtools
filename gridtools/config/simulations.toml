@@ -17,7 +17,7 @@ origin = [0, 0] # origin of the grid, whhen (0,0) then coordinates are relative 
 shape = [2, 2] # shape of the grid (nrows, ncols)
 spacing = 0.5 # in meters, distance between grid points
 style = "square" # grid units can be square or hex
-boundaries = [-2, 2, -2, 2] # in meters, boundaries of the simualted world (x1,y1,x2,y2)
+boundaries = [-2, -2, 2, 2] # in meters, boundaries of the simualted world (x1,y1,x2,y2)
 downsample_lowpass = 10 # in Hz, lowpass filter to apply after downsampling the wavetracker output
 
 [fish]

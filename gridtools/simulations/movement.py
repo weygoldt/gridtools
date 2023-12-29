@@ -1,27 +1,24 @@
-"""
-Simulations to generate electrode grids and simulate fish movement
-and electric organ discharge (EOD) waveforms, including chirps and rises.
-Most of the code concerning EOD generation is just slightly modified from
-the original code by Jan Benda et al. in the thunderfish package. The original
-code can be found here: https://github.com/janscience/thunderfish
-"""
+"""Simulate movement of fish."""
 
-from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import Tuple
+from dataclasses import dataclass
 
-import matplotlib.pyplot as plt
 import numpy as np
+from numba import jit
 from scipy.interpolate import interp1d
 from scipy.stats import gamma, norm
+from rich.console import Console
+import matplotlib.pyplot as plt
 
-np.random.seed(42)
+from gridtools.utils.logger import Timer
+
+
+con = Console()
 
 
 @dataclass
 class MovementParams:
-    """
-    All parameters for simulating the movement of a fish.
-    """
+    """All parameters for simulating the movement of a fish."""
 
     duration: float = 30
     origin: Tuple[float, float] = (0, 0)
@@ -33,42 +30,6 @@ class MovementParams:
     max_veloc: float = 1
     measurement_fs: float = 30
     target_fs: int = 30
-
-
-@dataclass
-class ChirpParams:
-    """
-    All parameters for simulating the frequency trace of chirps.
-    """
-
-    eodf: float = 0
-    samplerate: float = 44100.0
-    duration: float = 0.2
-    chirp_times: List[float] = field(default_factory=lambda: np.array([0.1]))
-    chirp_sizes: List[float] = field(default_factory=lambda: np.array([100.0]))
-    chirp_widths: List[float] = field(default_factory=lambda: np.array([0.01]))
-    chirp_undershoots: List[float] = field(
-        default_factory=lambda: np.array([0.1])
-    )
-    chirp_kurtosis: List[float] = field(default_factory=lambda: np.array([1.0]))
-    chirp_contrasts: List[float] = field(
-        default_factory=lambda: np.array([0.05])
-    )
-
-
-@dataclass
-class RiseParams:
-    """
-    All parameters for simulating the frequency trace of rises.
-    """
-
-    eodf: float = 0
-    samplerate: float = 44100.0
-    duration: float = 5.0
-    rise_times: List[float] = field(default_factory=lambda: np.array([0.5]))
-    rise_sizes: List[float] = field(default_factory=lambda: np.array([80.0]))
-    rise_taus: List[float] = field(default_factory=lambda: np.array([0.01]))
-    decay_taus: List[float] = field(default_factory=lambda: np.array([0.1]))
 
 
 def direction_pdf(
@@ -119,9 +80,11 @@ def direction_pdf(
     return directions, probabilities
 
 
-def step_pdf(max_veloc: float, duration: int, target_fs: int = 3) -> np.ndarray:
-    """
-    Generate a sequence of steps representing the steps of a random walker.
+def step_pdf(
+        max_veloc: float, duration: int, target_fs: int = 30
+    ) -> np.ndarray:
+    """Generate a distribution of steps lengths of a random walker.
+
     Step lengths are drawn from a gamma distribution.
 
     Parameters
@@ -160,7 +123,8 @@ def step_pdf(max_veloc: float, duration: int, target_fs: int = 3) -> np.ndarray:
 
 
 def make_steps(params: MovementParams):
-    """
+    """Simulate a random walked based on step distance and trajectory.
+
     Makes steps (distance) and directions (trajectories) of a random walker
     in a 2D space.
 
@@ -211,7 +175,8 @@ def make_positions(
     steps: np.ndarray,
     origin: Tuple[float, float],
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
+    """Convert sequences of step lengths and trajectories to positions.
+
     Simulates a random walk with a given set of trajectories and step sizes.
     Given an origin position, boundaries, a set of trajectories, and a set of
     step sizes, this function computes the final x and y positions of the
@@ -314,9 +279,10 @@ def interpolate_positions(
     return x, y
 
 
+@jit(nopython=True, parallel=True)
 def fold_space(
-    x: np.ndarray, y: np.ndarray, boundaries: Tuple[float, float, float, float]
-):
+    x: np.ndarray, y: np.ndarray, boundaries: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
     """Fold back positions that are outside the boundaries.
 
     This function folds the space in which x and y are defined back to the
@@ -352,9 +318,11 @@ def fold_space(
         or maxx > boundaries[2] * limit
         or maxy > boundaries[3] * limit
     ):
-        raise ValueError(
-            "The boundaries are too narrow. This might take a while."
+        msg = (
+            "The boundaries are very narrow. "
+            "This might take a while to compute."
         )
+        raise ValueError(msg)
 
     # fold back the positions if they are outside the boundaries
     boundaries = np.ravel(boundaries)
@@ -380,149 +348,15 @@ def fold_space(
     return x, y
 
 
-def gaussian(
-    x: np.ndarray, mu: float, height: float, width: float, kurt: float
-) -> np.ndarray:
-    """
-    Compute the value of a Gaussian function at the given points.
-
-    Parameters
-    ----------
-    x : np.ndarray
-        The points at which to evaluate the Gaussian function.
-    mu : float
-        The mean of the Gaussian function.
-    height : float
-        The height of the Gaussian function.
-    width : float
-        The width of the Gaussian function.
-    kurt : float
-        The kurtosis of the Gaussian function.
-
-    Returns
-    -------
-    np.ndarray
-        The value of the Gaussian function at the given points.
-    """
-    sigma = 0.5 * width / (2.0 * np.log(10.0)) ** (0.5 / kurt)
-    curve = height * np.exp(-0.5 * (((x - mu) / sigma) ** 2.0) ** kurt)
-
-    return curve
-
-
-def make_chirps(params: ChirpParams) -> tuple[np.ndarray, np.ndarray]:
-    """Simulate frequency trace with chirps. Original code by Jan Benda et al.
-
-    I just added an undershoot parameter to the chirp model.
-
-    A chirp is modeled as a combination of 2 Gaussians. This model is used to
-    easily simulate chirps "by hand". The first Gaussian is
-    centered at the chirp time and has a width of chirp_width. The second Gaussian
-    is centered at chirp_time + chirp_width / 2 and has the same width but a
-    smaller amlitude determined by chirp_undershoot, which is a factor that
-    is multiplied with the amplitude of the first Gaussian.
-
-    The result is a classical Type II chirp with a small undershoot.
-
-    Parameters
-    ----------
-    params : ChirpParams
-        Parameters for simulating the frequency trace with chirps.
-
-    Returns
-    -------
-    frequency : np.ndarray
-        Generated frequency trace that can be passed on to wavefish_eods().
-    amplitude : np.ndarray
-        Generated amplitude modulation that can be used to multiply the trace
-        generated by wavefish_eods().
-    """
-    n = int(params.duration * params.samplerate)
-    frequency = params.eodf * np.ones(n)
-    amplitude = np.ones(n)
-
-    for time, width, undershoot, size, kurtosis, contrast in zip(
-        params.chirp_times,
-        params.chirp_widths,
-        params.chirp_undershoots,
-        params.chirp_sizes,
-        params.chirp_kurtosis,
-        params.chirp_contrasts,
-    ):
-        chirp_t = np.arange(-3.0 * width, 3.0 * width, 1.0 / params.samplerate)
-        g1 = gaussian(chirp_t, mu=0, height=size, width=width, kurt=kurtosis)
-        g2 = gaussian(
-            chirp_t, mu=width / 2, height=size * undershoot, width=width, kurt=1
-        )
-        gauss = g1 - g2
-
-        index = int(time * params.samplerate)
-        i0 = index - len(gauss) // 2
-        i1 = i0 + len(gauss)
-        gi0 = 0
-        gi1 = len(gauss)
-        if i0 < 0:
-            gi0 -= i0
-            i0 = 0
-        if i1 >= len(frequency):
-            gi1 -= i1 - len(frequency)
-            i1 = len(frequency)
-        frequency[i0:i1] += gauss[gi0:gi1]
-        amplitude[i0:i1] -= contrast * gauss[gi0:gi1] / size
-
-    return frequency, amplitude
-
-
-def make_rises(params: RiseParams) -> np.ndarray:
-    """
-    Simulate frequency trace with rises. Original code by Jan Benda et al.
-
-    A rise is modeled as a double exponential frequency modulation.
-
-    Parameters
-    ----------
-    params : RisesParams
-        A dataclass containing the parameters for simulating the frequency trace
-        with rises.
-
-    Returns
-    -------
-    numpy.ndarray
-        Generate frequency trace that can be passed on to wavefish_eods().
-    """
-    n = int(params.duration * params.samplerate)
-
-    # baseline eod frequency:
-    frequency = params.eodf * np.ones(n)
-
-    for time, size, riset, decayt in zip(
-        params.rise_times,
-        params.rise_sizes,
-        params.rise_taus,
-        params.decay_taus,
-    ):
-        # rise frequency waveform:
-        rise_t = np.arange(0.0, 10.0 * decayt, 1.0 / params.samplerate)
-        rise = size * (1.0 - np.exp(-rise_t / riset)) * np.exp(-rise_t / decayt)
-
-        # add rises on baseline eodf:
-        index = int(time * params.samplerate)
-        if index + len(rise) > len(frequency):
-            rise_index = len(frequency) - index
-            frequency[index : index + rise_index] += rise[:rise_index]
-            break
-        else:
-            frequency[index : index + len(rise)] += rise
-    return frequency
-
-
 def make_grid(
     origin: Tuple[float, float],
     shape: Tuple[int, int],
     spacing: float,
-    style="hex",
+    style: str = "hex",
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Simulate a grid of electrodes as points in space, each point consisting of
+    """Make x and y coordinates for a grid of electrodes.
+
+    Simulate a grid of electrodes as points in space, each point consisting of
     an x and a y coordinate.
 
     The grid can be either be hexagonal or square. In a hexagonal grid, the
@@ -546,7 +380,7 @@ def make_grid(
 
     Returns
     -------
-    np.ndarray
+    Tuple[np.ndarray, np.ndarray]
         x coordinates of the electrodes and y coordinates of the electrodes.
     """
     assert style in ["hex", "square"], "type must be 'hex' or 'square'"
@@ -564,21 +398,23 @@ def make_grid(
     # center the grid around the origin
     x -= origin[0]
     y -= origin[1]
+    grid = np.dstack([x, y])
+    grid = grid.reshape(-1, 2).T
+    xcoords = grid[0]
+    ycoords = grid[1]
 
-    return np.dstack([x, y])
+    return xcoords, ycoords
 
 
-def movement_demo():
-    """
-    Plot some simulations of moving fish.
-    """
+def movement_demo() -> None:
+    """Plot some simulations of moving fish."""
     n_fish = 3
     fig, ax = plt.subplots(constrained_layout=True)
     params = MovementParams()
 
     for _ in range(n_fish):
         trajectories, s = make_steps(params)
-        x, y = make_positions(trajectories, s, params)
+        x, y = make_positions(trajectories, s, params.origin)
         ax.plot(x, y, marker=".")
 
     ax.set_xlim(-5, 5)
@@ -588,58 +424,35 @@ def movement_demo():
     plt.show()
 
 
-def communication_demo():
-    """
-    Demo of chirp and rise simulations.
-    """
-    cp = ChirpParams()
-    rp = RiseParams()
-    cf, ca = make_chirps(cp)
-    rf = make_rises(rp)
+def grid_demo() -> None:
+    """Plot some simulations of electrode grid arrangements."""
+    ngrids = 4
+    styles = ["square", "hex", "square", "hex"]
+    origins = np.array([(0, 0), (0, 0), (0, 0), (0, 0)])
+    shapes = np.array([(6, 6), (6, 6), (16, 16), (16, 16)])
+    spacings = np.array([1.2, 1.2, 0.5, 0.5])
+    grids = []
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, constrained_layout=True)
-    ax1.plot(cf)
-    ax1.set_title("Frequency trace of chirp")
-    ax2.plot(ca)
-    ax2.set_title("Amplitude modulation of chirp")
-    ax3.plot(rf)
-    ax3.set_title("Frequency trace of rise")
-    fig.suptitle("Chirp and rise simulations")
-    plt.show()
+    for i in range(ngrids):
+        grids.append(make_grid(origins[i], shapes[i], spacings[i], styles[i]))
 
+    fig, ax = plt.subplots(1, ngrids, constrained_layout=True)
+    for i in range(ngrids):
+        ax[i].scatter(grids[i][0], grids[i][1])
+        ax[i].set_title(f"{styles[i]} grid")
+        ax[i].set_xlim(-5, 5)
+        ax[i].set_ylim(-5, 5)
+        ax[i].set_aspect("equal")
 
-def grid_demo():
-    """
-    Plot some simulations of electrode grid arrangements.
-    """
-    grid1 = make_grid((0, 0), (6, 6), 1.2, style="square")
-    grid2 = make_grid((0, 0), (6, 6), 1.2, style="hex")
-    grid4 = make_grid((0, 0), (16, 16), 0.5, style="square")
-    grid3 = make_grid((0, 0), (16, 16), 0.5, style="hex")
-
-    fig, ax = plt.subplots(2, 2, constrained_layout=True)
-    ax[0, 0].scatter(grid1[0], grid1[1], marker=".")
-    ax[1, 0].scatter(grid2[0], grid2[1], marker=".")
-    ax[1, 1].scatter(grid3[0], grid3[1], marker=".")
-    ax[0, 1].scatter(grid4[0], grid4[1], marker=".")
-
+    maxdim = np.max([np.max(spacings * shape) for shape in shapes.T])
     for a in ax.ravel():
-        a.set_xlim(-5, 5)
-        a.set_ylim(-5, 5)
+        a.set_xlim(np.min(origins[:, 0]) - 1, maxdim + 1)
+        a.set_ylim(np.min(origins[:, 1]) - 1, maxdim + 1)
         a.set_aspect("equal")
     fig.suptitle("Electrode grid arrangements")
-
     plt.show()
-
-
-def main():
-    """
-    Show some demos.
-    """
-    movement_demo()
-    communication_demo()
-    grid_demo()
 
 
 if __name__ == "__main__":
-    main()
+    movement_demo()
+    grid_demo()
