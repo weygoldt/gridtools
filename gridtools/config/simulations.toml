@@ -17,21 +17,21 @@ origin = [0, 0] # origin of the grid
 shape = [4, 4] # shape of the grid (nrows, ncols)
 spacing = 0.5 # in meters, distance between grid points
 style = "square" # grid units can be square or hex
-boundaries = [-0.5, -0.5, 2.5, 2.5] # in meters, boundaries of the simualted world (x1,y1,x2,y2)
-downsample_lowpass = 10 # in Hz, lowpass filter to apply after downsampling the wavetracker output
+boundaries = [-0.5, -0.5, 2.0, 2.0] # in meters, boundaries of the simualted world (x1,y1,x2,y2)
+downsample_lowpass = 8 # in Hz, lowpass filter to apply after downsampling the wavetracker output
 
 [fish]
 nfish = [1,5] # min and max number of fish per recording
 eodfrange = [300, 1600] # in Hz, range of EOD frequencies
 noise_std = 0.01 # std of random noise added to the EOD waveform
 eodfnoise_std = 5 # std of limited band noise added to the EOD frequency trace
-eodfnoise_band = [0.0, 0.05] # band of the limited band noise added to the EOD frequency trace
+eodfnoise_band = [0.0, 0.01] # band of the limited band noise added to the EOD frequency trace
 min_delta_eodf = 20 # minimal frequency difference between 2 fish
 
 [chirps]
 model = "monophasic"
-min_chirp_dt = 0.1 # in seconds, minimum time between two chirps
-max_chirp_freq = 2 # in Hz, maximum chirp frequency
+min_chirp_dt = 0.2 # in seconds, minimum time between two chirps
+max_chirp_freq = 1 # in Hz, maximum chirp frequency
 max_chirp_contrast = 0.5 # maximum contrast of the chirp envelope drop
 chirpnoise_std = 1 # std of limited band noise added to the chirp frequency trace 
 chirpnoise_band = [0,100] # band of the limited band noise added to the chirp frequency trace

@@ -30,14 +30,14 @@ class Timer(ContextDecorator):
         """Stop the timer and log the elapsed time."""
         elapsed_time = time.time() - self.start_time
         msg = (
-            f"[bold green]Execution time:[/bold green] {elapsed_time:.4f} s:"
-            f"{self.message}"
+            f"[bold green]Execution time :[/bold green] {elapsed_time:.4f} s :"
+            f" {self.message}"
         )
         if self.verbosity > 0:
             self.console.log(msg)
 
         if exc_type is not None:
-            msg = ( 
+            msg = (
                 f"[bold red]Exception:[/bold red] "
                 f"{exc_type.__name__}: {exc_value}"
             )

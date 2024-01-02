@@ -7,13 +7,13 @@ from typing import Self, Callable, List
 
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.random import f
 import pandas as pd
 from rich.console import Console
 from rich.progress import track
-from scipy.signal import resample
+from scipy.signal import resample, decimate
 from thunderfish.fakefish import wavefish_eods
 from pydantic import BaseModel
+from scipy.ndimage import minimum_filter1d
 
 from gridtools.datasets.loaders import load
 from gridtools.datasets.models import (
@@ -27,7 +27,7 @@ from gridtools.datasets.models import (
 from gridtools.datasets.savers import save
 from gridtools.simulations.noise import band_limited_noise
 from gridtools.simulations.utils import get_random_timestamps
-from gridtools.simulations.visualizations import plot_positions
+from gridtools.simulations.visualizations import plot_positions, plot_freq_tracks
 from gridtools.utils.configfiles import SimulationConfig, load_sim_config
 from gridtools.utils.filters import lowpass_filter
 from gridtools.utils.logger import Timer
@@ -71,7 +71,6 @@ class GridSimulator:
         rng.shuffle(self.chirp_params)
 
         msg = (
-            f"Initialized simulator with {self.config.meta.ngrids} grids"
             f"with {self.nelectrodes} electrodes each ..."
         )
         con.log(msg)
@@ -81,14 +80,8 @@ class GridSimulator:
     def chirp_model(self: Self) -> Callable:
         """Select the chirp model specified in the config file."""
         if self.config.chirps.model == "monophasic":
-            if self.verbosity > 1:
-                msg = "Using monophasic chirp model."
-                con.log(msg)
             return monophasic_chirp
         if self.config.chirps.model == "biphasic":
-            if self.verbosity > 1:
-                msg = "Using biphasic chirp model."
-                con.log(msg)
             return biphasic_chirp
         msg = f"Chirp model {self.config.chirps.model} not supported."
         raise ValueError(msg)
@@ -123,6 +116,7 @@ class GridSimulator:
 
         stop = False # stop simulation when no chirp params are left
         track_freqs = [] # track frequencies are stored here
+        track_freqs_orig = [] # track frequencies are stored here
         track_powers = [] # track powers are stored here
         track_idents = [] # track idents are stored here
         track_indices = [] # fish indices for time array are stored here
@@ -239,6 +233,9 @@ class GridSimulator:
                 # shift the frequency trace up to the baseline eodf of fish
                 ftrace += eodf
 
+                # store the original frequency trace
+                track_freqs_orig.append(ftrace)
+
             # make the eod
             with Timer(con, "Simulating EOD", self.verbosity):
                 eod = wavefish_eods(
@@ -257,13 +254,15 @@ class GridSimulator:
             # pick a random initial position for the fish
             origin = (
                 rng.uniform(
-                    self.config.grid.boundaries[0],
-                    self.config.grid.boundaries[1]
-                ),
+                    low=self.config.grid.boundaries[0],
+                    high=self.config.grid.boundaries[2],
+                    size=1,
+                )[0],
                 rng.uniform(
-                    self.config.grid.boundaries[2],
-                    self.config.grid.boundaries[3]
-                ),
+                    low=self.config.grid.boundaries[1],
+                    high=self.config.grid.boundaries[3],
+                    size=1
+                )[0],
             )
             if self.verbosity > 1:
                 msg = f"Random origin: {origin}"
@@ -365,18 +364,23 @@ class GridSimulator:
                         * len(ftrace)
                     )
                 )
-                f = resample(np.ones_like(ftrace) * eodf, num)
+                f = minimum_filter1d(ftrace, 20000)
+                f = resample(f, num)
                 p = resample(dists, num, axis=0)
                 x = resample(x_orig, num)
                 y = resample(y_orig, num)
 
                 # filter to remove resampling artifacts, particularly when
                 # there are rises this is a problem
-                f = lowpass_filter(
-                    f,
-                    self.config.grid.downsample_lowpass,
-                    self.config.grid.wavetracker_samplerate
-                )
+                # f = lowpass_filter(
+                #     f,
+                #     self.config.grid.downsample_lowpass,
+                #     self.config.grid.wavetracker_samplerate
+                # )
+                # because this is still not good lets do a running mean
+                # as well with a convolution
+
+                # also lowpass filter the powers
                 p = np.vstack(
                     [
                         lowpass_filter(
@@ -412,13 +416,13 @@ class GridSimulator:
 
         # Now concatenate all the arrays
         with Timer(con, "Concatenating arrays", self.verbosity):
-            track_freqs = np.concatenate(track_freqs)
+            track_freqs_concat = np.concatenate(track_freqs)
             track_powers = np.concatenate(track_powers)
             track_idents = np.concatenate(track_idents)
             track_indices = np.concatenate(track_indices)
             xpos_concat = np.concatenate(xpos)
             ypos_concat = np.concatenate(ypos)
-            track_times = np.arange(len(track_freqs)) / self.config.grid.wavetracker_samplerate
+            track_times = np.arange(len(track_freqs[0])) / self.config.grid.wavetracker_samplerate
             chirp_times = np.concatenate(chirp_times)
             chirp_idents = np.concatenate(chirp_idents)
             chirp_params = np.concatenate(chirp_params)
@@ -437,7 +441,7 @@ class GridSimulator:
 
         # Assemble the dataset class to be able to use the saving functions
         wt = WavetrackerData(
-            freqs=track_freqs,
+            freqs=track_freqs_concat,
             powers=track_powers,
             idents=track_idents,
             indices=track_indices,
@@ -495,14 +499,23 @@ class GridSimulator:
         with Timer(con, "Saving dataset", self.verbosity):
             save(data, self.output_path)
 
-        plot_positions(
-            original=(xpos_orig, ypos_orig),
-            upsampled=(xpos_fine, ypos_fine),
-            downsampled=(xpos, ypos),
-            grid=(self.gridx, self.gridy),
-            boundaries=self.config.grid.boundaries,
-            path=path / "plots" / "positions.pdf",
-        )
+        with Timer(con, "Plotting dataset", self.verbosity):
+            pltpath = path / "plots"
+            pltpath.mkdir(parents=True, exist_ok=True)
+            plot_positions(
+                original=(xpos_orig, ypos_orig),
+                upsampled=(xpos_fine, ypos_fine),
+                downsampled=(xpos, ypos),
+                grid=(self.gridx, self.gridy),
+                boundaries=self.config.grid.boundaries,
+                path=pltpath / "positions.pdf",
+            )
+            plot_freq_tracks(
+                track_freqs,
+                track_times,
+                track_freqs_orig,
+                pltpath / "frequency_tracks.pdf",
+            )
 
         if stop:
             msg = f"Grid {griditer}: Stopped after {fishiter} fish, no more chirps left"
