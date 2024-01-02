@@ -82,17 +82,20 @@ class SimulationConfigFish(BaseModel):
     noise_std: float
     eodfnoise_std: float
     eodfnoise_band: tuple
+    min_delta_eodf: int
 
 
 class SimulationConfigChirps(BaseModel):
     """Load chirp config for the simulation."""
 
+    model: str
     min_chirp_dt: float
     max_chirp_freq: float
     max_chirp_contrast: float
     chirpnoise_std: float
     chirpnoise_band: tuple
     chirp_params_path: str
+    detector_str: str
 
 
 class SimulationConfig(BaseModel):

@@ -1,14 +1,12 @@
-#!/usr/bin/env python
-
 """Tests `fakegrid` module."""
 
 import numpy as np
 
-from gridtools.fakegrid import (
+from gridtools.simulations.noise import (
     band_limited_noise,
     fftnoise,
-    get_random_timestamps,
 )
+from gridtools.simulations.utils import get_random_timestamps
 
 
 def test_fftnoise():

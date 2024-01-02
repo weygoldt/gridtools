@@ -7,15 +7,10 @@ code can be found here: https://github.com/janscience/thunderfish
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.interpolate import interp1d
-from scipy.stats import gamma, norm
-from numba import jit
-
-from gridtools.utils.logger import Timer
 from rich.console import Console
 
 np.random.seed(42)
@@ -59,35 +54,6 @@ class RiseParams:
     decay_taus: List[float] = field(default_factory=lambda: np.array([0.1]))
 
 
-# @Timer(console, "Evaluating Gaussian")
-@jit(nopython=True, parallel=True)
-def monophasic(
-    x: np.ndarray, mu: float, height: float, width: float, kurt: float
-) -> np.ndarray:
-    """
-    Compute the value of a Gaussian function at the given points.
-
-    Parameters
-    ----------
-    x : np.ndarray
-        The points at which to evaluate the Gaussian function.
-    mu : float
-        The mean of the Gaussian function.
-    height : float
-        The height of the Gaussian function.
-    width : float
-        The width of the Gaussian function.
-    kurt : float
-        The kurtosis of the Gaussian function.
-
-    Returns
-    -------
-    np.ndarray
-        The value of the Gaussian function at the given points.
-    """
-    sigma = 0.5 * width / (2.0 * np.log(10.0)) ** (0.5 / kurt)
-    curve = height * np.exp(-0.5 * (((x - mu) / sigma) ** 2.0) ** kurt)
-    return curve
 
 
 def make_chirps(params: ChirpParams) -> tuple[np.ndarray, np.ndarray]:

@@ -1,10 +1,8 @@
-#!/usr/bin/env python
-
 """Tests `simulations` module."""
 
 import numpy as np
 
-from gridtools.simulations import (
+from gridtools.simulations.movement import (
     MovementParams,
     direction_pdf,
     fold_space,
@@ -205,7 +203,8 @@ def test_fold_space():
     )
 
     # Happy path: Test case 1: Test with usual parameters
-    x, y = fold_space(x, y, (-0.5, -0.5, 0.5, 0.5))
+    boundaries = np.array([-0.5, -0.5, 0.5, 0.5])
+    x, y = fold_space(x, y, boundaries)
     assert len(x) == len(y)
     assert len(x) == int(mvm.duration * mvm.target_fs)
     assert np.all(x >= -0.5)
@@ -215,7 +214,7 @@ def test_fold_space():
 
     # Sad path: Test case 1: Test with x and y of different lengths
     try:
-        x, y = fold_space(x[:-1], y, (-0.5, -0.5, 0.5, 0.5))
+        x, y = fold_space(x[:-1], y, boundaries)
     except AssertionError:
         pass
     else:
@@ -223,6 +222,7 @@ def test_fold_space():
 
     # Sad path: Boundaries are to narrow
     boundaries = (-0.00001, -0.00001, 0.00001, 0.00001)
+    boundaries = np.array(boundaries)
     try:
         x, y = fold_space(x, y, boundaries)
     except ValueError:

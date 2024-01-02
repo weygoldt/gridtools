@@ -1,20 +1,23 @@
 """A simple logger for the gridtools package."""
 
 import logging
-from typing import Self
-from rich.console import Console
-
 import time
 from contextlib import ContextDecorator
+from typing import Self
+
+from rich.console import Console
 
 
 class Timer(ContextDecorator):
     """A simple timer class to time the execution of a block of code."""
 
-    def __init__(self: Self, console: Console, message: str) -> None:
+    def __init__(
+            self: Self, console: Console, message: str, verbosity: int = 1
+        ) -> None:
         """Initialize the timer."""
         self.console = console
         self.message = message
+        self.verbosity = verbosity
 
     def __enter__(self: Self) -> Self:
         """Start the timer."""
@@ -26,14 +29,23 @@ class Timer(ContextDecorator):
         ) -> None:
         """Stop the timer and log the elapsed time."""
         elapsed_time = time.time() - self.start_time
-        msg = f"[bold]Timing:[/bold] {self.message} - [bold green]Execution time:[/bold green] {elapsed_time:.4f} seconds"
-        self.console.log(msg)
+        msg = (
+            f"[bold green]Execution time:[/bold green] {elapsed_time:.4f} s:"
+            f"{self.message}"
+        )
+        if self.verbosity > 0:
+            self.console.log(msg)
 
         if exc_type is not None:
-            self.console.log(
-                f"[bold red]Exception:[/bold red] {exc_type.__name__}: {exc_value}"
+            msg = ( 
+                f"[bold red]Exception:[/bold red] "
+                f"{exc_type.__name__}: {exc_value}"
             )
-            self.console.log(f"[bold red]Traceback:[/bold red] {traceback}")
+            self.console.log(msg)
+            msg = (
+                f"[bold red]Traceback:[/bold red] {traceback}"
+            )
+            self.console.log(msg)
 
 
 def make_logger(name: str) -> logging.Logger:

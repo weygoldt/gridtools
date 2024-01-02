@@ -1,17 +1,14 @@
 """Simulate movement of fish."""
 
-from typing import Tuple
 from dataclasses import dataclass
+from typing import Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 from numba import jit
+from rich.console import Console
 from scipy.interpolate import interp1d
 from scipy.stats import gamma, norm
-from rich.console import Console
-import matplotlib.pyplot as plt
-
-from gridtools.utils.logger import Timer
-
 
 con = Console()
 

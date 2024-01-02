@@ -1,8 +1,8 @@
 """Models of chirps for fitting."""
 
+import matplotlib.pyplot as plt
 import numpy as np
 from numba import jit
-import matplotlib.pyplot as plt
 
 
 @jit(nopython=True, parallel=True)

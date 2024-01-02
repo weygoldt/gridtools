@@ -105,9 +105,8 @@ pre-commit run --all-files
 - [ ] Migrate to datasets subpackage
 - [ ] Convert the simulations module into a subpackage and refactor
 - [ ] Write a converter that puts all wavetracker and other extracted 
-data into a HDF5 container to clean datasets. Also write additional loader 
-functions to do this.
-- [ ] Build unit tests for `gridtools.datasets`
+data into a HDF5 container to clean datasets.
+- [ ] Build unit tests for `gridtools.datasets`.
 - [ ] Make a datavis subpackage hat provides functions to visualize the data
     -  [ ] Spec, track, pos terminal commands to quickly visualize datasets
     -  [ ] animation suite that gets a dataset and start and stop time to animate a full dataset

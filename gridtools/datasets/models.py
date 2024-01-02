@@ -15,7 +15,7 @@ from pydantic import (
 from rich.pretty import pprint as rpprint
 from thunderfish.dataloader import DataLoader
 
-from gridtools.exceptions import GridDataMismatchError
+from gridtools.utils.exceptions import GridDataMismatchError
 
 # The order determines the priority of the detectors.
 chirp_detectors = ["gt", "rcnn", "cnn", "None"]

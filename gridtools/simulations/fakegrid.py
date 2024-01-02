@@ -3,46 +3,510 @@
 import gc
 import pathlib
 import shutil
-from joblib import Parallel, delayed
+from typing import Self, Callable, List
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.random import f
 import pandas as pd
 from rich.console import Console
 from rich.progress import track
 from scipy.signal import resample
 from thunderfish.fakefish import wavefish_eods
+from pydantic import BaseModel
 
+from gridtools.datasets.loaders import load
 from gridtools.datasets.models import (
     ChirpData,
     CommunicationData,
     Dataset,
     GridData,
-    WavetrackerData,
     RiseData,
+    WavetrackerData,
 )
-from gridtools.datasets.loaders import load
 from gridtools.datasets.savers import save
+from gridtools.simulations.noise import band_limited_noise
+from gridtools.simulations.utils import get_random_timestamps
+from gridtools.simulations.visualizations import plot_positions
+from gridtools.utils.configfiles import SimulationConfig, load_sim_config
+from gridtools.utils.filters import lowpass_filter
+from gridtools.utils.logger import Timer
 
-from .simulations import (
+from gridtools.simulations.movement import (
     MovementParams,
     fold_space,
-    gaussian,
     interpolate_positions,
     make_grid,
     make_positions,
     make_steps,
 )
-from gridtools.utils.configfiles import SimulationConfig, load_sim_config
-from gridtools.utils.filters import lowpass_filter
-from gridtools.simulations.noise import band_limited_noise
-from gridtools.simulations.utils import get_random_timestamps
-from gridtools.utils.logger import Timer
+from gridtools.simulations.communication import monophasic_chirp, biphasic_chirp
 
 con = Console()
-model = gaussian # Model used for chirp generation
+rng = np.random.default_rng(42)
 
 
+class GridSimulator:
+    """Simulate a synthetic grid recording."""
+
+    def __init__(
+        self: Self,
+        config: SimulationConfig,
+        output_path: pathlib.Path,
+        verbosity: int = 0,
+    ) -> None:
+        """Initialize fake grid."""
+        self.config = config
+        self.output_path = output_path
+        self.verbosity = verbosity
+        self.gridx, self.gridy = make_grid(
+            origin=self.config.grid.origin,
+            shape=self.config.grid.shape,
+            spacing=self.config.grid.spacing,
+            style=self.config.grid.style,
+        )
+        self.nelectrodes = len(np.ravel(self.gridx))
+        chirp_param_path = pathlib.Path(self.config.chirps.chirp_params_path)
+        self.chirp_params = pd.read_csv(chirp_param_path).to_numpy()
+        rng.shuffle(self.chirp_params)
+
+        msg = (
+            f"Initialized simulator with {self.config.meta.ngrids} grids"
+            f"with {self.nelectrodes} electrodes each ..."
+        )
+        con.log(msg)
+
+
+    @property
+    def chirp_model(self: Self) -> Callable:
+        """Select the chirp model specified in the config file."""
+        if self.config.chirps.model == "monophasic":
+            if self.verbosity > 1:
+                msg = "Using monophasic chirp model."
+                con.log(msg)
+            return monophasic_chirp
+        if self.config.chirps.model == "biphasic":
+            if self.verbosity > 1:
+                msg = "Using biphasic chirp model."
+                con.log(msg)
+            return biphasic_chirp
+        msg = f"Chirp model {self.config.chirps.model} not supported."
+        raise ValueError(msg)
+
+    @property
+    def nfish(self: Self) -> int:
+        """Get the number of fish to simulate."""
+        lowerbound = self.config.fish.nfish[0]
+        upperbound = self.config.fish.nfish[1] + 1
+        nfish = rng.integers(lowerbound, upperbound)
+        if self.verbosity > 1:
+            msg = f"Simulating {nfish} fish."
+            con.log(msg)
+        return nfish
+
+    def run_simulations(self: Self) -> None:
+        """Run the grid simulations."""
+        for griditer in range(self.config.meta.ngrids):
+            self.make_grid(griditer)
+            gc.collect()
+
+    def make_grid(self: Self, griditer: int) -> None:
+        """Simulate a grid of electrodes and fish EOD signals."""
+        nfish = self.nfish
+
+        eodfs = get_random_timestamps(
+            self.config.fish.eodfrange[0],
+            self.config.fish.eodfrange[1],
+            nfish,
+            self.config.fish.min_delta_eodf,
+        )
+
+        stop = False # stop simulation when no chirp params are left
+        track_freqs = [] # track frequencies are stored here
+        track_powers = [] # track powers are stored here
+        track_idents = [] # track idents are stored here
+        track_indices = [] # fish indices for time array are stored here
+        xpos_orig = [] # Original 30 Hz fish positions
+        ypos_orig = [] # Original 30 Hz fish positions
+        xpos_fine = [] # fish positions are stored after upsampling to 20kHz
+        ypos_fine = [] # fish positions are stored after upsampling to 20kHz 
+        xpos = [] # fish positions are stored here after downsampling to 3Hz
+        ypos = [] # fish positions are stored here after downsampling to 3Hz
+        chirp_times = [] # chirp times are stored here
+        chirp_idents = [] # fish idents are stored here
+        chirp_params = [] # chirp parameters are stored here
+        detector = self.config.chirps.detector_str # how to name chirp file
+        signal = None # Here we store the electric signal later
+
+        for fishiter in range(nfish):
+            
+            # this is the baseline eodf of the current fishs
+            eodf = eodfs[fishiter]
+
+            if self.verbosity > 1:
+                msg = f"Fish {fishiter} gets EODf of {eodf}."
+                con.log(msg)
+
+            # choose a random number of chirps
+            nchirps = rng.integers(
+                1, int(self.config.grid.duration * self.config.chirps.max_chirp_freq)
+            )
+
+            if self.verbosity > 1:
+                msg = f"Fish {fishiter} gets {nchirps} chirps"
+                con.log(msg)
+
+            # Check how many chirp params left and delete used from array
+            if len(self.chirp_params) < nchirps:
+                nchirps = len(self.chirp_params)
+                stop = True
+            cp = self.chirp_params[:nchirps]
+            self.chirp_params = self.chirp_params[nchirps:]
+
+            # generate random time stamp for each chirp that follows some rules
+            with Timer(con, "Generating chirp times", self.verbosity):
+                ctimes = get_random_timestamps(
+                    start_t=0,
+                    stop_t=self.config.grid.duration,
+                    n_timestamps=nchirps,
+                    min_dt=self.config.chirps.min_chirp_dt,
+                )
+
+            # initialize frequency trace
+            ftrace = np.zeros(
+                int(self.config.grid.duration * self.config.grid.samplerate)
+            )
+
+            # initialize the am trace
+            amtrace = np.ones_like(ftrace)
+
+            # initialize the time array
+            time = np.arange(len(ftrace)) / self.config.grid.samplerate
+
+            # choose a random contrast for each chirp
+            contrasts = rng.uniform(
+                0, self.config.chirps.max_chirp_contrast, size=nchirps
+            )
+
+            # evaluate the chirp model for every chirp parameter at every
+            # chirp time and just use the but flipped as the amplitude trace
+            with Timer(con, f"Simulating {nchirps} chirps", self.verbosity):
+                for i, ctime in enumerate(ctimes):
+                    ftrace += self.chirp_model(
+                        time,
+                        ctime,
+                        *cp[i, 1:],
+                    )
+                    amtrace += self.chirp_model(
+                        time,
+                        ctime,
+                        -contrasts[i],
+                        *cp[i, 2:],
+                    )
+
+            # add noise to the frequency trace
+            with Timer(con, "Adding noise to frequency trace", self.verbosity):
+                # make noise strong at chirps by multiplying it with the chirp
+                chirpnoise = (
+                    band_limited_noise(
+                        self.config.chirps.chirpnoise_band[0],
+                        self.config.chirps.chirpnoise_band[1],
+                        len(ftrace),
+                        self.config.grid.samplerate,
+                        1,
+                    )
+                    * ftrace
+                )
+
+                # scale back to std of 1
+                chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(chirpnoise)
+
+                # add std from config
+                chirpnoise *= self.config.chirps.chirpnoise_std
+
+                # add it to the chirps
+                ftrace += chirpnoise
+
+                # also modulate baseline eodf with noise
+                ftrace += band_limited_noise(
+                    self.config.fish.eodfnoise_band[0],
+                    self.config.fish.eodfnoise_band[1],
+                    len(ftrace),
+                    self.config.grid.samplerate,
+                    self.config.fish.eodfnoise_std,
+                )
+
+                # shift the frequency trace up to the baseline eodf of fish
+                ftrace += eodf
+
+            # make the eod
+            with Timer(con, "Simulating EOD", self.verbosity):
+                eod = wavefish_eods(
+                    fish="Alepto",
+                    frequency=ftrace,
+                    samplerate=self.config.grid.samplerate,
+                    duration=self.config.grid.duration,
+                    phase0=0,
+                    noise_std=self.config.fish.noise_std,
+                )
+
+            # modulate the eod with the amplitude trace
+            eod *= amtrace
+
+            # now lets make the positions
+            # pick a random initial position for the fish
+            origin = (
+                rng.uniform(
+                    self.config.grid.boundaries[0],
+                    self.config.grid.boundaries[1]
+                ),
+                rng.uniform(
+                    self.config.grid.boundaries[2],
+                    self.config.grid.boundaries[3]
+                ),
+            )
+            if self.verbosity > 1:
+                msg = f"Random origin: {origin}"
+                con.log(msg)
+
+            # This is important: Check if duration and samplerate can make
+            # int number of samples
+            if (self.config.grid.duration * self.config.grid.samplerate) % 1 != 0:
+                msg = (
+                    "Duration and samplerate must make an integer number of samples"
+                    "Please modify the parameters in the config file so"
+                    "that the movement target fs multiplied by the duration"
+                    "is an integer."
+                )
+                raise ValueError(msg)
+
+            # make a movement params object. This is a class containing # %%
+            # parameters to simulate movements
+            mvm = MovementParams(
+                duration=int(self.config.grid.duration),
+                origin=origin,
+                boundaries=self.config.grid.boundaries,
+                target_fs=int(self.config.grid.samplerate),
+            )
+
+            # Now simulate the positions
+            with Timer(con, "Simulating positions", self.verbosity):
+                trajectories, steps = make_steps(mvm)
+                x, y = make_positions(trajectories, steps, origin)
+
+            # Now restrict generated positions to the boundaries
+            # of the simulated world
+            with Timer(con, "Folding space", self.verbosity):
+                boundaries = np.array(self.config.grid.boundaries)
+                x_orig, y_orig = fold_space(x, y, boundaries)
+
+            # Now interpoalte the positions to sampling rate of grid recording
+            # so that we can use the positions to modulate the AM of the
+            # raw signal with distance to electrodes
+            with Timer(con, "Interpolating positions", self.verbosity):
+                x_fine, y_fine = interpolate_positions(
+                    x_orig,
+                    y_orig,
+                    self.config.grid.duration,
+                    mvm.measurement_fs,
+                    mvm.target_fs,
+                )
+
+            # Now attenuate the signals with distance to electrodes
+            # TODO: This is where a dipole model should be introduced.
+            # With the current version, a fish is just a monopole
+            # And one more # TODO: This is where different conductivities
+            # Should be introduced.
+            with Timer(
+                con,
+                "Attenuating signals with distance to electrodes",
+                self.verbosity
+            ):
+                # Compute distance between fish and each electrode
+                # for every point in time
+                dists = np.sqrt(
+                    (x_fine[:, None] - self.gridx[None, :]) ** 2
+                    + (y_fine[:, None] - self.gridy[None, :]) ** 2
+                )
+
+                # Square the distance as field decreases with distance squared
+                # and invert the distance as larger distance means smaller
+                # field
+                dists = -(dists**2) # Add term for conductivity maybe here
+
+                # Normalize the distances between 0 and 1 (this also
+                # needs to change when we introduce conductivity)
+                dists = (
+                    dists - np.min(dists)) / (np.max(dists) - np.min(dists)
+                )
+
+                # Add the fish signal onto all electrodes
+                # This essentially just copies the fish signal for n
+                # electrodes
+                grid_signals = np.tile(eod, (self.nelectrodes, 1)).T
+
+                # Attentuate the signals by the squared distances
+                attenuated_signals = grid_signals * dists
+
+            # Collect signals
+            if fishiter == 0:
+                signal = attenuated_signals
+            else:
+                signal += attenuated_signals
+
+            # Downsample the tracking arrays i.e. frequency tracks, powers,
+            # postions, etc. so that they have the same resolution as the
+            # output of the wavetracker
+            with Timer(con, "Downsampling tracking arrays", self.verbosity):
+                num = int(
+                    np.round(
+                        self.config.grid.wavetracker_samplerate
+                        / self.config.grid.samplerate
+                        * len(ftrace)
+                    )
+                )
+                f = resample(np.ones_like(ftrace) * eodf, num)
+                p = resample(dists, num, axis=0)
+                x = resample(x_orig, num)
+                y = resample(y_orig, num)
+
+                # filter to remove resampling artifacts, particularly when
+                # there are rises this is a problem
+                f = lowpass_filter(
+                    f,
+                    self.config.grid.downsample_lowpass,
+                    self.config.grid.wavetracker_samplerate
+                )
+                p = np.vstack(
+                    [
+                        lowpass_filter(
+                            pi,
+                            self.config.grid.downsample_lowpass,
+                            self.config.grid.wavetracker_samplerate
+                        )
+                        for pi in p.T
+                    ]
+                ).T
+                p[p < 0] = 0 # rectify negative values (powers should be 0-1)
+
+            # and now save everything
+            track_freqs.append(f)
+            track_powers.append(p)
+            track_idents.append(np.ones_like(f) * fishiter)
+            track_indices.append(np.arange(len(f)))
+            xpos.append(x)
+            ypos.append(y)
+            xpos_orig.append(x_orig)
+            ypos_orig.append(y_orig)
+            xpos_fine.append(x_fine)
+            ypos_fine.append(y_fine)
+            chirp_times.append(ctimes)
+            chirp_idents.append(np.ones_like(ctimes) * fishiter)
+            chirp_params.append(cp)
+
+            msg = f"Grid {griditer}: Finished simulating fish {fishiter + 1}"
+            con.log(msg)
+
+            if stop:
+                break
+
+        # Now concatenate all the arrays
+        with Timer(con, "Concatenating arrays", self.verbosity):
+            track_freqs = np.concatenate(track_freqs)
+            track_powers = np.concatenate(track_powers)
+            track_idents = np.concatenate(track_idents)
+            track_indices = np.concatenate(track_indices)
+            xpos_concat = np.concatenate(xpos)
+            ypos_concat = np.concatenate(ypos)
+            track_times = np.arange(len(track_freqs)) / self.config.grid.wavetracker_samplerate
+            chirp_times = np.concatenate(chirp_times)
+            chirp_idents = np.concatenate(chirp_idents)
+            chirp_params = np.concatenate(chirp_params)
+
+        # Normalize signal on electrodes between -1 and 1
+        # (as we added many EODs this can get large) but if we dont norm it
+        # everything outside is clipped by the saving function
+        with Timer(con, "Normalizing signal", self.verbosity):
+            signal = (
+                (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
+            )
+
+        if self.verbosity > 0:
+            msg = "Assembling dataset ..."
+            con.log(msg)
+
+        # Assemble the dataset class to be able to use the saving functions
+        wt = WavetrackerData(
+            freqs=track_freqs,
+            powers=track_powers,
+            idents=track_idents,
+            indices=track_indices,
+            ids=np.unique(track_idents),
+            times=track_times,
+            xpos=xpos_concat,
+            ypos=ypos_concat,
+            has_positions=True,
+        )
+
+        chps = ChirpData(
+            times=chirp_times,
+            idents=chirp_idents,
+            params=chirp_params,
+            detector=detector,
+            are_detected=True,
+            have_params=True,
+        )
+
+        rs = RiseData(
+            times=np.array([]),
+            idents=np.array([]),
+            params=np.array([]),
+            detector="None",
+            are_detected=False,
+            have_params=False,
+        )
+
+        com = CommunicationData(
+            chirp=chps,
+            rise=rs,
+            are_detected=True,
+        )
+
+        grid = GridData(
+            rec=signal,
+            samplerate=self.config.grid.samplerate,
+            shape=signal.shape,
+        )
+
+        path = pathlib.Path(f"{self.output_path}/simulated_grid_{griditer:03d}")
+
+        data = Dataset(
+            path=path,
+            grid=grid,
+            track=wt,
+            com=com,
+        )
+
+        if path.exists():
+            msg = f"Grid {griditer}: Removing existing directory"
+            con.log(msg)
+            shutil.rmtree(path)
+
+        with Timer(con, "Saving dataset", self.verbosity):
+            save(data, self.output_path)
+
+        plot_positions(
+            original=(xpos_orig, ypos_orig),
+            upsampled=(xpos_fine, ypos_fine),
+            downsampled=(xpos, ypos),
+            grid=(self.gridx, self.gridy),
+            boundaries=self.config.grid.boundaries,
+            path=path / "plots" / "positions.pdf",
+        )
+
+        if stop:
+            msg = f"Grid {griditer}: Stopped after {fishiter} fish, no more chirps left"
+            con.log(msg)
 
 
 def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
@@ -72,6 +536,10 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
     The function saves the simulated signals to disk in the specified output
     directory.
     """
+    if config.chirps.model == "monophasic":
+        model = monophasic_chirp # Model used for chirp generation
+    elif config.chirps.model == "biphasic":
+        model = biphasic_chirp
     # general parameters
     ngrids = config.meta.ngrids
     samplerate = config.grid.samplerate
@@ -154,6 +622,7 @@ def fakegrid(config: SimulationConfig, output_path: pathlib.Path) -> None:
 
             # make random chirp times at least max_chirp_dt apart
             with Timer(con, "Generating chirp times"):
+                print(nchirps)
                 ctimes = get_random_timestamps(
                     start_t=0,
                     stop_t=duration,
@@ -648,10 +1117,12 @@ def fakegrid_cli(output_path):
     config_path = config_path[0].resolve()
     config = load_sim_config(str(config_path))
 
-    fakegrid(
-        config=config,
-        output_path=output_path,
-    )
+    # fakegrid(
+    #     config=config,
+    #     output_path=output_path,
+    # )
+    gs = GridSimulator(config, output_path, 3)
+    gs.run_simulations()
 
 
 def hybridgrid_cli(input_path, real_path, output_path):

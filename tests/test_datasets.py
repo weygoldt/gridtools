@@ -3,17 +3,17 @@
 import pathlib
 import shutil
 
-from gridtools.datasets.models import (
-    CommunicationData,
-    Dataset,
-    GridData,
-    WavetrackerData,
-)
 from gridtools.datasets.loaders import (
     load,
     load_com,
     load_grid,
     load_wavetracker,
+)
+from gridtools.datasets.models import (
+    CommunicationData,
+    Dataset,
+    GridData,
+    WavetrackerData,
 )
 from gridtools.datasets.savers import (
     save_com,

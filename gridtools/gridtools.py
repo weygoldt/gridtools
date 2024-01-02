@@ -8,7 +8,7 @@ import toml
 
 from gridtools.datasets.subsetters import subset_cli
 from gridtools.simulations.fakegrid import fakegrid_cli, hybridgrid_cli
-from .utils.configfiles import copy_config
+from gridtools.utils.configfiles import copy_config
 
 click.rich_click.USE_RICH_MARKUP = True
 click.rich_click.USE_MARKDOWN = True

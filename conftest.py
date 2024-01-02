@@ -1,7 +1,8 @@
 """Provides dataset generation functions.
 
 For the testing suite
-of the gridtools package."""
+of the gridtools package.
+"""
 
 import shutil
 
@@ -40,5 +41,4 @@ def fixture_chirp_data(tmp_path):
     example_idents = np.array([1, 2, 1, 3])
     np.save(data_dir / f"chirp_times_{detector}.npy", example_times)
     np.save(data_dir / f"chirp_ids_{detector}.npy", example_idents)
-
     return ChirpData(data_dir, detector)

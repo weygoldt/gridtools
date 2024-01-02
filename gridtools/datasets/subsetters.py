@@ -1,10 +1,11 @@
 """Functions for making subsets of grid datasets."""
 
-from typing import Union
 import pathlib
+from typing import Union
 
 import numpy as np
 
+from gridtools.datasets.loaders import load
 from gridtools.datasets.models import (
     ChirpData,
     CommunicationData,
@@ -13,8 +14,8 @@ from gridtools.datasets.models import (
     RiseData,
     WavetrackerData,
 )
-from gridtools.datasets.loaders import load
 from gridtools.datasets.savers import save
+
 
 def subset_wavetracker(
     wt: WavetrackerData,
