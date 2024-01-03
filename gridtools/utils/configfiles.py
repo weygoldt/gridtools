@@ -98,6 +98,15 @@ class SimulationConfigChirps(BaseModel):
     detector_str: str
 
 
+class SimulationConfigRises(BaseModel):
+    """Load rise config for the simulation."""
+
+    model: str
+    min_rise_dt: float
+    max_rise_freq: float
+    detector_str: str
+
+
 class SimulationConfig(BaseModel):
     """The main config object for the simulation."""
 
@@ -107,6 +116,7 @@ class SimulationConfig(BaseModel):
     grid: SimulationConfigGrid
     fish: SimulationConfigFish
     chirps: SimulationConfigChirps
+    rises: SimulationConfigRises
 
 
 class PreprocessingConfig(BaseModel):
@@ -115,7 +125,7 @@ class PreprocessingConfig(BaseModel):
     pass
 
 
-def load_sim_config(config_file: str) -> SimulationConfig:
+def load_sim_config(config_file: pathlib.Path) -> SimulationConfig:
     """Load the simulation config file.
 
     Parameters
@@ -128,13 +138,19 @@ def load_sim_config(config_file: str) -> SimulationConfig:
     SimulationConfig
         The simulation config.
     """
-    config_dict = toml.load(config_file)
+    config_dict = toml.load(str(config_file))
     meta = SimulationConfigMeta(**config_dict["meta"])
     grid = SimulationConfigGrid(**config_dict["grid"])
     fish = SimulationConfigFish(**config_dict["fish"])
     chirps = SimulationConfigChirps(**config_dict["chirps"])
+    rises = SimulationConfigRises(**config_dict["rises"])
     return SimulationConfig(
-        path=config_file, meta=meta, grid=grid, fish=fish, chirps=chirps
+        path=str(config_file),
+        meta=meta,
+        grid=grid,
+        fish=fish,
+        chirps=chirps,
+        rises=rises
     )
 
 

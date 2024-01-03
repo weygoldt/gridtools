@@ -7,7 +7,7 @@
 # saved. Be careful to not cause a memory overflow.
 
 [meta]
-ngrids = 1 # how many recordings to simulate
+ngrids = 10 # how many recordings to simulate
 
 [grid]
 samplerate = 20000 # in Hz, samplerate of the raw signal
@@ -37,3 +37,11 @@ chirpnoise_std = 1 # std of limited band noise added to the chirp frequency trac
 chirpnoise_band = [0,100] # band of the limited band noise added to the chirp frequency trace
 chirp_params_path = "/home/weygoldt/Projects/mscthesis/data/interrim/chirpsimulations/chirp_fits_interpolated.csv" # where simulated chirp parameters are
 detector_str = "gt" # how to call the chirp array detector handle on disk
+
+[rises]
+# WARNING: rise simulation is not implemented yet
+# Because rises where not fitted to data yet.
+model = "rise"
+min_rise_dt = 20 # in seconds, minimum time between two rises
+max_rise_freq = 0.008 # in Hz, maximum rise frequency
+detector_str = "gt" # how to call the rise array detector handle on disk
