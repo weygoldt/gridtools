@@ -8,8 +8,8 @@ import numpy as np
 from rich import print as rprint
 from rich.progress import track
 
-from .datasets import Dataset
-from .utils.logger import make_logger
+from gridtools.datasets.models import Dataset
+from gridtools.utils.logger import make_logger
 
 logger = make_logger(__name__)
 
@@ -187,5 +187,72 @@ def remove_poorly_tracked_tracks(
             counter += 1
 
     rprint(f"Removed {counter} tracks with a low coverage.")
+    return data
+
+
+def interpolate_tracks(data: Dataset) -> Dataset:
+    """Interpolate the tracks to a given frequency grid.
+
+    Parameters
+    ----------
+    data : Dataset
+        The dataset to be processed.
+
+    Returns
+    -------
+    Dataset
+        The processed dataset.
+    """
+    logger.info("Interpolating tracks to a given frequency grid.")
+
+    new_freqs = []
+    # new_powers = []
+    new_times = []
+    new_indices = []
+    new_idents = []
+
+    for track_id in data.track.ids:
+
+        track_freqs = data.track.freqs[data.track.idents == track_id]
+        # track_powers = data.track.powers[data.track.idents == track_id, :]
+        track_times = data.track.times[
+            data.track.indices[data.track.idents == track_id]
+        ]
+
+        sorted_indices = np.sort(
+            data.track.indices[data.track.idents == track_id]
+        )
+        start_idx = sorted_indices[0]
+        end_idx = sorted_indices[-1]
+        full_time = data.track.times[start_idx:end_idx]
+
+        track_freqs = np.interp(full_time, track_times, track_freqs)
+        # track_powers = np.interp(full_time, track_times, track_powers)
+        track_indices = np.arange(start_idx, end_idx)
+        track_idents = np.ones(track_indices.shape[0]) * track_id
+
+        new_freqs.append(track_freqs)
+        new_indices.append(track_indices)
+        new_idents.append(track_idents)
+        # new_powers.append(track_powers)
+
+    data.track.freqs = np.concatenate(new_freqs)
+    # data.track.powers = np.concatenate(new_powers)
+    # data.track.times = np.concatenate(new_times)
+    data.track.indices = np.concatenate(new_indices)
+    data.track.idents = np.concatenate(new_idents)
+
+    # TODO: This interpolates powers as well which is BAD! Instead, only
+    # interpolate frequencies and then use the interpolated frequencies to
+    # recompute the powers at each time step.
+
+    return data
+
+
+
+
+
+
+
 
     return data
