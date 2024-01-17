@@ -7,14 +7,14 @@
 # saved. Be careful to not cause a memory overflow.
 
 [meta]
-ngrids = 10 # how many recordings to simulate
+ngrids = 2 # how many recordings to simulate
 
 [grid]
 samplerate = 20000 # in Hz, samplerate of the raw signal
 wavetracker_samplerate = 3 # in Hz, approx. samplerate of wavetracker output
 duration = 600 # in seconds
 origin = [0, 0] # origin of the grid
-shape = [4, 4] # shape of the grid (nrows, ncols)
+shape = [3, 3] # shape of the grid (nrows, ncols)
 spacing = 0.5 # in meters, distance between grid points
 style = "square" # grid units can be square or hex
 boundaries = [-0.5, -0.5, 2.0, 2.0] # in meters, boundaries of the simualted world (x1,y1,x2,y2)
@@ -22,7 +22,7 @@ downsample_lowpass = 8 # in Hz, lowpass filter to apply after downsampling the w
 
 [fish]
 nfish = [1,5] # min and max number of fish per recording
-eodfrange = [300, 1600] # in Hz, range of EOD frequencies
+eodfrange = [600, 1100] # in Hz, range of EOD frequencies
 noise_std = 0.01 # std of random noise added to the EOD waveform
 eodfnoise_std = 5 # std of limited band noise added to the EOD frequency trace
 eodfnoise_band = [0.0, 0.01] # band of the limited band noise added to the EOD frequency trace

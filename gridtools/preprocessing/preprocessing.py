@@ -3,6 +3,7 @@
 The functions act on just the tracked data and should thus be usable on all
 dataset classes, whether they contain raw data or chirp data or not.
 """
+from typing import Optional
 
 import numpy as np
 from rich import print as rprint
@@ -190,13 +191,17 @@ def remove_poorly_tracked_tracks(
     return data
 
 
-def interpolate_tracks(data: Dataset) -> Dataset:
+def interpolate_tracks(
+        data: Dataset, samplerate: Optional[float] = None
+    ) -> Dataset:
     """Interpolate the tracks to a given frequency grid.
 
     Parameters
     ----------
     data : Dataset
         The dataset to be processed.
+    samplerate : Optional[float], optional
+        The samplerate to interpolate to, by default None
 
     Returns
     -------
@@ -211,20 +216,31 @@ def interpolate_tracks(data: Dataset) -> Dataset:
     new_indices = []
     new_idents = []
 
-    for track_id in data.track.ids:
+    if samplerate is not None:
+        new_full_times = np.arange(
+            np.min(data.track.times), np.max(data.track.times), 1 / samplerate
+        )
+    else:
+        new_full_times = data.track.times
 
+    for track_id in data.track.ids:
         track_freqs = data.track.freqs[data.track.idents == track_id]
         # track_powers = data.track.powers[data.track.idents == track_id, :]
         track_times = data.track.times[
             data.track.indices[data.track.idents == track_id]
         ]
 
-        sorted_indices = np.sort(
-            data.track.indices[data.track.idents == track_id]
-        )
-        start_idx = sorted_indices[0]
-        end_idx = sorted_indices[-1]
-        full_time = data.track.times[start_idx:end_idx]
+        if samplerate is not None:
+            start_idx = np.argmin(np.abs(new_full_times - np.min(track_times)))
+            end_idx = np.argmin(np.abs(new_full_times - np.max(track_times)))
+            full_time = new_full_times[start_idx:end_idx]
+        else:
+            sorted_indices = np.sort(
+                data.track.indices[data.track.idents == track_id]
+            )
+            start_idx = sorted_indices[0]
+            end_idx = sorted_indices[-1]
+            full_time = data.track.times[start_idx:end_idx]
 
         track_freqs = np.interp(full_time, track_times, track_freqs)
         # track_powers = np.interp(full_time, track_times, track_powers)
@@ -238,21 +254,12 @@ def interpolate_tracks(data: Dataset) -> Dataset:
 
     data.track.freqs = np.concatenate(new_freqs)
     # data.track.powers = np.concatenate(new_powers)
-    # data.track.times = np.concatenate(new_times)
+    data.track.times = new_full_times
     data.track.indices = np.concatenate(new_indices)
     data.track.idents = np.concatenate(new_idents)
 
     # TODO: This interpolates powers as well which is BAD! Instead, only
     # interpolate frequencies and then use the interpolated frequencies to
     # recompute the powers at each time step.
-
-    return data
-
-
-
-
-
-
-
 
     return data

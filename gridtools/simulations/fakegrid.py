@@ -19,6 +19,7 @@ from gridtools.datasets.models import (
     CommunicationData,
     Dataset,
     GridData,
+    GridDataMismatchError,
     RiseData,
     WavetrackerData,
 )
@@ -531,9 +532,15 @@ class GridAugmenter:
         self.real_path = real_path
         self.output_path = output_path
         self.fake_datasets = list(self.sim_path.iterdir())
-        self.fake_datasets = [item.resolve for item in self.fake_datasets]
+        self.fake_datasets = [
+            path for path in self.fake_datasets if \
+            len(list(path.glob("*traces*"))) > 0
+        ]
         self.real_datasets = list(self.real_path.iterdir())
-        self.real_datasets = [item.resolve for item in self.real_datasets]
+        self.real_datasets = [
+            path for path in self.real_datasets if \
+            len(list(path.glob("*traces*"))) > 0
+        ]
         msg = "Successfully initialized GridAugmenter."
         con.log(msg)
 
@@ -546,7 +553,8 @@ class GridAugmenter:
             # load the fake dataset
             fake_dataset = load(fake_dataset_path)
             # load a random real dataset
-            real_dataset = load(rng.choice(self.real_datasets))
+            indices = np.arange(len(self.real_datasets))
+            real_dataset = load(self.real_datasets[rng.choice(indices)])
 
             msg = f"Augmenting {fake_dataset_path.name} with {real_dataset.path.name}"
             con.log(msg)
@@ -605,11 +613,12 @@ class GridAugmenter:
 
         Notes
         -----
-        This function normalizes the simulated dataset, takes a random snippet from the
-        real recording, scales the simulated dataset to match the real recording, and
-        combines the two datasets. This introduces realistic background noise to the
-        simulated dataset. A future version should choose a snipped from the real
-        recording that contains as little communication as possible.
+        This function normalizes the simulated dataset, takes a random snippet
+        from the real recording, scales the simulated dataset to match the real
+        recording, and combines the two datasets. This introduces realistic
+        background noise to the simulated dataset. A future version should
+        choose a snipped from the real recording that contains as little
+        communication as possible.
         """
         # normalize the simulated dataset
         sd.track.powers = (sd.track.powers - np.mean(sd.track.powers)) / np.std(
@@ -626,9 +635,11 @@ class GridAugmenter:
         # check if number of electrodes of the simulated dataset is larger
         # than the number of electrodes of the real dataset
         if target_shape[1] > source_shape[1]:
-            raise GridDataMismatch(
-                "The number of electrodes of the simulated dataset is larger than the number of electrodes of the real dataset."
+            msg = (
+                "The number of electrodes of the simulated dataset is "
+                "larger than the number of electrodes of the real dataset."
             )
+            raise GridDataMismatchError(msg)
 
         random_electrodes = np.random.choice(
             np.arange(source_shape[1]), size=target_shape[1], replace=False
@@ -692,7 +703,7 @@ def hybridgrid_cli(
     input_path: pathlib.Path,
     real_path: pathlib.Path,
     output_path: pathlib.Path,
-    ) -> None:
+) -> None:
     """Run the hybridgrid simulation using the command line interface."""
     input_path = pathlib.Path(input_path)
     real_path = pathlib.Path(real_path)

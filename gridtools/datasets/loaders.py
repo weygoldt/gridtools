@@ -123,7 +123,7 @@ def load_grid(path: pathlib.Path) -> GridData:
     rec.pprint()
     ```
     """
-    files = list(path.glob("traces*"))
+    files = list(path.glob("*traces*"))
 
     if len(files) == 0:
         msg = "No raw dataset found in the provided directory!"
