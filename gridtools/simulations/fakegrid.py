@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 from rich.console import Console
 from rich.progress import track
-from scipy.ndimage import minimum_filter1d
+from scipy.ndimage import minimum_filter1d, median_filter
+from scipy.signal import medfilt
 from scipy.signal import resample
 from thunderfish.fakefish import wavefish_eods
 
@@ -28,6 +29,7 @@ from gridtools.simulations.communication import (
     biphasic_chirp,
     monophasic_chirp,
 )
+from gridtools.simulations.eod import ChirpGenerator
 from gridtools.simulations.movement import (
     MovementParams,
     fold_space,
@@ -56,11 +58,13 @@ class GridSimulator:
     def __init__(
         self: Self,
         config: SimulationConfig,
+        chirper: ChirpGenerator,
         output_path: pathlib.Path,
         verbosity: int = 0,
     ) -> None:
         """Initialize fake grid."""
         self.config = config
+        self.chirper = chirper
         self.output_path = output_path
         self.verbosity = verbosity
         self.gridx, self.gridy = make_grid(
@@ -70,9 +74,9 @@ class GridSimulator:
             style=self.config.grid.style,
         )
         self.nelectrodes = len(np.ravel(self.gridx))
-        chirp_param_path = pathlib.Path(self.config.chirps.chirp_params_path)
-        self.chirp_params = pd.read_csv(chirp_param_path).to_numpy()
-        rng.shuffle(self.chirp_params)
+        # chirp_data_path = pathlib.Path(self.config.chirps.chirp_params_path)
+        # self.chirp_params = pd.read_csv(chirp_data_path).to_numpy()
+        # rng.shuffle(self.chirp_params)
 
         msg = (
             f"with {self.nelectrodes} electrodes each ..."
@@ -140,67 +144,71 @@ class GridSimulator:
             # this is the baseline eodf of the current fishs
             eodf = eodfs[fishiter]
 
-            if self.verbosity > 1:
-                msg = f"Fish {fishiter} gets EODf of {eodf}."
-                con.log(msg)
-
-            # choose a random number of chirps and rises for this fish
-            nchirps = rng.integers(
-                1, int(self.config.grid.duration * self.config.chirps.max_chirp_freq)
-            )
-
-            if self.verbosity > 1:
-                msg = f"Fish {fishiter} gets {nchirps} chirps and rises."
-                con.log(msg)
-
-            # Check how many chirp params left and delete used from array
-            if len(self.chirp_params) < nchirps:
-                nchirps = len(self.chirp_params)
-                stop = True
-            cp = self.chirp_params[:nchirps]
-            self.chirp_params = self.chirp_params[nchirps:]
-
-            # generate random time stamp for each chirp that follows some rules
-            with Timer(con, "Generating chirp times", self.verbosity):
-                ctimes = get_random_timestamps(
-                    start_t=0,
-                    stop_t=self.config.grid.duration,
-                    n_timestamps=nchirps,
-                    min_dt=self.config.chirps.min_chirp_dt,
-                )
-
             # initialize frequency trace
-            ftrace = np.zeros(
-                int(self.config.grid.duration * self.config.grid.samplerate)
-            )
+            # ftrace = np.zeros(
+            #     int(self.config.grid.duration * self.config.grid.samplerate)
+            # )
 
             # initialize the am trace
-            amtrace = np.ones_like(ftrace)
+            # amtrace = np.ones_like(ftrace)
 
             # initialize the time array
-            time = np.arange(len(ftrace)) / self.config.grid.samplerate
+            # time = np.arange(len(ftrace)) / self.config.grid.samplerate
 
-            # choose a random contrast for each chirp
-            contrasts = rng.uniform(
-                0, self.config.chirps.max_chirp_contrast, size=nchirps
-            )
+            if self.verbosity > 1:
+                msg = f"Fish {fishiter + 1} gets EODf of {eodf}."
+                con.log(msg)
 
-            # evaluate the chirp model for every chirp parameter at every
-            # chirp time and just use the but flipped as the amplitude trace
-            with Timer(con, f"Simulating {nchirps} chirps", self.verbosity):
-                for i, ctime in enumerate(ctimes):
-                    ftrace += self.chirp_model(
-                        time,
-                        ctime,
-                        *cp[i, 1:],
-                    )
-                    amtrace += self.chirp_model(
-                        time,
-                        ctime,
-                        -contrasts[i],
-                        *cp[i, 2:],
-                    )
+            ### Chirps --------------------------------------------------------
+            ctimes, cp, ftrace, amtrace = self.chirper()
 
+            # # choose a random number of chirps for this fish
+            # nchirps = rng.integers(
+            #     1, int(self.config.grid.duration * self.config.chirps.max_chirp_freq)
+            # )
+            #
+            # # Check how many chirp params left and delete used from array
+            # if len(self.chirp_params) < nchirps:
+            #     nchirps = len(self.chirp_params)
+            #     stop = True
+            # cp = self.chirp_params[:nchirps]
+            # self.chirp_params = self.chirp_params[nchirps:]
+            #
+            # if self.verbosity > 1:
+            #     msg = f"Fish {fishiter + 1} gets {nchirps} chirps."
+            #     con.log(msg)
+            #
+            # # generate random time stamp for each chirp that follows some rules
+            # with Timer(con, "Generating chirp times", self.verbosity):
+            #     ctimes = get_random_timestamps(
+            #         start_t=0,
+            #         stop_t=self.config.grid.duration,
+            #         n_timestamps=nchirps,
+            #         min_dt=self.config.chirps.min_chirp_dt,
+            #     )
+            #
+            # # choose a random contrast for each chirp
+            # contrasts = rng.uniform(
+            #     0, self.config.chirps.max_chirp_contrast, size=nchirps
+            # )
+            #
+            # # evaluate the chirp model for every chirp parameter at every
+            # # chirp time and just use the but flipped as the amplitude trace
+            # with Timer(con, f"Simulating {nchirps} chirps", self.verbosity):
+            #     for i, ctime in enumerate(ctimes):
+            #         ftrace += self.chirp_model(
+            #             time,
+            #             ctime,
+            #             *cp[i, 1:],
+            #         )
+            #         amtrace += self.chirp_model(
+            #             time,
+            #             ctime,
+            #             -contrasts[i],
+            #             *cp[i, 2:],
+            #         )
+
+            ### Augment with noise --------------------------------------------
             # add noise to the frequency trace
             with Timer(con, "Adding noise to frequency trace", self.verbosity):
                 # make noise strong at chirps by multiplying it with the chirp
@@ -212,7 +220,7 @@ class GridSimulator:
                         self.config.grid.samplerate,
                         1,
                     )
-                    * ftrace
+                    # * ftrace
                 )
 
                 # scale back to std of 1
@@ -233,12 +241,23 @@ class GridSimulator:
                     self.config.fish.eodfnoise_std,
                 )
 
+                # import matplotlib.pyplot as plt
+                # import matplotlib as mpl
+                # mpl.use("TkAgg")
+                # plt.plot(ftrace)
+                # plt.plot(chirpnoise)
+                # plt.show()
+                # plt.plot(amtrace)
+                # plt.show()
+
                 # shift the frequency trace up to the baseline eodf of fish
                 ftrace += eodf
 
                 # store the original frequency trace
                 track_freqs_orig.append(ftrace)
 
+
+            ### Build the EOD -------------------------------------------------
             # make the eod
             with Timer(con, "Simulating EOD", self.verbosity):
                 eod = wavefish_eods(
@@ -253,6 +272,7 @@ class GridSimulator:
             # modulate the eod with the amplitude trace
             eod *= amtrace
 
+            ### Build the positions -------------------------------------------
             # now lets make the positions
             # pick a random initial position for the fish
             origin = (
@@ -316,6 +336,7 @@ class GridSimulator:
                     mvm.target_fs,
                 )
 
+            ### Combine positions and EOD -------------------------------------
             # Now attenuate the signals with distance to electrodes
             # TODO: This is where a dipole model should be introduced.
             # With the current version, a fish is just a monopole
@@ -358,6 +379,7 @@ class GridSimulator:
             else:
                 signal += attenuated_signals
 
+            ### Downsample the signals to resemple wave tracker ---------------
             # Downsample the tracking arrays i.e. frequency tracks, powers,
             # postions, etc. so that they have the same resolution as the
             # output of the wavetracker
@@ -369,8 +391,8 @@ class GridSimulator:
                         * len(ftrace)
                     )
                 )
-                f = minimum_filter1d(ftrace, 20000)
-                f = resample(f, num)
+                f = resample(ftrace, num)
+                f = median_filter(f, 100)
                 p_unfilt = resample(dists, num, axis=0)
                 x = resample(x_orig, num)
                 y = resample(y_orig, num)
@@ -436,6 +458,14 @@ class GridSimulator:
             con.log(msg)
 
         # Assemble the dataset class to be able to use the saving functions
+        print(f"track_freqs_concat: {track_freqs_concat.shape}")
+        print(f"track_powers: {track_powers.shape}")
+        print(f"track_idents: {track_idents.shape}")
+        print(f"track_indices: {track_indices.shape}")
+        print(f"track_times: {track_times.shape}")
+        print(f"xpos_concat: {xpos_concat.shape}")
+        print(f"ypos_concat: {ypos_concat.shape}")
+
         wt = WavetrackerData(
             freqs=track_freqs_concat,
             powers=track_powers,
@@ -695,7 +725,9 @@ def fakegrid_cli(output_path: pathlib.Path) -> None:
     config_path = config_path.resolve()
     config = load_sim_config(config_path)
 
-    gs = GridSimulator(config, output_path, 3)
+    chirper = ChirpGenerator(config)
+    gs = GridSimulator(config, chirper, output_path, 3)
+
     gs.run_simulations()
 
 

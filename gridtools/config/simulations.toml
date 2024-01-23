@@ -4,10 +4,10 @@
 
 # Note: The amount of data scales quickly with the samplerate, duration and number of 
 # electrodes (determined by the grid shape). All of this data is kept in memory until 
-# saved. Be careful to not cause a memory overflow.
+# saved. Be careful to not cause a memory overflow. RAM of at least 16GB is recommended.
 
 [meta]
-ngrids = 2 # how many recordings to simulate
+ngrids = 5 # how many recordings to simulate
 
 [grid]
 samplerate = 20000 # in Hz, samplerate of the raw signal
@@ -29,13 +29,15 @@ eodfnoise_band = [0.0, 0.01] # band of the limited band noise added to the EOD f
 min_delta_eodf = 20 # minimal frequency difference between 2 fish
 
 [chirps]
-model = "monophasic"
+method = "extracted" # can be extracted (inst freqs) or simulated (chirp model)
+model = "monophasic" # chirp model to use if method is simulated, can be monophasic or biphasic
+chirp_data_path = "/home/weygoldt/Projects/mscthesis/data/interrim/new_chirpextractions/resampled_chirps.npy" # where parameters for the chirp model or extracted instantaneous frequency snippets are.
+replace = false # whether to replace the chirp snippets in the chirp_data_path file
 min_chirp_dt = 0.2 # in seconds, minimum time between two chirps
 max_chirp_freq = 1 # in Hz, maximum chirp frequency
-max_chirp_contrast = 0.5 # maximum contrast of the chirp envelope drop
+max_chirp_contrast = 0.8 # maximum contrast of the chirp envelope drop
 chirpnoise_std = 1 # std of limited band noise added to the chirp frequency trace 
-chirpnoise_band = [0,100] # band of the limited band noise added to the chirp frequency trace
-chirp_params_path = "/home/weygoldt/Projects/mscthesis/data/interrim/chirpsimulations/chirp_fits_interpolated.csv" # where simulated chirp parameters are
+chirpnoise_band = [0,600] # band of the limited band noise added to the chirp frequency trace
 detector_str = "gt" # how to call the chirp array detector handle on disk
 
 [rises]

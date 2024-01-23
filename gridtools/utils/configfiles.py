@@ -88,13 +88,15 @@ class SimulationConfigFish(BaseModel):
 class SimulationConfigChirps(BaseModel):
     """Load chirp config for the simulation."""
 
+    method: str
     model: str
+    chirp_data_path: str
+    replace: bool
     min_chirp_dt: float
     max_chirp_freq: float
     max_chirp_contrast: float
     chirpnoise_std: float
     chirpnoise_band: tuple
-    chirp_params_path: str
     detector_str: str
 
 

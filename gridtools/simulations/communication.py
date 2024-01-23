@@ -102,7 +102,6 @@ def biphasic_chirp( # noqa
     """
     main_gauss = monophasic_chirp(x, mu, height, width, kurt)
 
-
     # lock undershoot mu to half of descending slope of main_gauss
     max_slope = np.argmin(np.diff(main_gauss))
     new_mu = (x[max_slope] + width / 2) / 2

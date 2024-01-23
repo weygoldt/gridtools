@@ -4,6 +4,7 @@ import numpy as np
 
 rng = np.random.default_rng(42)
 
+
 def get_random_timestamps(
     start_t: float, stop_t: float, n_timestamps: int, min_dt: float
 ) -> np.ndarray:
@@ -68,3 +69,64 @@ def get_random_timestamps(
         invalid_indices = np.where(time_diffs < min_dt)[0]
 
     return timestamps
+
+
+def get_width_heigth(time: np.ndarray, chirp: np.ndarray) -> tuple:
+    """Estimate the heigth and width of a chirp.
+
+    Parameters
+    ----------
+    time : numpy.ndarray
+        The time array for the chirp.
+    chirp : numpy.ndarray
+        The chirp signal.
+
+    Returns
+    -------
+    height : float
+        The height of the chirp.
+    duration : float
+        The duration of the chirp.
+    indices : tuple
+        The indices where the width was measured at.
+    """
+    # height is easy
+    height = np.max(chirp)
+    # width as the duration at 20% of the height
+    cutoff_chirp = chirp.copy()
+    cutoff_chirp[np.where(cutoff_chirp < 0.5 * height)] = 0
+    cutoff_chirp[np.where(cutoff_chirp > 0)] = 1
+    # get transitions from 0 to 1 and from 1 to 0
+    transitions = np.diff(cutoff_chirp)
+    # get the indices of the transitions
+    indices = np.where(transitions != 0)[0]
+    if len(indices) < 2:
+        return height, np.nan, np.nan
+    # now from the indices, descend to the median of the signal
+    md = np.median(chirp)
+    # descend down the left side to the median
+    for i in range(indices[0], 0, -1):
+        if chirp[i] < md:
+            indices[0] = i
+            break
+    # descend down the right side to the median
+    for i in range(indices[-1], len(chirp)):
+        if chirp[i] < md:
+            indices[-1] = i
+            break
+    # duration is the difference between the two indices on time
+    duration = (time[indices[-1]] - time[indices[0]])
+
+    # fig, ax = plt.subplots()
+    # ax.plot(time, chirp, c="C0")
+    # ax.axhline(md, c="C1", linestyle="--")
+    # ax.axvline(time[indices[0]], c="C1")
+    # ax.axvline(time[indices[-1]], c="C1")
+    # ax.set_xlabel("Time [s]")
+    # ax.set_ylabel("Height [Hz]")
+    # ax.set_title(f"Width: {duration:.3f} s")
+    # plt.show()
+    # print(f"Width: {duration:.3f} s")
+    # print(f"Height: {height:.3f} Hz")
+    # print(f"Indices: {indices[0]}, {indices[-1]}")
+    return height, duration, indices
