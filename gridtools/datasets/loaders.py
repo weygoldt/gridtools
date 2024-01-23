@@ -181,14 +181,15 @@ def load_chirps(path: pathlib.Path) -> ChirpData:
     params = np.array([])
 
     for detector in chirp_detectors:
-        if any(f"chirp_params_{det}.npy" in str(f) for f in files):
-            params = np.load(path / f"chirp_params_{det}.npy")
+        print(detector)
+        if any(f"chirp_params_{detector}.npy" in str(f) for f in files):
+            params = np.load(path / f"chirp_params_{detector}.npy")
             have_params = True
         if any(f"chirp_times_{detector}.npy" in str(f) for f in files):
             det = detector
             are_detected = True
-            chirp_times = np.load(path / f"chirp_times_{det}.npy")
-            chirp_ids = np.load(path / f"chirp_ids_{det}.npy").astype(int)
+            chirp_times = np.load(path / f"chirp_times_{detector}.npy")
+            chirp_ids = np.load(path / f"chirp_ids_{detector}.npy").astype(int)
             break
 
     return ChirpData(

@@ -84,8 +84,9 @@ class ChirpGenerator:
                 # delete chirp from data
                 self.data = np.delete(self.data, i, axis=0)
 
-            h, w, _ = get_width_heigth(chirp_time, chirp)
-            chirp_params.append((w, h, contrast))
+            mx, w, _ = get_width_heigth(chirp_time, chirp)
+            mn = np.min(chirp)
+            chirp_params.append((w, mx, mn, contrast))
 
             # taper ends with a tukey window
             window = tukey(len(chirp), alpha=0.3)
