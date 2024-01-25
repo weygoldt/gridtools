@@ -77,6 +77,7 @@ class ChirpGenerator:
 
         rng.shuffle(self.data)
         indices = np.arange(len(ctimes))
+        print(f"Making {len(ctimes)} chirps from extracted data.")
         for i, ctime, contrast  in zip(indices, ctimes, contrasts):
             chirp = self.data[i, :]
 
@@ -94,6 +95,16 @@ class ChirpGenerator:
 
             # add chirp to frequency trace at ctime
             tidx = np.argmin(np.abs(time - ctime))
+
+            # check if chirp fits on the trace or if it needs to be cut
+            # this happens when the chirp is too close to the beginning or end
+            # of the trace
+            if tidx - center < 0:
+                chirp = chirp[center - tidx :]
+                center = len(chirp) // 2
+            if tidx + center > len(ftrace):
+                chirp = chirp[: -(tidx + center - len(ftrace))]
+                center = len(chirp) // 2
             ftrace[tidx - center : tidx + center] += chirp
 
             # turn chirp into amp trough with specified contrast
@@ -127,7 +138,7 @@ class ChirpGenerator:
         )
 
         contrasts = rng.uniform(
-            0, self.config.chirps.max_chirp_contrast, size=self.nchirps
+            0.3, self.config.chirps.max_chirp_contrast, size=self.nchirps
         )
 
         if self.method == "extracted":
