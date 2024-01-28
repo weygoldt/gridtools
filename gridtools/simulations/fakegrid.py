@@ -51,6 +51,7 @@ from gridtools.utils.logger import Timer
 con = Console()
 rng = np.random.default_rng(42)
 rng = np.random.default_rng(55)
+rng = np.random.default_rng(66)
 
 
 class GridSimulator:
@@ -108,7 +109,7 @@ class GridSimulator:
 
     def run_simulations(self: Self) -> None:
         """Run the grid simulations."""
-        for griditer in range(self.config.meta.ngrids)[14:]:
+        for griditer in range(self.config.meta.ngrids)[17:]:
             self.make_grid(griditer)
             gc.collect()
 
