@@ -223,7 +223,7 @@ def interpolate_tracks(
     else:
         new_full_times = data.track.times
 
-    for track_id in data.track.ids:
+    for track_id in data.track.ids[~np.isnan(data.track.ids)]:
         track_freqs = data.track.freqs[data.track.idents == track_id]
         # track_powers = data.track.powers[data.track.idents == track_id, :]
         track_times = data.track.times[

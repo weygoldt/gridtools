@@ -205,6 +205,7 @@ def compute_spectrogram(
         hop_length=hop_length,
         power=2,
         normalized=True,
+        # normalized=False,
         window_fn=torch.hann_window,
     ).to(device)
     spec = spectrogram_of(data)
