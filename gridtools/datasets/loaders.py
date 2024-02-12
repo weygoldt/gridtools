@@ -53,7 +53,7 @@ def load_wavetracker(path: pathlib.Path) -> WavetrackerData:
     has_positions = True
 
     if not any("fund_v.npy" in str(f) for f in files):
-        msg = "No wavetracker dataset found in the provided directory!"
+        msg = f"No wavetracker dataset found in {path}"
         raise FileNotFoundError(msg)
 
     if not any("xpos.npy" in str(f) for f in files):
@@ -126,11 +126,11 @@ def load_grid(path: pathlib.Path) -> GridData:
     files = list(path.glob("*traces*"))
 
     if len(files) == 0:
-        msg = "No raw dataset found in the provided directory!"
+        msg = f"No raw dataset found in {path}"
         raise FileNotFoundError(msg)
     if len(files) > 1:
         msg = (
-            "More than one raw dataset found!"
+            f"More than one raw dataset found in {path}"
             "A dataset must only contain one raw dataset."
         )
         raise FileNotFoundError(msg)
@@ -144,10 +144,16 @@ def load_grid(path: pathlib.Path) -> GridData:
         msg = "DataLoader samplerate must be a float."
         raise TypeError(msg)
     if not isinstance(shape, tuple):
-        msg = "DataLoader shape must be a tuple."
+        msg = (
+            "DataLoader shape must be a tuple."
+            f"Error loading raw dataset in {path}"
+        )
         raise TypeError(msg)
     if not isinstance(shape[0], int):
-        msg = "DataLoader shape must have at least one dimension."
+        msg = (
+            "DataLoader shape must have at least one dimension."
+            f"Error loading raw dataset in {path}."
+            )
         raise TypeError(msg)
 
     return GridData(rec=rec, samplerate=samplerate, shape=shape)
