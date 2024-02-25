@@ -102,6 +102,8 @@ pre-commit install
 pre-commit run --all-files
 ```
 ## To do
+- [ ] For fakegrid module check out librosa and scaper, the latter specifically designed for 
+      soundscape mixing to traing DNNs
 - [ ] Migrate to datasets subpackage
 - [ ] Convert the simulations module into a subpackage and refactor
 - [ ] Write a converter that puts all wavetracker and other extracted 
