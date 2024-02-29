@@ -17,7 +17,7 @@ from thunderfish.dataloader import DataLoader
 
 from gridtools.utils.exceptions import GridDataMismatchError
 
-# The order determines the priority of the detectors.
+# The order determines the priority of which the data of the detectors is used.
 chirp_detectors = ["gt", "rcnn", "cnn", "None"]
 rise_detectors = ["gt", "rcnn", "pd", "None"]
 
@@ -404,6 +404,71 @@ class ChirpData(BaseModel):
     def pprint(self: "ChirpData") -> None:
         """Pretty-print the attributes of the object."""
         _pprint(self)
+
+
+class ChirpDataV2(BaseModel):
+    """Contains data about chirps produced by fish in the dataset.
+
+    Parameters
+    ----------
+    - `recording` : `str`
+        The name of the recording.
+    - `spec_batches` : `np.ndarray`
+        A numpy array containing the batch numbers of the spectrogram.
+    - `spec_batch_raw_idxs` : `np.ndarray`
+        A numpy array containing index to the data from the raw recording
+        that was used to compute the spectrogram.
+    - `spec_windows` : `np.ndarray`
+        A numpy array containing the window (of n windows in one batch)
+        of the spectrogram.
+    - `spec_freq_ranges` : `np.ndarray`
+        A numpy array containing the frequency range of the spectrogram.
+    - `spec_batch_idxs` : `np.ndarray`
+        A numpy array containing the batch index of the spectrogram.
+    - `bbox_ids` : `np.ndarray`
+        A numpy array containing the unique identifier of the bounding box.
+        This is mostly only used during detection.
+    - `bboxes_xy`: `np.ndarray`
+        A numpy array containing the bounding box coordinates in the
+        x1y1x2y2 format.
+    - `bboxes_ft` : `np.ndarray`
+        A numpy array containing the bounding box coordinates in the
+        frequency-time domain.
+    - `spec_powers` : `np.ndarray`
+        A numpy array containing the interpolated power of the spectrogram.
+    - `spec_freqs` : `np.ndarray`
+        A numpy array containing the frequency bins of the spectrogram.
+    - `spec_times` : `np.ndarray`
+        A numpy array containing the time bins of the spectrogram.
+    - `detection_scores` : `np.ndarray`
+        A numpy array containing the detection scores of the chirps.
+    - `pred_eodfs` : `np.ndarray`
+        A numpy array containing the predicted EODFs of the chirp emitters.
+    - `pred_ids` : `np.ndarray`
+        A numpy array containing the predicted identifiers of the chirp emitters.
+    - `are_detected` : `bool`
+        Whether or not the chirps are detected.
+        If not, all arrays are empty.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
+    recording: str
+    spec_batches: npt.NDArray[np.int_]
+    spec_batch_raw_idxs: npt.NDArray[np.int_]
+    spec_windows: npt.NDArray[np.int_]
+    spec_freq_ranges: npt.NDArray[np.int_]
+    spec_batch_idxs: npt.NDArray[np.int_]
+    bbox_ids: npt.NDArray[np.int_]
+    bboxes_x1y1x2y2: npt.NDArray[np.float_]
+    bboxes_f1t1f2t2: npt.NDArray[np.float_]
+    spec_powers: npt.NDArray[np.float_]
+    spec_freqs: npt.NDArray[np.float_]
+    spec_times: npt.NDArray[np.float_]
+    detection_scores: npt.NDArray[np.float_]
+    pred_eodfs: npt.NDArray[np.float_]
+    pred_ids: npt.NDArray[np.int_]
+    are_detected: bool
+    detector: str
 
 
 class RiseData(BaseModel):
