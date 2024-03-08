@@ -80,11 +80,8 @@ class GridSimulator:
         # self.chirp_params = pd.read_csv(chirp_data_path).to_numpy()
         # rng.shuffle(self.chirp_params)
 
-        msg = (
-            f"with {self.nelectrodes} electrodes each ..."
-        )
+        msg = f"with {self.nelectrodes} electrodes each ..."
         con.log(msg)
-
 
     @property
     def chirp_model(self: Self) -> Callable:
@@ -124,23 +121,23 @@ class GridSimulator:
             self.config.fish.min_delta_eodf,
         )
 
-        stop = False # stop simulation when no chirp params are left
-        track_freqs = [] # track frequencies are stored here
-        track_freqs_orig = [] # track frequencies are stored here
-        track_powers = [] # track powers are stored here
-        track_idents = [] # track idents are stored here
-        track_indices = [] # fish indices for time array are stored here
-        xpos_orig = [] # Original 30 Hz fish positions
-        ypos_orig = [] # Original 30 Hz fish positions
-        xpos_fine = [] # fish positions are stored after upsampling to 20kHz
-        ypos_fine = [] # fish positions are stored after upsampling to 20kHz
-        xpos = [] # fish positions are stored here after downsampling to 3Hz
-        ypos = [] # fish positions are stored here after downsampling to 3Hz
-        chirp_times = [] # chirp times are stored here
-        chirp_idents = [] # fish idents are stored here
-        chirp_params = [] # chirp parameters are stored here
-        detector = self.config.chirps.detector_str # how to name chirp file
-        signal = np.array([]) # Here we store the electric signal later
+        stop = False  # stop simulation when no chirp params are left
+        track_freqs = []  # track frequencies are stored here
+        track_freqs_orig = []  # track frequencies are stored here
+        track_powers = []  # track powers are stored here
+        track_idents = []  # track idents are stored here
+        track_indices = []  # fish indices for time array are stored here
+        xpos_orig = []  # Original 30 Hz fish positions
+        ypos_orig = []  # Original 30 Hz fish positions
+        xpos_fine = []  # fish positions are stored after upsampling to 20kHz
+        ypos_fine = []  # fish positions are stored after upsampling to 20kHz
+        xpos = []  # fish positions are stored here after downsampling to 3Hz
+        ypos = []  # fish positions are stored here after downsampling to 3Hz
+        chirp_times = []  # chirp times are stored here
+        chirp_idents = []  # fish idents are stored here
+        chirp_params = []  # chirp parameters are stored here
+        detector = self.config.chirps.detector_str  # how to name chirp file
+        signal = np.array([])  # Here we store the electric signal later
 
         for fishiter in range(nfish):
             # this is the baseline eodf of the current fishs
@@ -228,7 +225,9 @@ class GridSimulator:
                 )
 
                 # scale back to std of 1
-                chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(chirpnoise)
+                chirpnoise = (chirpnoise - np.mean(chirpnoise)) / np.std(
+                    chirpnoise
+                )
 
                 # add std from config
                 chirpnoise *= self.config.chirps.chirpnoise_std
@@ -260,7 +259,6 @@ class GridSimulator:
                 # store the original frequency trace
                 track_freqs_orig.append(ftrace)
 
-
             ### Build the EOD -------------------------------------------------
             # make the eod
             with Timer(con, "Simulating EOD", self.verbosity):
@@ -288,7 +286,7 @@ class GridSimulator:
                 rng.uniform(
                     low=self.config.grid.boundaries[1],
                     high=self.config.grid.boundaries[3],
-                    size=1
+                    size=1,
                 )[0],
             )
             if self.verbosity > 1:
@@ -349,7 +347,7 @@ class GridSimulator:
             with Timer(
                 con,
                 "Attenuating signals with distance to electrodes",
-                self.verbosity
+                self.verbosity,
             ):
                 # Compute distance between fish and each electrode
                 # for every point in time
@@ -361,12 +359,12 @@ class GridSimulator:
                 # Square the distance as field decreases with distance squared
                 # and invert the distance as larger distance means smaller
                 # field
-                dists = -(dists**2) # Add term for conductivity maybe here
+                dists = -(dists**2)  # Add term for conductivity maybe here
 
                 # Normalize the distances between 0 and 1 (this also
                 # needs to change when we introduce conductivity)
-                dists = (
-                    dists - np.min(dists)) / (np.max(dists) - np.min(dists)
+                dists = (dists - np.min(dists)) / (
+                    np.max(dists) - np.min(dists)
                 )
 
                 # Add the fish signal onto all electrodes
@@ -407,13 +405,13 @@ class GridSimulator:
                         lowpass_filter(
                             pi,
                             self.config.grid.downsample_lowpass,
-                            self.config.grid.wavetracker_samplerate
+                            self.config.grid.wavetracker_samplerate,
                         )
                         for pi in p_unfilt.T
                     ]
                 ).T
                 # After filtering some vals can be negative
-                p[p < 0] = 0 # rectify negative values (powers should be 0-1)
+                p[p < 0] = 0  # rectify negative values (powers should be 0-1)
 
             # and now save everything
             track_freqs.append(f)
@@ -444,7 +442,10 @@ class GridSimulator:
             track_indices = np.concatenate(track_indices)
             xpos_concat = np.concatenate(xpos)
             ypos_concat = np.concatenate(ypos)
-            track_times = np.arange(len(track_freqs[0])) / self.config.grid.wavetracker_samplerate
+            track_times = (
+                np.arange(len(track_freqs[0]))
+                / self.config.grid.wavetracker_samplerate
+            )
             chirp_times = np.concatenate(chirp_times)
             chirp_idents = np.concatenate(chirp_idents)
             chirp_params = np.concatenate(chirp_params)
@@ -453,8 +454,8 @@ class GridSimulator:
         # (as we added many EODs this can get large) but if we dont norm it
         # everything outside is clipped by the saving function
         with Timer(con, "Normalizing signal", self.verbosity):
-            signal = (
-                (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
+            signal = (signal - np.min(signal)) / (
+                np.max(signal) - np.min(signal)
             )
 
         if self.verbosity > 0:
@@ -512,7 +513,9 @@ class GridSimulator:
             shape=signal.shape,
         )
 
-        path = pathlib.Path(f"{self.output_path}/simulated_grid_{griditer:03d}")
+        path = pathlib.Path(
+            f"{self.output_path}/simulated_grid_{griditer:03d}"
+        )
 
         data = Dataset(
             path=path,
@@ -567,13 +570,15 @@ class GridAugmenter:
         self.output_path = output_path
         self.fake_datasets = list(self.sim_path.iterdir())
         self.fake_datasets = [
-            path for path in self.fake_datasets if \
-            len(list(path.glob("*traces*"))) > 0
+            path
+            for path in self.fake_datasets
+            if len(list(path.glob("*traces*"))) > 0
         ]
         self.real_datasets = list(self.real_path.iterdir())
         self.real_datasets = [
-            path for path in self.real_datasets if \
-            len(list(path.glob("*traces*"))) > 0
+            path
+            for path in self.real_datasets
+            if len(list(path.glob("*traces*"))) > 0
         ]
         msg = "Successfully initialized GridAugmenter."
         con.log(msg)
@@ -610,7 +615,9 @@ class GridAugmenter:
             # without chirps
             while augmented_dataset is None:
                 real_dataset = load(rng.choice(self.real_datasets))
-                augmented_dataset = self.augment_grid(fake_dataset, real_dataset)
+                augmented_dataset = self.augment_grid(
+                    fake_dataset, real_dataset
+                )
 
                 msg = "No valid snippet found, trying again..."
                 con.log(msg)
@@ -655,9 +662,9 @@ class GridAugmenter:
         communication as possible.
         """
         # normalize the simulated dataset
-        sd.track.powers = (sd.track.powers - np.mean(sd.track.powers)) / np.std(
-            sd.track.powers
-        )
+        sd.track.powers = (
+            sd.track.powers - np.mean(sd.track.powers)
+        ) / np.std(sd.track.powers)
         sd.grid.rec = (sd.grid.rec[:] - np.mean(sd.grid.rec[:])) / np.std(
             sd.grid.rec[:]
         )
@@ -705,8 +712,9 @@ class GridAugmenter:
         real_snippet = rd.grid.rec[random_start:random_end, random_electrodes]
 
         # get mean and std of the real recording
-        mean_power, std_power = np.nanmean(rd.track.powers), np.nanstd(
-            rd.track.powers
+        mean_power, std_power = (
+            np.nanmean(rd.track.powers),
+            np.nanstd(rd.track.powers),
         )
         mean_amp, std_amp = np.mean(real_snippet), np.std(real_snippet)
 
