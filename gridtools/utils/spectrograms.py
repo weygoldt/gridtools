@@ -103,6 +103,7 @@ def overlap_to_hoplen(overlap: float, nfft: int) -> int:
         return overlap
     return overlap + 1
 
+
 def sint(num: float) -> int:
     """Convert a float to an int without rounding.
 
@@ -134,8 +135,8 @@ def specshow(
     time: np.ndarray,
     freq: np.ndarray,
     ax: "matplotlib.axes.Axes",
-    **kwargs: dict
-    ) -> np.ndarray:
+    **kwargs: dict,
+) -> np.ndarray:
     """Plot a spectrogram.
 
     Parameters
@@ -211,6 +212,10 @@ def compute_spectrogram(
     spec = spectrogram_of(data)
     time = np.arange(0, spec.shape[1]) * hop_length / samplingrate
     freq = np.arange(0, spec.shape[0]) * samplingrate / nfft
+
+    print(
+        f"Spectrogram params: nfft={nfft}, hop_length={hop_length}, power=2, window_fn=torch.hann_window, normalized=True"
+    )
     return spec, time, freq
 
 
