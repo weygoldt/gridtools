@@ -78,8 +78,8 @@ def direction_pdf(
 
 
 def step_pdf(
-        max_veloc: float, duration: int, target_fs: int = 30
-    ) -> np.ndarray:
+    max_veloc: float, duration: int, target_fs: int = 30
+) -> np.ndarray:
     """Generate a distribution of steps lengths of a random walker.
 
     Step lengths are drawn from a gamma distribution.
@@ -322,6 +322,10 @@ def fold_space(
         raise ValueError(msg)
 
     # fold back the positions if they are outside the boundaries
+    folding_x = []
+    folding_y = []
+    folding_x.append(x.copy())
+    folding_y.append(y.copy())
     boundaries = np.ravel(boundaries)
     while (
         np.any(x < boundaries[0])
@@ -341,7 +345,60 @@ def fold_space(
         y[y > boundaries[3]] = boundaries[3] - (
             y[y > boundaries[3]] - boundaries[3]
         )
+        folding_x.append(x.copy())
+        folding_y.append(y.copy())
 
+    # figxy, ax = plt.subplots(1, len(folding_x), constrained_layout=True)
+    # limit = 5
+    # for i, (x, y) in enumerate(zip(folding_x, folding_y)):
+    #     ax[i].plot(x, y, ".-")
+    #     # limit the plot limits so that rectangle is in the center
+    #     # but all points are still visible
+    #     space_center = np.mean(boundaries[[0, 2]]), np.mean(boundaries[[1, 3]])
+    #     maxx = np.max(np.abs(x))
+    #     maxy = np.max(np.abs(y))
+    #     padding = boundaries[2] * 0.1
+    #     if (maxx <= boundaries[2]) or (maxy <= boundaries[3]):
+    #         maxx = boundaries[2] + padding
+    #         maxy = boundaries[3] + padding
+    #
+    #     ax[i].set_xlim(space_center[0] - maxx, space_center[0] + maxx)
+    #     ax[i].set_ylim(space_center[1] - maxy, space_center[1] + maxy)
+    #     ax[i].set_aspect("equal")
+    #     # plot rectangle indicating boundaries
+    #     ax[i].add_patch(
+    #         plt.Rectangle(
+    #             (boundaries[0], boundaries[1]),
+    #             boundaries[2] - boundaries[0],
+    #             boundaries[3] - boundaries[1],
+    #             fill=False,
+    #             color="black",
+    #         )
+    #     )
+    #     ax[i].set_aspect("equal")
+    #     ax[i].set_title(f"{i} iterations")
+    #     if i > limit:
+    #         break
+    #
+    # outdict = {
+    #     "x": folding_x,
+    #     "y": folding_y,
+    #     "boundaries": boundaries,
+    # }
+    # from pathlib import Path
+    #
+    # path = Path("data/interrim/spacefolding")
+    # path.mkdir(parents=True, exist_ok=True)
+    # file = path / "spacefolding_1.npz"
+    # if file.exists():
+    #     i = 1
+    #     while file.exists():
+    #         i += 1
+    #         file = path / f"spacefolding_{i}.npz"
+    #     np.savez(file, **outdict)
+    # else:
+    #     np.savez(file, **outdict)
+    #
     return x, y
 
 

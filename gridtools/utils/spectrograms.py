@@ -201,15 +201,30 @@ def compute_spectrogram(
 
     data = data.to(device)
 
+    pad = nfft
     spectrogram_of = Spectrogram(
         n_fft=nfft,
         hop_length=hop_length,
         power=2,
-        normalized=True,
-        # normalized=False,
+        # normalized=True,
+        normalized=False,
         window_fn=torch.hann_window,
+        pad=pad,  # <--- this is the important part
     ).to(device)
     spec = spectrogram_of(data)
+    pad_samples = int(np.ceil(pad / hop_length))
+
+    # check how many dimensions the spectrogram has
+    if len(spec.shape) == 3:
+        spec = spec[:, :, pad_samples:-pad_samples]
+    elif len(spec.shape) == 2:
+        spec = spec[:, pad_samples:-pad_samples]
+    else:
+        msg = (
+            "Spectrogram has strange dimensions. Please check the input data."
+        )
+        raise ValueError(msg)
+
     time = np.arange(0, spec.shape[1]) * hop_length / samplingrate
     freq = np.arange(0, spec.shape[0]) * samplingrate / nfft
 

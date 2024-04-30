@@ -100,4 +100,8 @@ def envelope(
         The envelope of the signal
     """
     sos = butter(2, cutoff_frequency, "lowpass", fs=samplerate, output="sos")
-    return np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
+    env = np.sqrt(2) * sosfiltfilt(sos, np.abs(signal))
+
+    fact = np.max(np.abs(signal) / np.abs(env))
+    scaled_env = env * fact
+    return scaled_env
