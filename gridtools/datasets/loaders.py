@@ -3,7 +3,7 @@
 import pathlib
 
 import numpy as np
-from thunderfish.dataloader import DataLoader
+from thunderlab.dataloader import DataLoader
 
 from gridtools.datasets.models import (
     ChirpData,
@@ -153,7 +153,7 @@ def load_grid(path: pathlib.Path) -> GridData:
         msg = (
             "DataLoader shape must have at least one dimension."
             f"Error loading raw dataset in {path}."
-            )
+        )
         raise TypeError(msg)
 
     return GridData(rec=rec, samplerate=samplerate, shape=shape)

@@ -3,7 +3,7 @@
 import pathlib
 
 import numpy as np
-from thunderfish.datawriter import write_data
+from thunderlab.datawriter import write_data
 
 from gridtools.datasets.models import (
     CommunicationData,

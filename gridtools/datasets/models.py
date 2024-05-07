@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 from rich.pretty import pprint as rpprint
-from thunderfish.dataloader import DataLoader
+from thunderlab.dataloader import DataLoader
 
 from gridtools.utils.exceptions import GridDataMismatchError
 
@@ -266,7 +266,7 @@ class GridData(BaseModel):
         - `ValidationError`
             If the raw data is not a numpy array or a DataLoader object.
         """
-        n_dimensions = 2 # Grid data must have two dimensions.
+        n_dimensions = 2  # Grid data must have two dimensions.
         if not isinstance(v, (np.ndarray, DataLoader)):
             msg = "Raw data must be a numpy array or a DataLoader."
             raise ValidationError(msg)
