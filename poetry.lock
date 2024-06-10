@@ -2072,9 +2072,32 @@ scipy = "*"
 
 [package.source]
 type = "git"
-url = "https://github.com/weygoldt/thunderfish.git"
+url = "https://github.com/janscience/thunderfish.git"
 reference = "HEAD"
-resolved_reference = "d7357879037b8197ccc770173a33179b1beb0250"
+resolved_reference = "ec413611dea259cc488d89f6738aa55a6eeecbb0"
+
+[[package]]
+name = "thunderlab"
+version = "1.2.0"
+description = "Algorithms and scripts for analyzing recordings of electric fish waveforms."
+optional = false
+python-versions = ">=3.6"
+files = []
+develop = false
+
+[package.dependencies]
+audioio = ">=2.1"
+matplotlib = "*"
+numba = "*"
+numpy = "*"
+scikit-learn = "*"
+scipy = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/bendalab/thunderlab.git"
+reference = "HEAD"
+resolved_reference = "56531258c3f71e8a3c1e30236be49ad84a15e341"
 
 [[package]]
 name = "tifffile"
@@ -2349,4 +2372,4 @@ test = ["covdefaults (>=2.3)", "coverage (>=7.2.7)", "coverage-enable-subprocess
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11, <3.13"
-content-hash = "c76b10923703fe8ff1de9c3796b4a5c4c536d126490139c2d1fe62591c2f0025"
+content-hash = "d875c9c9247d32e0872ec473c229fad29d3749223ea2b7a10a33f90ef0c21778"

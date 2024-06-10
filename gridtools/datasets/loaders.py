@@ -138,7 +138,7 @@ def load_grid(path: pathlib.Path) -> GridData:
     file = files[0]
     rec = DataLoader(str(path / file.name))
     shape = rec.shape
-    samplerate = rec.samplerate
+    samplerate = rec.rate
 
     if not isinstance(samplerate, float):
         msg = "DataLoader samplerate must be a float."
