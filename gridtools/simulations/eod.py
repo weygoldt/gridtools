@@ -1,14 +1,16 @@
 """Classes and functios for generating electric organ discharges (EODs)."""
 
-from typing import Union, List, Tuple, Optional, Any, TypeVar, Generic, Self, Callable
+from typing import Callable, Optional, Self, Tuple
+
 import numpy as np
-import matplotlib.pyplot as plt
-from gridtools.utils.configfiles import SimulationConfig
-from gridtools.simulations.utils import get_random_timestamps
-from gridtools.utils.logger import Timer
-from gridtools.simulations.communication import monophasic_chirp, biphasic_chirp
 from scipy.signal.windows import tukey
-from gridtools.simulations.utils import get_width_heigth
+
+from gridtools.simulations.communication import (
+    biphasic_chirp,
+    monophasic_chirp,
+)
+from gridtools.simulations.utils import get_random_timestamps, get_width_heigth
+from gridtools.utils.configfiles import SimulationConfig
 
 rng = np.random.default_rng()
 

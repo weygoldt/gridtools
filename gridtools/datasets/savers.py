@@ -10,7 +10,6 @@ from gridtools.datasets.models import (
     Dataset,
     GridData,
     WavetrackerData,
-    ChirpDataV2,
 )
 
 

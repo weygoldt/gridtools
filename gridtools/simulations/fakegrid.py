@@ -6,11 +6,8 @@ import shutil
 from typing import Callable, Self
 
 import numpy as np
-import pandas as pd
 from rich.console import Console
-from rich.progress import track
-from scipy.ndimage import minimum_filter1d, median_filter
-from scipy.signal import medfilt
+from scipy.ndimage import median_filter
 from scipy.signal import resample
 from thunderfish.fakefish import wavefish_eods
 
@@ -50,8 +47,6 @@ from gridtools.utils.logger import Timer
 
 con = Console()
 rng = np.random.default_rng(42)
-rng = np.random.default_rng(55)
-rng = np.random.default_rng(66)
 
 
 class GridSimulator:
@@ -340,10 +335,13 @@ class GridSimulator:
 
             ### Combine positions and EOD -------------------------------------
             # Now attenuate the signals with distance to electrodes
+
             # TODO: This is where a dipole model should be introduced.
             # With the current version, a fish is just a monopole
-            # And one more # TODO: This is where different conductivities
+
+            # TODO: This is where different conductivities
             # Should be introduced.
+
             with Timer(
                 con,
                 "Attenuating signals with distance to electrodes",
@@ -381,7 +379,7 @@ class GridSimulator:
             else:
                 signal += attenuated_signals
 
-            ### Downsample the signals to resemple wave tracker ---------------
+            ### Downsample the signals to resemble wave tracker ---------------
             # Downsample the tracking arrays i.e. frequency tracks, powers,
             # postions, etc. so that they have the same resolution as the
             # output of the wavetracker

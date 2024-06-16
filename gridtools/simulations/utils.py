@@ -60,6 +60,7 @@ def get_random_timestamps(
     time_diffs = np.diff(timestamps)
     invalid_indices = np.where(time_diffs < min_dt)[0]
 
+    # TODO: Depending on the params, this could be an infinite loop
     while len(invalid_indices) > 0:
         num_invalid = len(invalid_indices)
         new_timestamps = rng.uniform(start_t, stop_t, num_invalid)
@@ -90,6 +91,8 @@ def get_width_heigth(time: np.ndarray, chirp: np.ndarray) -> tuple:
     indices : tuple
         The indices where the width was measured at.
     """
+    # TODO: In my mscthesis analysis scripts, there is a nicer way
+
     # height is easy
     height = np.max(chirp)
     # width as the duration at 20% of the height
@@ -115,7 +118,7 @@ def get_width_heigth(time: np.ndarray, chirp: np.ndarray) -> tuple:
             indices[-1] = i
             break
     # duration is the difference between the two indices on time
-    duration = (time[indices[-1]] - time[indices[0]])
+    duration = time[indices[-1]] - time[indices[0]]
 
     # fig, ax = plt.subplots()
     # ax.plot(time, chirp, c="C0")
