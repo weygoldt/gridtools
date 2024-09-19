@@ -87,14 +87,14 @@ class WavetrackerData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
-    freqs: npt.NDArray[np.float_]
-    powers: npt.NDArray[np.float_]
-    idents: npt.NDArray[np.float_]
+    freqs: npt.NDArray[np.float64]
+    powers: npt.NDArray[np.float64]
+    idents: npt.NDArray[np.float64]
     indices: npt.NDArray[np.int_]
-    ids: npt.NDArray[np.float_]
-    times: npt.NDArray[np.float_]
-    xpos: npt.NDArray[np.float_]
-    ypos: npt.NDArray[np.float_]
+    ids: npt.NDArray[np.float64]
+    times: npt.NDArray[np.float64]
+    xpos: npt.NDArray[np.float64]
+    ypos: npt.NDArray[np.float64]
     has_positions: bool
 
     @field_validator(
@@ -337,9 +337,9 @@ class ChirpData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
-    times: npt.NDArray[np.float_]
+    times: npt.NDArray[np.float64]
     idents: npt.NDArray[np.int_]
-    params: npt.NDArray[np.float_]
+    params: npt.NDArray[np.float64]
     are_detected: bool
     have_params: bool
     detector: str
@@ -459,13 +459,13 @@ class ChirpDataV2(BaseModel):
     spec_freq_ranges: npt.NDArray[np.int_]
     spec_batch_idxs: npt.NDArray[np.int_]
     bbox_ids: npt.NDArray[np.int_]
-    bboxes_x1y1x2y2: npt.NDArray[np.float_]
-    bboxes_f1t1f2t2: npt.NDArray[np.float_]
-    spec_powers: npt.NDArray[np.float_]
-    spec_freqs: npt.NDArray[np.float_]
-    spec_times: npt.NDArray[np.float_]
-    detection_scores: npt.NDArray[np.float_]
-    pred_eodfs: npt.NDArray[np.float_]
+    bboxes_x1y1x2y2: npt.NDArray[np.float64]
+    bboxes_f1t1f2t2: npt.NDArray[np.float64]
+    spec_powers: npt.NDArray[np.float64]
+    spec_freqs: npt.NDArray[np.float64]
+    spec_times: npt.NDArray[np.float64]
+    detection_scores: npt.NDArray[np.float64]
+    pred_eodfs: npt.NDArray[np.float64]
     pred_ids: npt.NDArray[np.int_]
     are_detected: bool
     detector: str
@@ -508,9 +508,9 @@ class RiseData(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
-    times: npt.NDArray[np.float_]
+    times: npt.NDArray[np.float64]
     idents: npt.NDArray[np.int_]
-    params: npt.NDArray[np.float_]
+    params: npt.NDArray[np.float64]
     are_detected: bool
     have_params: bool
     detector: str
