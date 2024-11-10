@@ -2,6 +2,7 @@
 
 import pathlib
 
+from IPython import embed
 import numpy as np
 from thunderlab.dataloader import DataLoader
 
@@ -123,7 +124,14 @@ def load_grid(path: pathlib.Path) -> GridData:
     rec.pprint()
     ```
     """
-    files = list(path.glob("*traces*"))
+    # check if dir exists
+    if not path.exists():
+        msg = f"Directory {path} does not exist."
+        embed()
+        raise FileNotFoundError(msg)
+
+    files = list(path.glob("*wav"))
+    allfiles = list(path.glob("*"))
 
     if len(files) == 0:
         msg = f"No raw dataset found in {path}"
