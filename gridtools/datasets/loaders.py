@@ -127,24 +127,28 @@ def load_grid(path: pathlib.Path) -> GridData:
     # check if dir exists
     if not path.exists():
         msg = f"Directory {path} does not exist."
-        embed()
         raise FileNotFoundError(msg)
 
-    files = list(path.glob("*wav"))
-    allfiles = list(path.glob("*"))
+    files = sorted(list(path.glob("*wav")))
 
     if len(files) == 0:
         msg = f"No raw dataset found in {path}"
         raise FileNotFoundError(msg)
+
+    # Check if single file or multi file dataset
+    load_path = [str(file) for file in files]
     if len(files) > 1:
         msg = (
-            f"More than one raw dataset found in {path}"
-            "A dataset must only contain one raw dataset."
+            f"Warning: More than one raw dataset found in {path}"
+            "Assuming multi-file .wav dataset."
         )
-        raise FileNotFoundError(msg)
+    else:
+        load_path = str(files[0])
 
-    file = files[0]
-    rec = DataLoader(str(path / file.name))
+    print(f"Load path: {load_path}")
+    print(f"Files: {files}")
+
+    rec = DataLoader(load_path)
     shape = rec.shape
     samplerate = rec.rate
 
