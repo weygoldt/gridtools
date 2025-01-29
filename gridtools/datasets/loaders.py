@@ -129,9 +129,24 @@ def load_grid(path: pathlib.Path) -> GridData:
         msg = f"Directory {path} does not exist."
         raise FileNotFoundError(msg)
 
-    files = sorted(list(path.glob("*wav")))
+    rec_path = path / "recordings"
+    wav_files = sorted(list(path.glob("*wav")))
+    raw_files = sorted(list(path.glob("*raw")))
+    rec_wav_files = sorted(list(rec_path.glob("*wav")))
 
-    if len(files) == 0:
+    has_files = False
+    files = []
+    if len(wav_files) > 0:
+        files = wav_files
+        has_files = True
+    if len(raw_files) > 0:
+        files = raw_files
+        has_files = True
+    if len(rec_wav_files) > 0:
+        files = rec_wav_files
+        has_files = True
+
+    if not has_files:
         msg = f"No raw dataset found in {path}"
         raise FileNotFoundError(msg)
 
@@ -327,7 +342,57 @@ def load_com(path: pathlib.Path) -> CommunicationData:
     return CommunicationData(chirp=chirp, rise=rise, are_detected=are_detected)
 
 
-def load(path: pathlib.Path) -> Dataset:
+def find_derived_path(raw_path: pathlib.Path) -> pathlib.Path:
+    """
+    Finds the derived data path based on the raw data path.
+
+    Parameters
+    ----------
+    - `raw_path` : `pathlib.Path`
+        The path to the raw data.
+
+    Returns
+    -------
+    - `pathlib.Path`
+        The path to the derived data if found, otherwise returns the raw path.
+    """
+    parent = raw_path.parent.parent
+    print(parent)
+    derived_candidates = [
+        "derived_data",
+        "intermediate",
+        "interim",
+        "derived",
+        "intermediate_data",
+        "interim_data",
+    ]
+
+    found_derived_path = False
+    derived_path = raw_path
+    for candidate in derived_candidates:
+        derived_path = parent / candidate / raw_path.parts[-1]
+        if derived_path.exists():
+            found_derived_path = True
+            break
+
+    found_wavetracker_files = False
+    files = list(derived_path.glob("*.npy"))
+    if any("fund_v.npy" in str(f) for f in files):
+        found_wavetracker_files = True
+    else:
+        derived_path = derived_path / "recordings"
+
+    files = list(derived_path.glob("*.npy"))
+    if any("fund_v.npy" in str(f) for f in files):
+        found_wavetracker_files = True
+
+    if found_derived_path and found_wavetracker_files:
+        return derived_path
+    msg = "Could not find wavetracker (derived) data!"
+    raise FileNotFoundError(msg)
+
+
+def load(path: pathlib.Path, search_intermediate: bool = False) -> Dataset:
     """
     Load all data from a dataset and build a Dataset object.
 
@@ -335,6 +400,9 @@ def load(path: pathlib.Path) -> Dataset:
     ----------
     - `path` : `pathlib.Path`
         The path to the dataset.
+
+    - `seach_intermediate` : `bool`
+        If True, search for intermediate data.
 
     Returns
     -------
@@ -356,9 +424,19 @@ def load(path: pathlib.Path) -> Dataset:
     ds.pprint()
     ```
     """
+    derived_path = path
+    print(path.parts[-2])
+    if search_intermediate:
+        raw_keywords = ["raw", "raw_data"]
+        if any(keyword in path.parts[-2].lower() for keyword in raw_keywords):
+            print("searching for intermediate data")
+            derived_path = find_derived_path(path)
+
+    print(derived_path)
+
     return Dataset(
         path=path,
         grid=load_grid(path),
-        track=load_wavetracker(path),
-        com=load_com(path),
+        track=load_wavetracker(derived_path),
+        com=load_com(derived_path),
     )
