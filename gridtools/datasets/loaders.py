@@ -82,6 +82,7 @@ def load_wavetracker(path: pathlib.Path) -> WavetrackerData:
         has_positions=has_positions,
         xpos=xpos,
         ypos=ypos,
+        path=path,
     )
 
 
@@ -183,7 +184,12 @@ def load_grid(path: pathlib.Path) -> GridData:
         )
         raise TypeError(msg)
 
-    return GridData(rec=rec, samplerate=samplerate, shape=shape)
+    return GridData(
+        rec=rec,
+        samplerate=samplerate,
+        shape=shape,
+        path=path,
+    )
 
 
 def load_chirps(path: pathlib.Path) -> ChirpData:
@@ -232,6 +238,7 @@ def load_chirps(path: pathlib.Path) -> ChirpData:
         detector=str(det),
         are_detected=are_detected,
         have_params=have_params,
+        path=path,
     )
 
 
@@ -280,6 +287,7 @@ def load_rises(path: pathlib.Path) -> RiseData:
         detector=str(det),
         are_detected=are_detected,
         have_params=have_params,
+        path=path,
     )
 
 

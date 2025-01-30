@@ -96,6 +96,7 @@ class WavetrackerData(BaseModel):
     xpos: npt.NDArray[np.float64]
     ypos: npt.NDArray[np.float64]
     has_positions: bool
+    path: pathlib.Path
 
     @field_validator(
         "freqs", "powers", "idents", "indices", "ids", "times", "xpos", "ypos"
@@ -242,6 +243,7 @@ class GridData(BaseModel):
     rec: Union[npt.NDArray, DataLoader]
     samplerate: float
     shape: tuple[int, int]
+    path: pathlib.Path
 
     @field_validator("rec")
     @classmethod
@@ -343,6 +345,7 @@ class ChirpData(BaseModel):
     are_detected: bool
     have_params: bool
     detector: str
+    path: pathlib.Path
 
     @field_validator("times", "idents", "params")
     @classmethod
@@ -469,6 +472,7 @@ class ChirpDataV2(BaseModel):
     pred_ids: npt.NDArray[np.int_]
     are_detected: bool
     detector: str
+    path: pathlib.Path
 
 
 class RiseData(BaseModel):
@@ -514,6 +518,7 @@ class RiseData(BaseModel):
     are_detected: bool
     have_params: bool
     detector: str
+    path: pathlib.Path
 
     @field_validator("times", "idents", "params")
     @classmethod
