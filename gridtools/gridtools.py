@@ -15,22 +15,18 @@ click.rich_click.USE_MARKDOWN = True
 
 
 pyproject = toml.load(Path(__file__).parent.parent / "pyproject.toml")
-__version__ = pyproject["tool"]["poetry"]["version"]
+# __version__ = pyproject["tool"]["poetry"]["version"]
 
 
 def add_version(f: Callable) -> Callable:
     """Add the version of the gridtools to the help heading."""
     doc = f.__doc__
-    f.__doc__ = "Welcome to Gridtools Version: " + __version__ + "\n\n" + doc
+    f.__doc__ = "Welcome to Gridtools" + "\n\n" + doc
 
     return f
 
 
 @click.group()
-@click.version_option(
-    __version__, "-V", "--version", message="Gridtools, version %(version)s"
-)
-@add_version
 def cli() -> None:
     """Interact with electrode grid recordings a bit more easily.
 
@@ -132,10 +128,10 @@ def copyconfig(config_path: Path, mode: str) -> None:
     help="End time of the subset.",
 )
 def subset(
-        input_path: Path,
-        output_path: Path,
-        start_time: float,
-        end_time: float,
+    input_path: Path,
+    output_path: Path,
+    start_time: float,
+    end_time: float,
 ) -> None:
     """Create a subset of a dataset and save it to a new location."""
     subset_cli(input_path, output_path, start_time, end_time)

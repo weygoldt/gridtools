@@ -26,9 +26,9 @@ dependencies = [
     "scipy>=1.11.3,<2",
     "pydantic>=2.4.2,<3",
     "pandas>=2.1.2,<3",
-    "audioio",
-    "thunderlab",
-    "thunderfish",
+    # "audian",
+    # "audioio",
+    # "thunderfish",
     "pyaml>=23.9.7,<24",
     "torch>=2.1.0,<3",
     "torchaudio>=2.1.0,<3",
@@ -39,8 +39,9 @@ dependencies = [
     "toml>=0.10.2,<0.11",
     "typer[all]>=0.9.0,<0.10",
     "h5py>=3.10.0,<4",
-    "numba>=0.58.1",
     "torchvision>=0.25.0",
+    "ipython>=9.10.0",
+    "thunderfish",
 ]
 
 [project.urls]
@@ -71,9 +72,10 @@ dev = [
 [tool.uv]
 
 [tool.uv.sources]
-audioio = { git = "https://github.com/janscience/audioio.git" }
-thunderlab = { git = "https://github.com/bendalab/thunderlab.git" }
 thunderfish = { git = "https://github.com/janscience/thunderfish.git" }
+# audian = { git = "https://github.com/bendalab/audian.git" }
+# audioio = { git = "https://github.com/bendalab/audioio.git" }
+# thunderfish = { git = "https://github.com/janscience/thunderfish.git" }
 
 [tool.uv.build-backend]
 module-root = ""
