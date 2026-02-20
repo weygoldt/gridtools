@@ -1,51 +1,52 @@
-[tool.poetry]
+[project]
 name = "gridtools"
 version = "0.0.1"
 description = "A toolbox to work with electrode grid recordings of wave-type weakly electric fish more efficiently."
-authors = ["weygoldt <patrick@weygoldt.com>"]
-homepage = "https://weygoldt.com"
-license = "MIT"
+authors = [{ name = "weygoldt", email = "patrick@weygoldt.com" }]
+requires-python = ">=3.11, <3.13"
 readme = "README.md"
-keywords = ["datascience", "biology", "neuro", "behavior", "bioinformatics"]
-include = ["data", "tests"]
+license = "MIT"
+keywords = [
+    "datascience",
+    "biology",
+    "neuro",
+    "behavior",
+    "bioinformatics",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "numpy>=1.26.1,<2",
+    "rich>=13.6.0,<14",
+    "argparse>=1.4.0,<2",
+    "matplotlib>=3.8.0,<4",
+    "scipy>=1.11.3,<2",
+    "pydantic>=2.4.2,<3",
+    "pandas>=2.1.2,<3",
+    "audioio",
+    "thunderlab",
+    "thunderfish",
+    "pyaml>=23.9.7,<24",
+    "torch>=2.1.0,<3",
+    "torchaudio>=2.1.0,<3",
+    "pillow>=10.1.0,<11",
+    "rich-argparse>=1.4.0,<2",
+    "click>=8.1.7,<9",
+    "rich-click>=1.7.1,<2",
+    "toml>=0.10.2,<0.11",
+    "typer[all]>=0.9.0,<0.10",
+    "h5py>=3.10.0,<4",
+    "numba>=0.58.1",
+    "torchvision>=0.25.0",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11, <3.13"
-numpy = "^1.26.1"
-rich = "^13.6.0"
-argparse = "^1.4.0"
-matplotlib = "^3.8.0"
-scipy = "^1.11.3"
-pydantic = "^2.4.2"
-pandas = "^2.1.2"
-audioio = {git = "https://github.com/janscience/audioio.git"}
-thunderlab = {git = "https://github.com/bendalab/thunderlab.git"}
-thunderfish = {git = "https://github.com/janscience/thunderfish.git"}
-pyaml = "^23.9.7"
-torch = "^2.1.0"
-torchaudio = "^2.1.0"
-torchvision = "^0.16.0"
-pillow = "^10.1.0"
-rich-argparse = "^1.4.0"
-click = "^8.1.7"
-rich-click = "^1.7.1"
-toml = "^0.10.2"
-typer = {extras = ["all"], version = "^0.9.0"}
-numba = "^0.58.1"
-h5py = "^3.10.0"
+[project.urls]
+Homepage = "https://weygoldt.com"
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.2"
-pre-commit = "^3.5.0"
-ruff = "^0.1.6"
-pytest-coverage = "^0.0"
-pyright = "^1.1.337"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
+[project.scripts]
 gridtools = "gridtools.gridtools:cli"
 gdt = "gridtools.gridtools:cli"
 dataconverter = "gridtools.dataconverter:dataconverter_cli"
@@ -57,6 +58,33 @@ grid-demo = "gridtools.simulations:grid_demo"
 subset-dataset = "gridtools.datasets:subset_cli"
 extract-chirps = "gridtools.chirpextraction:extract_cli"
 resample-chirps = "gridtools.chirpextraction:resample_cli"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.2,<8",
+    "pre-commit>=3.5.0,<4",
+    "ruff>=0.1.6,<0.2",
+    "pytest-coverage>=0.0,<0.1",
+    "pyright>=1.1.337,<2",
+]
+
+[tool.uv]
+
+[tool.uv.sources]
+audioio = { git = "https://github.com/janscience/audioio.git" }
+thunderlab = { git = "https://github.com/bendalab/thunderlab.git" }
+thunderfish = { git = "https://github.com/janscience/thunderfish.git" }
+
+[tool.uv.build-backend]
+module-root = ""
+source-include = [
+    "data/**",
+    "tests/**",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 79
