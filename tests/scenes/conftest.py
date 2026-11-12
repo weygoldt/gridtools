@@ -75,6 +75,7 @@ def write_synthetic_library(path: Path) -> Path:
                 "duplicate_of": -1,
                 "truncated": False,
                 "step_flag": i == 5,  # one flagged template
+                "too_short": False,
                 "multi_peak": False,
                 "outlier": False,
                 "eodf_atypical": False,

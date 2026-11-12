@@ -243,6 +243,7 @@ def test_scene_json_is_complete(scene: Scene, scene_path: Path) -> None:
     assert scene.chirps["visible"].dtype == bool  # chirpdetector's ignore flag
     assert SceneConfig.from_dict(info["config"]) == scene.config
     assert len(info["templates"]["manifest_sha256"]) == 64
+    assert info["templates"]["sampling_options"]["bins"] == [10, 10]
     assert info["grid"]["electrode_xy_m"] == scene.model.electrode_xy_m.tolist()
     assert info["versions"]["gridtools"]
     assert len(info["fish"]) == len(scene.model.fish)

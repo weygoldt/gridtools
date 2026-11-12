@@ -8,9 +8,7 @@ import pytest
 
 from gridtools.sim.chirps import (
     TemplatePool,
-    _local_groups,
     amplitude_from_frequency,
-    library_api,
     place_chirp,
     random_dips,
     resample_template,
@@ -159,50 +157,35 @@ def test_zero_rate_gives_no_chirps() -> None:
 
 
 def test_pool_excludes_flags_and_equalizes(library_dir: Path) -> None:
-    pool = TemplatePool.open(ChirpConfig(library=str(library_dir)))
+    flat = ChirpConfig(
+        library=str(library_dir), equalize_spacing="linear", equalize_alpha=1.0
+    )
+    pool = TemplatePool.open(flat)
     assert 5 not in pool.template_ids  # step_flag
     assert pool.template_ids.size == 23
     assert pool.n_samples == 4000
-    draws = pool.cycler(np.random.default_rng(1)).draw(4600)
-    big = np.isin(draws, [i for i in pool.template_ids if pool.family(i) == "big"])
-    # every non-empty (excursion x width) bin is equally likely: linear bins
-    # over 40-400 Hz put 40 and 60 Hz into one bin; 4 small and 3 big
-    # excursion bins times 3 widths give 21 groups, 9 of them big
-    groups = _local_groups(pool.view, (10, 10))
-    assert len(groups) == 21
+    assert "spacing='linear'" in pool.sampling
+    assert pool.sampling_options["alpha"] == 1.0
+    cycler = pool.cycler(np.random.default_rng(1))
+    draws = np.concatenate([cycler.draw(1) for _ in range(4600)])
+    groups = pool.view.equalization_bins((10, 10), spacing="linear").groups()
     big_groups = sum(pool.family(int(g[0])) == "big" for g in groups)
-    assert big_groups == 9
-    assert abs(big.mean() - 9 / 21) < 0.03
-    natural = pool.cycler(np.random.default_rng(1))
-    assert natural.draw(1).size == 1
+    big = np.isin(draws, [i for i in pool.template_ids if pool.family(i) == "big"])
+    # alpha = 1: every non-empty (excursion x width) bin equally likely
+    assert abs(big.mean() - big_groups / len(groups)) < 0.03
+    tempered = TemplatePool.open(ChirpConfig(library=str(library_dir)))
+    assert tempered.options == ()  # the library's own defaults
+    from gridtools.templates.library import DEFAULT_ALPHA, DEFAULT_SPACING
+
+    assert tempered.sampling_options["spacing"] == DEFAULT_SPACING
+    assert tempered.sampling_options["alpha"] == DEFAULT_ALPHA
+    tempered_cycler = tempered.cycler(np.random.default_rng(2))
+    ids = np.concatenate([tempered_cycler.draw(1) for _ in range(200)])
+    assert np.isin(ids, tempered.template_ids).all()
     measured = TemplatePool.open(
         ChirpConfig(library=str(library_dir), amplitude_mode="measured")
     )
     assert np.all(measured.template_ids % 2 == 0)
-
-
-def test_local_copy_matches_the_library_cycler(library_dir: Path) -> None:
-    from gridtools.sim.chirps import _LocalCycler
-
-    pool = TemplatePool.open(ChirpConfig(library=str(library_dir)))
-    if library_api() != "gridtools.templates":
-        pytest.skip("installed gridtools.templates predates library v2")
-    for equalize in (True, False):
-        library = pool.view.cycler(
-            np.random.default_rng(5),
-            equalize=equalize,  # type: ignore[call-arg]
-            bins=(10, 10),  # type: ignore[call-arg]
-            spacing="linear",  # type: ignore[call-arg]
-            alpha=1.0,  # type: ignore[call-arg]
-        )
-        groups = (
-            _local_groups(pool.view, (10, 10)) if equalize else [pool.view.unique_ids()]
-        )
-        local = _LocalCycler(groups, np.random.default_rng(5))
-        # scenes draw one template at a time; compare in that mode
-        expected = np.concatenate([library.draw(1) for _ in range(300)])
-        got = np.concatenate([local.draw(1) for _ in range(300)])
-        np.testing.assert_array_equal(got, expected)
 
 
 def test_support_is_measured_on_the_trace(library_dir: Path) -> None:

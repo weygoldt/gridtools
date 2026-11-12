@@ -36,13 +36,23 @@ def test_same_seed_same_scene_at_any_rate(
     np.testing.assert_allclose(a["excursion_hz"], b["excursion_hz"], rtol=5e-3)
     np.testing.assert_allclose(a["baseline_hz"], b["baseline_hz"], atol=1e-3)
     # footprint boxes agree within one frame and one frequency bin (plus the
-    # small offset between the two rates' grids: round(0.2048 * fs) samples)
+    # small offset between the two rates' grids: round(0.2048 * fs) samples),
+    # except for chirps whose footprint is cut by the scene's ends
     frame = SceneConfig().footprint.hop_s
     bin_hz = 1.0 / SceneConfig().footprint.window_s
+    reach = SceneConfig().footprint.window_s + 0.05
+    inside = (a["t_support_start_s"].to_numpy(dtype=float) - reach >= 0.0) & (
+        a["t_support_stop_s"].to_numpy(dtype=float) + reach <= 6.0
+    )
+    assert inside.sum() >= 5
     for edge in ("box_t0_s", "box_t1_s"):
-        np.testing.assert_allclose(a[edge], b[edge], atol=frame + 1e-4)
+        np.testing.assert_allclose(
+            a[edge].to_numpy()[inside], b[edge].to_numpy()[inside], atol=frame + 1e-4
+        )
     for edge in ("box_f0_hz", "box_f1_hz"):
-        np.testing.assert_allclose(a[edge], b[edge], atol=bin_hz + 0.1)
+        np.testing.assert_allclose(
+            a[edge].to_numpy()[inside], b[edge].to_numpy()[inside], atol=bin_hz + 0.1
+        )
     # tracks and their frame grid are the same; sign_v nearly so
     np.testing.assert_allclose(
         reference.tracks.freqs_hz, other.tracks.freqs_hz, atol=1e-6

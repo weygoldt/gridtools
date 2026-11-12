@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 from gridtools.sim.eod import DriftParams, HarmonicJitterParams, SharedDriftParams
 from gridtools.sim.movement import MovementParams
+from gridtools.templates.library import DEFAULT_EXCLUDE as _LIBRARY_EXCLUDE
 
 __all__ = [
     "ChirpConfig",
@@ -46,18 +47,11 @@ __all__ = [
 FloatRange = tuple[float, float]
 IntRange = tuple[int, int]
 
-#: Template flags excluded by default (``gridtools.templates.DEFAULT_EXCLUDE`` of
-#: library v2: demonstrable artefacts plus the atypical-EODf group).
-DEFAULT_TEMPLATE_EXCLUDE: tuple[str, ...] = (
-    "invalid",
-    "has_nan",
-    "duplicate",
-    "truncated",
-    "step_flag",
-    "eodf_atypical",
-)
+#: Template flags excluded by default (the library's ``DEFAULT_EXCLUDE``:
+#: demonstrable artefacts and events shorter than 5 ms).
+DEFAULT_TEMPLATE_EXCLUDE: tuple[str, ...] = tuple(_LIBRARY_EXCLUDE)
 
-DEFAULT_LIBRARY = "/mnt/data1/chirp_v2/templates/v2"
+DEFAULT_LIBRARY = "/mnt/data1/chirp_v2/templates/v3"
 
 
 def _check_range(
@@ -395,9 +389,14 @@ class ChirpConfig:
     Templates are real chirps from the curated library (decision 5),
     baseline-relative, added to the fish's baseline frequency, drawn per
     fish with the library's cycler. With ``equalize`` (decision 10), the
-    pool is binned on excursion and width at 10 % in ``equalize_bins``
-    equal-width bins; every non-empty bin is equally likely, and templates
-    within a bin come from successive permutations.
+    pool is binned on excursion and width at 10 % in ``equalize_bins`` bins.
+    The library's sampling options (``equalize_spacing``, ``equalize_alpha``,
+    ``equalize_balance``) are passed through when set; unset (the default)
+    they take the library's own defaults (v3: log-spaced bins, alpha 0.6, a
+    bin with ``c`` templates drawn with probability proportional to
+    ``c ** (1 - alpha)``), so switching libraries is a path change.
+    ``scene.json`` records the values in effect. Templates may be up to 1.2 s
+    long (library v3); only each chirp's support matters.
 
     Amplitude modulation (``amplitude_mode``):
 
@@ -411,16 +410,24 @@ class ChirpConfig:
     Attributes
     ----------
     library : str
-        Path of the template library (default ``/mnt/data1/chirp_v2/templates/v2``).
+        Path of the template library (default ``/mnt/data1/chirp_v2/templates/v3``).
     families : tuple of str
         Template families to draw from (``"small"``, ``"big"``; default both).
     exclude : tuple of str
-        Library flags whose templates are excluded (default: library v2's
+        Library flags whose templates are excluded (default: the library's
         default exclusion list).
     equalize : bool
         Equalise the (excursion x width) histogram (default True).
     equalize_bins : (int, int)
         Equalisation bins on excursion and on width at 10 % (default 10 x 10).
+    equalize_spacing : str or None
+        Bin spacing, ``"log"`` or ``"linear"`` (default None: library
+        default).
+    equalize_alpha : float or None
+        Tempering exponent in [0, 1] (default None: library default).
+    equalize_balance : str or None
+        Within-bin balancing of library v4 (e.g. ``"individual"``; default
+        None: library default; not passed to libraries without it).
     rate_hz : (float, float)
         Range of the spontaneous chirp rate per fish in chirps/s
         (default 0.05-0.5, i.e. 180-1800/h).
@@ -454,6 +461,9 @@ class ChirpConfig:
     exclude: tuple[str, ...] = DEFAULT_TEMPLATE_EXCLUDE
     equalize: bool = True
     equalize_bins: tuple[int, int] = (10, 10)
+    equalize_spacing: str | None = None
+    equalize_alpha: float | None = None
+    equalize_balance: str | None = None
     rate_hz: FloatRange = (0.05, 0.5)
     max_rate_hz: float | None = None
     min_interval_s: float = 0.2
@@ -480,6 +490,16 @@ class ChirpConfig:
         if min(self.equalize_bins) < 1:
             msg = f"chirps.equalize_bins must be >= 1, got {self.equalize_bins}"
             raise ValueError(msg)
+        if self.equalize_spacing not in (None, "log", "linear"):
+            msg = (
+                "chirps.equalize_spacing must be 'log' or 'linear', "
+                f"got {self.equalize_spacing!r}"
+            )
+            raise ValueError(msg)
+        if self.equalize_alpha is not None:
+            _check_number(
+                self.equalize_alpha, "chirps.equalize_alpha", low=0.0, high=1.0
+            )
         _check_range(self.rate_hz, "chirps.rate_hz", low=0.0)
         if self.max_rate_hz is not None:
             _check_number(self.max_rate_hz, "chirps.max_rate_hz", low=0.0)
@@ -958,8 +978,9 @@ class FootprintConfig:
         Band of the reference spectrogram (default 500-1500 Hz).
     threshold_db : float
         Footprint cells reach within this many dB of the strongest
-        difference (default 25; at 20 dB 1-2.5 % of the difference energy
-        falls outside the box at nfft 4096).
+        difference (default 30: the box holds >= 99.5 % of the difference
+        energy; at 20 dB 1-2.5 % and at 25 dB up to 1.5 % fall outside with
+        a 0.2-s window).
     visible_snr_db : float
         ``visible`` when the footprint SNR reaches this (default 0 dB;
         to be tuned in training).
@@ -976,7 +997,7 @@ class FootprintConfig:
     hop_s: float = 0.005
     f_min_hz: float = 500.0
     f_max_hz: float = 1500.0
-    threshold_db: float = 25.0
+    threshold_db: float = 30.0
     visible_snr_db: float = 0.0
     margin_s: float = 0.05
     background: Literal["others", "recording"] = "others"

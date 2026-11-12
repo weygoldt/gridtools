@@ -2,6 +2,7 @@
 
 import json
 import logging
+import resource
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -63,11 +64,15 @@ def _run_one(config_json: str, seed: int, out_dir: str, plots: bool) -> dict[str
     config = SceneConfig.from_json(config_json)
     scene = simulate_scene(config, seed)
     path = write_scene(scene, Path(out_dir) / f"{seed:06d}", plots=plots)
+    # peak resident memory of this process so far (KiB on Linux)
+    peak_rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     return {
         "seed": seed,
         "path": str(path),
         "n_fish": len(scene.model.fish),
         "n_chirps": len(scene.chirps),
+        "n_electrodes": scene.model.n_electrodes,
+        "peak_rss_mb": peak_rss_mb,
         **scene.timings_s,
     }
 
@@ -116,13 +121,16 @@ def run(
             results = [f.result() for f in futures]
     for r in results:
         logger.info(
-            "seed %06d: %d fish, %d chirps; simulate %.1f s, write %.1f s, plot %.1f s",
+            "seed %06d: %d fish, %d electrodes, %d chirps; simulate %.1f s, "
+            "write %.1f s, plot %.1f s; peak RSS %.0f MB",
             r["seed"],
             r["n_fish"],
+            r["n_electrodes"],
             r["n_chirps"],
             r.get("simulate_total", float("nan")),
             r.get("write", float("nan")),
             r.get("plot", 0.0),
+            r["peak_rss_mb"],
         )
     logger.info(
         "%d scenes in %s (%.1f s wall)", len(results), root, time.perf_counter() - t0

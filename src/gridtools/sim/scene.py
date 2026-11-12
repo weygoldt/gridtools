@@ -72,7 +72,6 @@ from gridtools.sim.chirps import (
     ChirpSchedule,
     TemplatePool,
     amplitude_from_frequency,
-    library_api,
     place_chirp,
     random_dips,
     schedule_chirps,
@@ -1507,7 +1506,10 @@ def scene_info(scene: Scene) -> dict[str, Any]:
             "n_samples": plan.pool.n_samples,
             "n_eligible": int(plan.pool.template_ids.size),
             "sampling": plan.pool.sampling,
-            "api": library_api(),
+            "sampling_options": {
+                k: list(v) if isinstance(v, tuple) else v
+                for k, v in plan.pool.sampling_options.items()
+            },
         },
         "grid": {
             "rows": plan.rows,

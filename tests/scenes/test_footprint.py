@@ -103,17 +103,13 @@ def test_box_edges_lie_at_cell_edges(clean_scene: Scene) -> None:
 
 
 def test_long_windows_smear_boxes_in_time(clean_scene: Scene) -> None:
-    """At nfft 4096 a box is wider than at 512 by the window's extent above the
-    threshold: for a short event the difference follows the squared Hann
-    window, which stays within ``threshold_db`` of its peak over ~0.86 of its
-    length at 25 dB (not the full window length)."""
+    """At nfft 4096 a box is wider than at 512, by less than the difference of
+    the window lengths: the difference follows the squared Hann window, so it
+    reaches the threshold only over part of each window (~0.9 of it at 30 dB
+    for an instantaneous change, less for long chirps whose own duration
+    dominates both boxes)."""
     hop = 32
-    threshold = 25.0
-    extent = {}
-    for nfft in (4096, 512):
-        w = np.hanning(nfft + 1)[:nfft]
-        extent[nfft] = np.mean(w**2 >= 10 ** (-threshold / 10)) * nfft / FS
-    expected = extent[4096] - extent[512]
+    window_difference = (4096 - 512) / FS
     for chirp_id in _inner_chirps(clean_scene):
         boxes = {
             nfft: chirp_footprint(
@@ -123,11 +119,8 @@ def test_long_windows_smear_boxes_in_time(clean_scene: Scene) -> None:
             ).box
             for nfft in (4096, 512)
         }
-        widths = {n: b[1] - b[0] for n, b in boxes.items()}
-        assert widths[4096] > widths[512]
-        # bounded by the window lengths, and close to the thresholded extent
-        assert widths[4096] - widths[512] <= (4096 - 512) / FS + 2 * hop / FS
-        assert widths[4096] - widths[512] == pytest.approx(expected, abs=0.035)
+        widening = (boxes[4096][1] - boxes[4096][0]) - (boxes[512][1] - boxes[512][0])
+        assert 0.5 * window_difference <= widening <= window_difference + 2 * hop / FS
 
 
 def test_clean_chirps_are_visible_and_drowned_chirps_are_not(

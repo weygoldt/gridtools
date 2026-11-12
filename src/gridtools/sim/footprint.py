@@ -12,7 +12,7 @@ For one chirp:
    energy along the excursion and the power the chirp removes from the
    baseline band, smeared by the analysis window.
 3. Keep the cells with ``D >= max(D) * 10**(-threshold_db / 10)`` (default
-   25 dB) that are
+   30 dB) that are
    connected (8-neighbourhood) to the chirp's trajectory (baseline plus
    excursion, mapped to cells), so isolated sidelobes do not enlarge it.
 4. The box spans these cells, with its edges at cell edges (half a frame
@@ -274,7 +274,7 @@ def chirp_footprint(
     chirp_id: int,
     spectrogram_fn: SpectrogramFn | None = None,
     *,
-    threshold_db: float = 25.0,
+    threshold_db: float = 30.0,
     visible_snr_db: float = 0.0,
     window_s: float | None = None,
     margin_s: float = 0.05,
@@ -299,8 +299,9 @@ def chirp_footprint(
         ``HannSpectrogram()`` (0.2048 s, hop 5 ms, 500-1500 Hz).
     threshold_db : float
         Footprint cells reach within this many dB of the largest difference
-        (default 25: at nfft 4096 the box then holds >= 99 % of the
-        difference energy; at 20 dB 1-2.5 % lie outside).
+        (default 30: with a 0.2-s window the box then holds >= 99.5 % of the
+        difference energy; at 20 dB 1-2.5 % and at 25 dB up to 1.5 % lie
+        outside).
     visible_snr_db : float
         SNR threshold of ``visible``.
     window_s : float, optional
