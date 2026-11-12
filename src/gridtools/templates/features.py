@@ -12,11 +12,12 @@ Conventions
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
-from scipy.ndimage import median_filter
+from scipy.ndimage import gaussian_filter1d, median_filter
 from scipy.signal import find_peaks
 
 FloatArray = npt.NDArray[np.float64]
@@ -137,6 +138,72 @@ def chirp_crossings(
     core[lo : hi + 1] = np.maximum(core[lo : hi + 1], delta[peak_index])
     c10 = level_crossings(core, peak_index, 0.1)
     return c10, c50
+
+
+@dataclass(frozen=True, slots=True)
+class DecayEnd:
+    """End of a chirp's slow decay toward baseline.
+
+    Attributes
+    ----------
+    position
+        Fractional sample where the smoothed excursion has fallen to the
+        level (or the trough where it started to rise again).
+    interrupted
+        The trace rose again before reaching the level (for example a
+        following chirp); ``position`` is the trough before the rise.
+    clipped
+        The trace neither reached the level nor rose again before the end
+        of the array; ``position`` is the last sample.
+    """
+
+    position: float
+    interrupted: bool
+    clipped: bool
+
+
+def decay_end(
+    delta: FloatArray, start: float, level_hz: float, smooth_samples: float = 0.0
+) -> DecayEnd:
+    """Follow a decay from ``start`` until it reaches ``level_hz``.
+
+    Slow, exponential-like decays of long chirps stay above baseline long
+    after their 10% crossing. This walks right from ``start`` along the
+    (Gaussian-smoothed) trace until it first falls to ``level_hz`` or
+    below. It stops early at a trough when the trace rises more than
+    ``level_hz`` above its running minimum, so a following chirp is never
+    merged into the decay.
+
+    Parameters
+    ----------
+    delta
+        1-D trace with its baseline at 0.
+    start
+        Fractional sample to start from (usually the 10% offset).
+    level_hz
+        Level that counts as back at baseline; also the rise tolerance.
+    smooth_samples
+        Sigma of the Gaussian applied before walking (0: none).
+
+    Returns
+    -------
+    DecayEnd
+    """
+    trace = np.asarray(delta, dtype=np.float64)
+    if smooth_samples > 0:
+        trace = gaussian_filter1d(trace, smooth_samples, mode="nearest")
+    i0 = min(max(int(np.ceil(start)), 0), trace.size - 1)
+    segment = trace[i0:]
+    below = np.flatnonzero(segment <= level_hz)
+    rise = np.flatnonzero(segment - np.minimum.accumulate(segment) > level_hz)
+    first_below = int(below[0]) if below.size else segment.size
+    first_rise = int(rise[0]) if rise.size else segment.size
+    if first_below < segment.size and first_below <= first_rise:
+        return DecayEnd(float(i0 + first_below), False, False)
+    if first_rise < segment.size:
+        trough = int(np.argmin(segment[:first_rise]))
+        return DecayEnd(float(i0 + trough), True, False)
+    return DecayEnd(float(trace.size - 1), False, True)
 
 
 def _fraction(a: float, b: float, threshold: float) -> float:
@@ -612,6 +679,9 @@ class SnippetAnalysis:
         Absolute baseline EODf (NaN if not recoverable).
     has_nan
         Any trace contained NaN (replaced by baseline before measuring).
+    decay
+        End of the slow decay after the 10% offset, or None when the decay
+        extension is off (library v1/v2 behaviour).
     """
 
     valid: bool
@@ -634,6 +704,14 @@ class SnippetAnalysis:
     eodf: KnotEodf
     baseline_eodf_hz: float
     has_nan: bool
+    decay: DecayEnd | None = None
+
+    @property
+    def chirp_end(self) -> float:
+        """End of the chirp: the 10% offset, or the decay end if later."""
+        if self.decay is None:
+            return self.crossing_10.offset
+        return max(self.crossing_10.offset, self.decay.position)
 
 
 def analyse_snippet(
@@ -652,6 +730,12 @@ def analyse_snippet(
     knot_threshold: float,
     knot_mad_max_hz: float,
     bridge_samples: int = 0,
+    decay_level_rel: float | None = None,
+    decay_level_hz: float = 0.0,
+    decay_smooth_s: float = 0.0,
+    peak_range: tuple[int, int] | None = None,
+    absolute_freq: bool = False,
+    baseline_band: tuple[float, float] | None = None,
 ) -> SnippetAnalysis:
     """Locate the chirp in a contiguous snippet and measure its context.
 
@@ -675,6 +759,25 @@ def analyse_snippet(
     bridge_samples
         Brief internal dips shorter than this are bridged when finding the
         level crossings (see :func:`level_crossings`).
+    decay_level_rel, decay_level_hz, decay_smooth_s
+        If ``decay_level_rel`` is given, the chirp extends past its 10%
+        offset over a slow decay until the trace (smoothed with sigma
+        ``decay_smooth_s``) falls to ``max(decay_level_rel * excursion,
+        decay_level_hz)`` (:func:`decay_end`). The baseline exclusion and the
+        support then start from that point. None (default) is the library
+        v1/v2 behaviour.
+    peak_range
+        Sample range ``[start, stop)`` searched for the excursion peak (the
+        chirp of interest when the snippet holds several); None: all.
+    absolute_freq
+        ``freq`` and ``orig_freq`` are absolute frequencies (Hz), so the
+        baseline itself is the absolute EODf and the spline-knot recovery
+        is skipped.
+    baseline_band
+        Only samples of ``freq`` inside ``[low, high]`` count as baseline
+        (provisional and final). Use it when the snippet holds other chirps
+        whose tails would bias the median, and the baseline is known
+        independently (for example from the power spectrum). None: all.
 
     Returns
     -------
@@ -682,19 +785,48 @@ def analyse_snippet(
     """
     fs = samplerate_hz
     n = freq.size
+
+    def find_peak(trace: FloatArray) -> int:
+        if peak_range is None:
+            return int(np.argmax(trace))
+        lo = min(max(peak_range[0], 0), n - 1)
+        hi = min(max(peak_range[1], lo + 1), n)
+        return lo + int(np.argmax(trace[lo:hi]))
+
+    def chirp_extent(trace: FloatArray, peak: int) -> tuple[Crossing, DecayEnd | None]:
+        c10, _ = chirp_crossings(trace, peak, bridge_samples)
+        if decay_level_rel is None:
+            return c10, None
+        level = max(decay_level_rel * float(trace[peak]), decay_level_hz)
+        decay = decay_end(trace, c10.offset, level, decay_smooth_s * fs)
+        return c10, decay
+
+    def extended(c10: Crossing, decay: DecayEnd | None) -> Crossing:
+        if decay is None or decay.position <= c10.offset:
+            return c10
+        return dataclasses.replace(c10, offset=decay.position)
+
     has_nan = bool(
         np.isnan(freq).any() or np.isnan(amp).any() or np.isnan(orig_freq).any()
     )
     freq = _fill_nan(freq)
     amp = _fill_nan(amp)
     orig_freq = _fill_nan(orig_freq)
+    allowed = (
+        None
+        if baseline_band is None
+        else (freq >= baseline_band[0]) & (freq <= baseline_band[1])
+    )
 
     # pass 1: provisional baseline by the thesis rule, the median of the samples
     # within [min, |min|] of the trace relative to its first sample (the window
     # start); unlike the whole-window median it is not pulled up by long chirps
-    baseline = provisional_baseline(freq)
+    if allowed is not None and allowed.any():
+        baseline = float(np.median(freq[allowed]))
+    else:
+        baseline = provisional_baseline(freq)
     delta = freq - baseline
-    peak = int(np.argmax(delta))
+    peak = find_peak(delta)
     nan = float("nan")
     if not delta[peak] > 0:
         empty = Crossing(nan, nan, True, True)
@@ -703,23 +835,33 @@ def analyse_snippet(
             nan, nan, 0.0, nan, nan, nan, nan, 0.0, 0.0,
             KnotEodf(nan, nan, 0, nan), nan, has_nan,
         )  # fmt: skip
-    c10, _ = chirp_crossings(delta, peak, bridge_samples)
+    c10, decay = chirp_extent(delta, peak)
 
     # pass 2 (twice): baseline from samples away from the chirp; the exclusion
     # margins shrink when a long chirp leaves too little baseline
     mask = np.zeros(n, dtype=bool)
     for _ in range(2):
         mask = _shrinking_baseline_mask(
-            n, c10, exclusion_pre_s * fs, exclusion_post_s * fs, min_baseline_s * fs
+            n,
+            extended(c10, decay),
+            exclusion_pre_s * fs,
+            exclusion_post_s * fs,
+            min_baseline_s * fs,
+            allowed,
         )
         if not mask.any():
             break
         baseline = float(np.median(freq[mask]))
         delta = freq - baseline
-        peak = int(np.argmax(delta))
-        c10, _ = chirp_crossings(delta, peak, bridge_samples)
+        peak = find_peak(delta)
+        c10, decay = chirp_extent(delta, peak)
     mask = _shrinking_baseline_mask(
-        n, c10, exclusion_pre_s * fs, exclusion_post_s * fs, min_baseline_s * fs
+        n,
+        extended(c10, decay),
+        exclusion_pre_s * fs,
+        exclusion_post_s * fs,
+        min_baseline_s * fs,
+        allowed,
     )
     baseline_s = mask.sum() / fs
     if mask.any():
@@ -728,9 +870,11 @@ def analyse_snippet(
     else:
         baseline_amp = float(np.median(amp))
     delta = freq - baseline
-    peak = int(np.argmax(delta))
+    peak = find_peak(delta)
     excursion = float(delta[peak])
     c10, c50 = chirp_crossings(delta, peak, bridge_samples)
+    _, decay = chirp_extent(delta, peak)
+    chirp_end = extended(c10, decay).offset
     align = round(c50.midpoint)
 
     min_segment = round(0.02 * fs)
@@ -741,7 +885,7 @@ def analyse_snippet(
 
     segments = [s for s in mask_segments(mask) if s[1] - s[0] >= min_segment]
     pre = [s for s in segments if s[1] <= c10.onset]
-    post = [s for s in segments if s[0] >= c10.offset]
+    post = [s for s in segments if s[0] >= chirp_end]
     if pre and post:
         drift = float(
             np.median(freq[post[0][0] : post[0][1]])
@@ -752,12 +896,16 @@ def analyse_snippet(
 
     chirp_mask = np.zeros(n, dtype=bool)
     chirp_mask[max(0, int(c10.onset)) : min(n, int(np.ceil(c10.offset)) + 1)] = True
-    eodf = knot_eodf(orig_freq, mask, chirp_mask, fs, threshold=knot_threshold)
-    if eodf.n_knots >= 20 and eodf.mad_hz <= knot_mad_max_hz:
-        orig_baseline = float(np.median(orig_freq[mask])) if mask.any() else nan
-        baseline_eodf = eodf.offset_hz + orig_baseline
+    if absolute_freq:
+        eodf = KnotEodf(nan, nan, 0, nan)
+        baseline_eodf = baseline
     else:
-        baseline_eodf = nan
+        eodf = knot_eodf(orig_freq, mask, chirp_mask, fs, threshold=knot_threshold)
+        if eodf.n_knots >= 20 and eodf.mad_hz <= knot_mad_max_hz:
+            orig_baseline = float(np.median(orig_freq[mask])) if mask.any() else nan
+            baseline_eodf = eodf.offset_hz + orig_baseline
+        else:
+            baseline_eodf = nan
 
     return SnippetAnalysis(
         valid=True,
@@ -769,7 +917,7 @@ def analyse_snippet(
         crossing_50=c50,
         align_index=align,
         support_start=c10.onset - support_pad_pre_s * fs,
-        support_stop=c10.offset + support_pad_post_s * fs,
+        support_stop=chirp_end + support_pad_post_s * fs,
         baseline_s=float(baseline_s),
         ripple_freq_hz=ripple_freq,
         ripple_amp=ripple_amp,
@@ -780,6 +928,7 @@ def analyse_snippet(
         eodf=eodf,
         baseline_eodf_hz=float(baseline_eodf),
         has_nan=has_nan,
+        decay=decay,
     )
 
 
@@ -799,12 +948,19 @@ def provisional_baseline(trace: FloatArray) -> float:
 
 
 def _shrinking_baseline_mask(
-    n: int, crossing: Crossing, pre: float, post: float, min_samples: float
+    n: int,
+    crossing: Crossing,
+    pre: float,
+    post: float,
+    min_samples: float,
+    allowed: BoolArray | None = None,
 ) -> BoolArray:
     """Baseline mask whose exclusion margins shrink until enough samples remain."""
     mask = np.zeros(n, dtype=bool)
     for factor in (1.0, 0.5, 0.25, 0.1, 0.0):
         mask = _baseline_mask(n, crossing, factor * pre, factor * post)
+        if allowed is not None:
+            mask &= allowed
         if mask.sum() >= min_samples:
             return mask
     return mask

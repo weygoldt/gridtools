@@ -44,7 +44,17 @@ class BuildConfig:
         undershoot.
     support_pad_pre_s, support_pad_post_s
         The template keeps the trace unchanged on
-        ``[onset_10 - pad_pre, offset_10 + pad_post]``.
+        ``[onset_10 - pad_pre, end + pad_post]``, where ``end`` is the 10%
+        offset or, with the decay extension, the end of the slow decay.
+    decay_level_rel, decay_level_hz, decay_smooth_s
+        Decay extension for long chirps whose slow, exponential-like decay
+        stays above baseline long after the 10% offset. If
+        ``decay_level_rel`` is set, the chirp ends where the trace (smoothed
+        with sigma ``decay_smooth_s``) has fallen to ``max(decay_level_rel *
+        excursion, decay_level_hz)``, or at the trough before it rises again
+        by that much (a following chirp). The baseline exclusion and the
+        support pad then count from that point. None (library v1/v2) keeps
+        the end at the 10% offset.
     taper_ramp_s
         Length of the raised-cosine ramps on both sides of the support.
         Outside support and ramps the template is exactly baseline.
@@ -113,6 +123,9 @@ class BuildConfig:
     baseline_exclusion_post_s: float = 0.06
     support_pad_pre_s: float = 0.005
     support_pad_post_s: float = 0.03
+    decay_level_rel: float | None = None
+    decay_level_hz: float = 0.0
+    decay_smooth_s: float = 0.005
     taper_ramp_s: float = 0.01
     undershoot_window_s: float = 0.05
     big_chirp_threshold_hz: float = 200.0
@@ -150,6 +163,9 @@ class BuildConfig:
             raise ValueError(msg)
         if self.chunk_rows < 1:
             msg = "chunk_rows must be >= 1"
+            raise ValueError(msg)
+        if self.decay_level_rel is not None and not 0.0 < self.decay_level_rel < 0.1:
+            msg = "decay_level_rel must lie in (0, 0.1) (below the 10% crossing)"
             raise ValueError(msg)
 
     def n_samples(self, samplerate_hz: float) -> int:
