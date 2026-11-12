@@ -130,6 +130,44 @@ def run(
 
 
 @app.command()
+def compare(
+    scenes: Annotated[
+        Path, typer.Argument(help="Directory of scene directories (one per seed).")
+    ],
+    calibration: Annotated[
+        Path, typer.Option(help="calibration.json of gridtools.calibrate.")
+    ] = Path("/mnt/data1/chirp_v2/calibration/v1/calibration.json"),
+    out: Annotated[
+        Path | None,
+        typer.Option(help="Output stem; default SCENES/comparison(.md, .csv)."),
+    ] = None,
+) -> None:
+    """Measure scenes with the calibration's definitions and compare to real data."""
+    from gridtools.calibrate.scenes import compare_scenes
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
+    dirs = sorted(p for p in scenes.iterdir() if (p / "scene.json").exists())
+    if not dirs:
+        msg = f"no scene directories in {scenes}"
+        raise typer.BadParameter(msg)
+    table = compare_scenes(list(dirs), calibration)
+    stem = out if out is not None else scenes / "comparison"
+    table.to_csv(stem.with_suffix(".csv"), index=False)
+    lines = [
+        f"Simulated ({len(dirs)} scenes in {scenes}) vs real ({calibration}); "
+        "median (5-95 %).",
+        "",
+        "| quantity | simulated | real |",
+        "|---|---|---|",
+        *(f"| {q} | {s} | {r} |" for q, s, r in table.itertuples(index=False)),
+    ]
+    stem.with_suffix(".md").write_text("\n".join(lines) + "\n")
+    typer.echo("\n".join(lines))
+
+
+@app.command()
 def plot(
     scene_dir: Annotated[Path, typer.Argument(help="Scene directory.")],
     out: Annotated[
