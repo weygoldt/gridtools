@@ -33,6 +33,7 @@ plot = [
 [dependency-groups]
 dev = [
     "hypothesis>=6.170",
+    "matplotlib>=3.11",
     "pre-commit>=4.7",
     "pyright>=1.1.414",
     "pytest>=9.2",

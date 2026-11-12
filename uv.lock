@@ -294,6 +294,7 @@ plot = [
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "matplotlib" },
     { name = "pre-commit" },
     { name = "pyright" },
     { name = "pytest" },
@@ -315,6 +316,7 @@ provides-extras = ["plot"]
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.170" },
+    { name = "matplotlib", specifier = ">=3.11" },
     { name = "pre-commit", specifier = ">=4.7" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.2" },
