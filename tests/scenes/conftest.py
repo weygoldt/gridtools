@@ -19,6 +19,7 @@ from gridtools.sim.config import (
     ChirpConfig,
     ClickConfig,
     GridConfig,
+    HybridConfig,
     NoiseConfig,
     PlotConfig,
     PopulationConfig,
@@ -118,6 +119,7 @@ def small_config(library: Path, **changes: object) -> SceneConfig:
         clicks=ClickConfig(rate_per_h_median=3600.0, rate_log10_sd=0.0),
         noise=NoiseConfig(clip_limit=None),
         plot=PlotConfig(enabled=False, n_zooms=2, zoom_s=2.0, hop_s=0.0512),
+        background=HybridConfig(prob=0.0),  # synthetic; hybrid: test_hybrid.py
     )
     return replace(config, **changes) if changes else config
 

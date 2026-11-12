@@ -132,7 +132,7 @@ def measure_scene(directory: str | Path, *, max_frames: int = 2000) -> SceneStat
                 np.abs(ta.freqs_hz[::step] - tb.freqs_hz[::step]).tolist()
             )
     for track in fish_tracks:
-        entry = fish_info[track.ident]
+        entry = fish_info.get(track.ident, {})  # {}: a real fish (hybrid scene)
         if not entry.get("ramps"):
             grid = np.arange(0.0, track.times_s[-1], 1.0)
             f = np.interp(grid, track.times_s, track.freqs_hz)

@@ -143,6 +143,20 @@ def _track_lines(tracks: Tracks) -> dict[int, tuple[np.ndarray, np.ndarray]]:
     return {int(t.ident): (t.times_s, t.freqs_hz) for t in tracks}
 
 
+#: Style of real (background) fish tracks: never chirp, not simulated.
+_REAL_STYLE: dict[str, Any] = {"color": "#8a8985", "ls": (0, (4, 2)), "lw": 0.9}
+
+
+def _simulated_ids(view: "_SceneView") -> set[int]:
+    return {int(f["fish_id"]) for f in view.fish}
+
+
+def _line_style(fid: int, simulated: set[int]) -> dict[str, Any]:
+    if fid in simulated:
+        return {"color": _color(fid), "lw": 0.8, "alpha": 0.9}
+    return {**_REAL_STYLE, "lw": 0.8, "alpha": 0.9}
+
+
 def _color_limits(power_db: np.ndarray) -> tuple[float, float]:
     vmax = float(np.percentile(power_db, 99.9))
     vmin = max(float(np.percentile(power_db, 5.0)), vmax - 70.0)
@@ -235,6 +249,25 @@ def _overview(view: _SceneView, path: Path) -> None:
                 va="center",
                 clip_on=False,
             )
+    simulated = _simulated_ids(view)
+    real = [fid for fid in sorted(lines) if fid not in simulated]
+    for fid in real:
+        t, f = lines[fid]
+        (line,) = ax.plot(t, f, alpha=0.9, **_REAL_STYLE)
+        if f.size and cfg.f_min_hz <= f[0] <= cfg.f_max_hz:
+            ax.text(
+                -0.004 * duration_s,
+                f[0],
+                str(fid),
+                color=_REAL_STYLE["color"],
+                fontsize=7,
+                ha="right",
+                va="center",
+                clip_on=False,
+            )
+    if real:
+        ax.lines[-1].set_label(f"real fish ({len(real)}, background)")
+        handles.append(ax.lines[-1])
     _mark_chirps(ax, view.chirps, offset_s=0.0, lw=1.0)
     if len(view.clicks):
         ax.plot(
@@ -374,9 +407,10 @@ def _zooms(view: _SceneView, path: Path) -> None:
         _image(ax, times, freqs, power)
         if view.model is not None:
             _draw_boxes(ax, view, inside, panel_fn)
+        simulated = _simulated_ids(view)
         for fid, (t, f) in lines.items():
             keep = (t >= t0 - 1.0) & (t <= t1 + 1.0)
-            ax.plot(t[keep], f[keep], color=_color(fid), lw=0.8, alpha=0.9)
+            ax.plot(t[keep], f[keep], **_line_style(fid, simulated))
         _mark_chirps(ax, inside, offset_s=-0.006 * (t1 - t0), lw=1.4, caret=True)
         n_overlap = int(np.sum(inside["overlaps_other_chirp"].to_numpy(dtype=bool)))
         df_values = inside["min_df_hz"].to_numpy(dtype=float)
@@ -545,6 +579,10 @@ def plot_scene(scene: Any, out_dir: str | Path) -> list[Path]:
 
 
 def _layout_text(kind: str, n_electrodes: int, rows: int, columns: int) -> str:
+    if kind == "background":
+        if rows > 1:
+            return f"{rows}x{columns} real grid"
+        return f"{n_electrodes} real electrode" + ("s" if n_electrodes > 1 else "")
     if kind in ("real", "grid", "line"):
         return f"{rows}x{columns} grid" if kind != "line" else f"line of {n_electrodes}"
     if kind == "single":
@@ -565,6 +603,12 @@ def _title(
     noise = f", floor {floor:.0f} dB re 1 V²/Hz" if floor is not None else ""
     if levels.get("harder"):
         noise += f" (+{levels['harder_db']:.0f} dB harder)"
+    segment = levels.get("background_segment")
+    if segment:
+        noise = (
+            f", real background {segment} at SNR "
+            f"{levels.get('background_snr_db', math.nan):.0f} dB"
+        )
     spacing = levels.get("spacing_m")
     grid = layout + (f", spacing {spacing:.2f} m" if spacing else "")
     reference = levels.get("reference")

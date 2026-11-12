@@ -41,6 +41,16 @@
 ``spectrogram_overview.png``, ``spectrogram_zooms.png``
     Annotated spectrograms (:mod:`gridtools.sim.plot`).
 
+Hybrid scenes. With probability ``background.prob`` a scene uses a real
+background segment (:mod:`gridtools.sim.hybrid`): the segment's electrodes
+(all, or a subset drawn from the usual electrode-count distribution, with
+their positions and channel order) replace the drawn layout, the segment is
+resampled to the scene rate, synthetic noise, hum and clicks are off, and
+the real fish join the tracks with identities from 1000 on (``scene.json``
+``real_fish``; they never chirp, ``chirps.csv`` lists simulated chirps only).
+``scene.json`` ``background`` records the segment, offset, channels, scale
+and SNR, so :func:`render_background` reloads it from the library.
+
 Randomness. One seed sequence per scene; every component draws from its own
 child sequence with a fixed spawn key (:mod:`gridtools.sim.seeding`), so
 changing one component's config does not reshuffle the others (e.g. the
@@ -65,6 +75,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from gridtools.background.levels import fish_signal_level
+from gridtools.background.library import add_background, merge_tracks
 from gridtools.io import GridGeometry, Tracks, save_tracks
 from gridtools.sim._common import Float32Array, FloatArray
 from gridtools.sim.chirps import (
@@ -85,6 +97,14 @@ from gridtools.sim.eod import (
     jitter_harmonics,
 )
 from gridtools.sim.field import DipoleParams, dipole_gain
+from gridtools.sim.hybrid import (
+    REAL_FISH_IDENT_OFFSET,
+    HybridBackground,
+    check_duration,
+    draw_segment,
+    reproduce,
+    segment_spacing,
+)
 from gridtools.sim.mix import mix
 from gridtools.sim.movement import Arena, FishPath, simulate_path
 from gridtools.sim.noise import (
@@ -260,6 +280,8 @@ class ScenePlan:
         Gain mismatch and fault flags.
     pool : TemplatePool
         Template source.
+    background : HybridBackground or None
+        The real background of a hybrid scene (None: synthetic background).
     """
 
     config: SceneConfig
@@ -276,6 +298,12 @@ class ScenePlan:
     levels: dict[str, Any]
     channels: dict[str, Any]
     pool: TemplatePool
+    background: HybridBackground | None = None
+
+    @property
+    def hybrid(self) -> bool:
+        """Whether the scene has a real background."""
+        return self.background is not None
 
 
 def _drift_knots(
@@ -410,7 +438,8 @@ class Layout:
         not a full rectangle.
     kind : str
         ``"real"``, ``"single"``, ``"pair"``, ``"line"``, ``"grid"`` or
-        ``"irregular"`` (a near-square grid with positions missing).
+        ``"irregular"`` (a near-square grid with positions missing), or
+        ``"background"`` (the channels of a real background segment).
     regular : bool
         Whether the positions are exactly ``GridGeometry.regular(columns,
         rows, spacing)`` (no jitter, rotation or gaps). Otherwise the
@@ -515,6 +544,59 @@ def layout_arena(layout: Layout, margin_rel: float) -> Arena:
     return Arena(float(lo[0]), float(hi[0]), float(lo[1]), float(hi[1]))
 
 
+def background_layout(segment: Any) -> Layout:
+    """Layout of a hybrid scene: the background excerpt's electrodes.
+
+    Positions and channel order are the segment's (nominal for the
+    competition grids). The whole grid of a segment keeps its rows and
+    columns if its positions are the regular row-major grid; anything else
+    (a channel subset, a single line of unknown geometry) is written as
+    ``1 x E`` with ``electrodes.csv``.
+    """
+    positions = np.array(segment.geometry.positions_m, dtype=np.float64)
+    n = positions.shape[0]
+    spacing = segment_spacing(segment)
+    info = segment.info
+    rows, columns = int(info.get("n_rows", 1) or 1), int(info.get("n_columns", n) or n)
+    whole = tuple(segment.channels) == tuple(range(n)) and rows * columns == n
+    regular = whole and bool(
+        np.allclose(
+            positions,
+            GridGeometry.regular(columns, rows, spacing, spacing).positions_m,
+        )
+    )
+    if not regular:
+        rows, columns = 1, n
+    return Layout(positions, rows, columns, "background", regular, spacing)
+
+
+def _track_times(model: SceneModel, step_s: float) -> FloatArray:
+    """Frame times of the ground-truth tracks.
+
+    Up to the first frame at or after the last sample, so every chirp lies
+    within the tracks (wavetracker's frames would stop earlier).
+    """
+    last_s = (model.n_samples - 1) / model.samplerate_hz
+    n_frames = math.ceil(last_s / step_s - 1e-9) + 1
+    return np.arange(n_frames, dtype=np.float64) * step_s
+
+
+def fish_fundamentals(model: SceneModel, times_s: np.ndarray) -> list[np.ndarray]:
+    """Noise-free fundamental amplitude of every fish on every electrode.
+
+    Amplitude x relative amplitude of the fundamental x field gain x channel
+    gain, shape (len(times_s), E) per fish: the input of
+    :func:`gridtools.background.fish_signal_level`.
+    """
+    return [
+        model.gain_track(i).evaluate(times_s)
+        * model.channel_gain
+        * fish.amplitude
+        * fish.harmonics.amplitudes[0]
+        for i, fish in enumerate(model.fish)
+    ]
+
+
 def median_strongest_gain(
     electrode_xy_m: np.ndarray,
     arena: Arena,
@@ -597,8 +679,20 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
     duration_s = n_samples / fs
     pool = TemplatePool.open(config.chirps)
 
-    # electrodes and arena
+    # electrodes and arena; a real background fixes them (hybrid scene)
     layout = draw_layout(config, seed)
+    hybrid_cfg = config.background
+    background_rng = stream(seed, "background")
+    segment = None
+    choice: dict[str, Any] = {}
+    if hybrid_cfg.prob > 0.0:
+        check_duration(hybrid_cfg, duration_s)
+        if background_rng.random() < hybrid_cfg.prob:
+            # a "real" layout means the segment's whole grid, any other its
+            # electrode count (capped by the segment's channels)
+            k = None if layout.kind == "real" else layout.n_electrodes
+            segment, choice = draw_segment(background_rng, hybrid_cfg, k, fs, n_samples)
+            layout = background_layout(segment)
     spacing = layout.spacing_m
     rows, columns = layout.rows, layout.columns
     geometry = GridGeometry(layout.positions_m)
@@ -743,16 +837,28 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
         n_electrodes,
         GainMismatchParams(log_sd=noise_cfg.gain_mismatch_log_sd),
     )
-    faults = electrode_faults(
-        stream(seed, "faults"),
-        n_electrodes,
-        ElectrodeFaultParams(
-            dead_prob=noise_cfg.dead_prob,
-            noisy_prob=noise_cfg.noisy_prob,
-            dead_gain=noise_cfg.dead_gain,
-            noisy_factor=noise_cfg.noisy_factor,
-        ),
-    )
+    if segment is None:
+        faults = electrode_faults(
+            stream(seed, "faults"),
+            n_electrodes,
+            ElectrodeFaultParams(
+                dead_prob=noise_cfg.dead_prob,
+                noisy_prob=noise_cfg.noisy_prob,
+                dead_gain=noise_cfg.dead_gain,
+                noisy_factor=noise_cfg.noisy_factor,
+            ),
+        )
+    else:  # the segment's own dead (no fish signal) and noisy channels
+        dead = np.zeros(n_electrodes, dtype=bool)
+        dead[segment.dead_channels] = True
+        noisy = np.zeros(n_electrodes, dtype=bool)
+        noisy[segment.noisy_channels] = True
+        faults = ElectrodeFaults(
+            dead=dead,
+            noisy=noisy,
+            signal_gain=np.where(dead, noise_cfg.dead_gain, 1.0).astype(np.float32),
+            noise_scale=np.ones(n_electrodes, dtype=np.float32),
+        )
     if faults.dead.all():  # keep at least one live electrode
         dead = faults.dead.copy()
         dead[0] = False
@@ -838,7 +944,39 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
         "movement_light": scene_light if movement.per == "scene" else None,
         "reference": "in tank" if in_tank else "distant",
         "reference_xy_m": None if reference_xy is None else reference_xy.tolist(),
+        "background": "synthetic" if segment is None else "real",
     }
+    background = None
+    if segment is not None:
+        # the real background replaces the synthetic noise, hum and clicks
+        for key in (
+            "noise_floor_db_v2_hz",
+            "noise_floor_mode",
+            "harder",
+            "harder_db",
+            "noise_sd",
+            "noise_exponent",
+            "hum_n_harmonics",
+            "hum_amplitude_v",
+        ):
+            levels[key] = None
+        signal = fish_signal_level(
+            fish_fundamentals(model, _track_times(model, config.tracks.step_s))
+        )
+        background = HybridBackground.build(
+            hybrid_cfg, segment, choice, signal, background_rng
+        )
+        if background.fish_gain != 1.0:  # hard SNR: quieter simulated fish
+            fish_models = [
+                dataclasses.replace(f, amplitude=f.amplitude * background.fish_gain)
+                for f in fish_models
+            ]
+            model = dataclasses.replace(model, fish=tuple(fish_models))
+        levels["background_segment"] = segment.segment_id
+        levels["background_dataset"] = str(segment.info.get("dataset", ""))
+        levels["background_snr_db"] = background.snr_db
+        levels["background_scale"] = background.scale
+        levels["fish_gain"] = background.fish_gain
     channels = {
         "gain_mismatch": mismatch.astype(np.float64).tolist(),
         "dead": faults.dead.tolist(),
@@ -865,6 +1003,7 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
                 "n_responses": n_resp,
                 "ramps": [vars(r) for r in fish.ramps],
                 **pair_info[i],
+                "real_fish": False,
             }
         )
 
@@ -883,6 +1022,7 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
         levels=levels,
         channels=channels,
         pool=pool,
+        background=background,
     )
 
 
@@ -954,6 +1094,10 @@ class Scene:
         The scene's click rate.
     timings_s : dict of float
         Wall-clock time of the simulation stages.
+    real_fish : pandas.DataFrame
+        Real fish of a hybrid scene's background (columns of
+        :meth:`gridtools.background.BackgroundSegment.real_fish`; ``ident``
+        is the track identity, from 1000 on); empty otherwise.
     """
 
     plan: ScenePlan
@@ -963,6 +1107,7 @@ class Scene:
     tracks: Tracks
     click_rate_hz: float
     timings_s: dict[str, float] = field(default_factory=dict)
+    real_fish: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def config(self) -> SceneConfig:
@@ -1082,7 +1227,11 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
     timings["fish"] = time.perf_counter() - t1
 
     t2 = time.perf_counter()
-    components, click_rate, clicks = _background_parts(plan, workers=workers)
+    background = plan.background
+    if background is None:
+        components, click_rate, clicks = _background_parts(plan, workers=workers)
+    else:  # the real background has its own noise, hum and clicks
+        components, click_rate, clicks = [], 0.0, []
     timings["noise"] = time.perf_counter() - t2
 
     t3 = time.perf_counter()
@@ -1103,6 +1252,15 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
         workers=workers,
         out=buffer,
     )
+    if background is not None:
+        add_background(
+            recording,
+            background.segment,
+            background.scale,
+            geometry=plan.geometry,
+            samplerate_hz=model.samplerate_hz,
+            out=recording,
+        )
     add_clicks(recording, clicks)
     if config.noise.clip_limit is not None:
         limit = np.float32(config.noise.clip_limit)
@@ -1112,6 +1270,9 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
     t4 = time.perf_counter()
     chirps = chirp_table(plan)
     tracks = ground_truth_tracks(plan, recording, workers=workers)
+    real_fish = pd.DataFrame()
+    if background is not None:
+        tracks, real_fish = _merge_real_fish(plan, tracks)
     timings["tables"] = time.perf_counter() - t4
     if config.footprint.enabled:
         t5 = time.perf_counter()
@@ -1119,12 +1280,16 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
         timings["footprints"] = time.perf_counter() - t5
     timings["simulate_total"] = time.perf_counter() - t0
     logger.info(
-        "scene %s/%06d: %d fish, %d chirps, %d clicks, %.2f s",
+        "scene %s/%06d: %d fish, %d chirps, %d clicks, %s background, %.2f s",
         config.name,
         seed,
         len(model.fish),
         len(chirps),
         len(clicks),
+        "synthetic"
+        if background is None
+        else f"real ({background.segment.segment_id}, {len(real_fish)} real fish, "
+        f"SNR {background.snr_db:.1f} dB)",
         timings["simulate_total"],
     )
     return Scene(
@@ -1135,7 +1300,60 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
         tracks=tracks,
         click_rate_hz=click_rate,
         timings_s=timings,
+        real_fish=real_fish,
     )
+
+
+def _merge_real_fish(plan: ScenePlan, tracks: Tracks) -> tuple[Tracks, pd.DataFrame]:
+    """Add the background's real fish to the tracks (identities from 1000 on).
+
+    Their ``sign_v`` is the tracker's, shifted by ``20 log10(scale)`` (the
+    background's scale) and by the ratio of the PSD frames' durations
+    (scene ``nfft / fs`` over the tracker's), which turns the power of a
+    tone in the tracker's PSD into the scene's definition.
+    """
+    background = plan.background
+    assert background is not None
+    segment = background.segment
+    real = segment.tracks
+    if real is None or real.ids.size == 0:
+        return tracks, pd.DataFrame()
+    fs = plan.model.samplerate_hz
+    scene_window_s = plan.config.tracks.power_nfft(fs) / fs
+    track_window_s = float(segment.info["track_power_nfft"]) / float(
+        segment.info["samplerate_hz"]
+    )
+    offset_db = 20.0 * math.log10(background.scale) + 10.0 * math.log10(
+        scene_window_s / track_window_s
+    )
+    merged, real_ids = merge_tracks(
+        tracks,
+        real,
+        ident_offset=REAL_FISH_IDENT_OFFSET,
+        power_offset_db=offset_db,
+    )
+    assert merged is not None
+    table = segment.real_fish(real_ids)
+    table = table.loc[table["source_ident"].isin(list(real_ids.values()))]
+    missing = sorted(set(real_ids.values()) - set(table["source_ident"]))
+    if missing:  # tracked in the excerpt but not listed in the manifest
+        inverse = {old: new for new, old in real_ids.items()}
+        extra = pd.DataFrame(
+            {
+                "ident": [inverse[i] for i in missing],
+                "source_ident": missing,
+                "real_fish": True,
+                "eodf_hz": np.nan,
+                "snr_db": np.nan,
+                "source_dataset": str(segment.info.get("dataset", "")),
+                "source_recording": str(segment.info.get("recording", "")),
+                "segment_id": segment.segment_id,
+            }
+        )
+        table = pd.concat([table, extra], ignore_index=True)
+    table = table.sort_values(by="ident").reset_index(drop=True)
+    table["power_offset_db"] = offset_db
+    return merged, table
 
 
 def chirp_table(plan: ScenePlan) -> pd.DataFrame:
@@ -1360,11 +1578,8 @@ def ground_truth_tracks(
     model = plan.model
     cfg = plan.config.tracks
     fs = model.samplerate_hz
-    last_s = (model.n_samples - 1) / fs
-    # up to the first frame at or after the last sample, so every chirp lies
-    # within the tracks (wavetracker's frames would stop earlier)
-    n_frames = math.ceil(last_s / cfg.step_s - 1e-9) + 1
-    times = np.arange(n_frames, dtype=np.float64) * cfg.step_s
+    times = _track_times(model, cfg.step_s)
+    n_frames = times.size
     if not model.fish:
         return Tracks(
             times_s=times,
@@ -1534,7 +1749,12 @@ def scene_info(scene: Scene) -> dict[str, Any]:
             "n_samples": model.n_samples,
             "n_channels": model.n_electrodes,
             "dtype": "float32",
-            "unit": "V at the ADC (electrode potential x 100), as the real raw data",
+            "unit": "V at the ADC (electrode potential x 100), as the real raw data"
+            + (
+                "; the background is converted to it by its scale"
+                if plan.background is not None
+                else ""
+            ),
             "clip_limit": config.noise.clip_limit,
         },
         "levels": plan.levels,
@@ -1549,6 +1769,16 @@ def scene_info(scene: Scene) -> dict[str, Any]:
             "n_dropped_cap": schedule.n_dropped_cap,
         },
         "clicks": {"rate_hz": scene.click_rate_hz, "n_clicks": len(scene.clicks)},
+        "background": (
+            {"used": False}
+            if plan.background is None
+            else {
+                **plan.background.record(),
+                "real_fish_ident_offset": REAL_FISH_IDENT_OFFSET,
+                "n_real_fish": len(scene.real_fish),
+            }
+        ),
+        "real_fish": _records(scene.real_fish),
         "footprint": {
             **dataclasses.asdict(config.footprint),
             "spectrogram": (
@@ -1570,6 +1800,23 @@ def scene_info(scene: Scene) -> dict[str, Any]:
         "model": _model_dict(model),
         "timings_s": scene.timings_s,
     }
+
+
+def _records(table: pd.DataFrame) -> list[dict[str, Any]]:
+    """JSON-ready rows (NaN -> None, numpy scalars -> Python)."""
+    if table.empty:
+        return []
+    out = []
+    for row in table.to_dict("records"):
+        clean: dict[str, Any] = {}
+        for key, value in row.items():
+            if isinstance(value, np.generic):
+                value = value.item()
+            if isinstance(value, float) and not math.isfinite(value):
+                value = None
+            clean[str(key)] = value
+        out.append(clean)
+    return out
 
 
 def _write_chirp_traces(model: SceneModel, path: Path) -> None:
@@ -1820,13 +2067,17 @@ def _as_model(scene: "Scene | SceneModel | str | Path") -> SceneModel:
 def _span(
     model: SceneModel, start_s: float | None, stop_s: float | None
 ) -> tuple[int, int]:
-    fs = model.samplerate_hz
+    return _span_samples(model.samplerate_hz, model.n_samples, start_s, stop_s)
+
+
+def _span_samples(
+    fs: float, n_samples: int, start_s: float | None, stop_s: float | None
+) -> tuple[int, int]:
     start = 0 if start_s is None else math.ceil(start_s * fs - 1e-9)
-    stop = model.n_samples if stop_s is None else math.ceil(stop_s * fs - 1e-9)
-    if not 0 <= start <= stop <= model.n_samples:
+    stop = n_samples if stop_s is None else math.ceil(stop_s * fs - 1e-9)
+    if not 0 <= start <= stop <= n_samples:
         msg = (
-            f"span [{start_s}, {stop_s}) s is outside the scene "
-            f"[0, {model.n_samples / fs}) s"
+            f"span [{start_s}, {stop_s}) s is outside the scene [0, {n_samples / fs}) s"
         )
         raise IndexError(msg)
     return start, stop
@@ -1900,19 +2151,47 @@ def render_background(
 ) -> Float32Array:
     """Re-render everything except the fish: noise, hum and clicks.
 
-    The background is regenerated from the scene's random streams over the
-    whole scene (the coloured noise is synthesised by one FFT), then cut to
-    the span, so this costs about as much as the noise of a full simulation.
-    For a scene directory the template library must be available (the plan
-    is redrawn from config and seed).
+    Synthetic background: regenerated from the scene's random streams over
+    the whole scene (the coloured noise is synthesised by one FFT), then cut
+    to the span, so this costs about as much as the noise of a full
+    simulation. For a scene directory the template library must be
+    available (the plan is redrawn from config and seed).
+
+    Real background (hybrid scene): ``scale`` times the background excerpt,
+    reloaded for a scene directory from the library recorded in
+    ``scene.json`` (segment id, offset, channels, resampling, scale; the
+    template library is not needed).
+
+    In both cases ``recording = sum_i render_fish(i) + render_background``
+    to float32 rounding of the sum (without clipping).
 
     Returns
     -------
     numpy.ndarray of float32, shape (n, len(electrodes))
     """
-    plan = scene.plan if isinstance(scene, Scene) else _plan_from_dir(Path(scene))
+    if isinstance(scene, Scene):
+        plan = scene.plan
+    else:
+        directory = Path(scene)
+        info = json.loads((directory / "scene.json").read_text())
+        record = info.get("background") or {}
+        if record.get("used"):
+            fs = float(info["samplerate_hz"])
+            n_samples = int(info["recording"]["n_samples"])
+            background = reproduce(record, fs, n_samples)
+            start, stop = _span_samples(fs, n_samples, start_s, stop_s)
+            out = background.scaled(start, stop)
+            return np.ascontiguousarray(
+                out if electrodes is None else out[:, list(electrodes)]
+            )
+        plan = _plan_from_dir(directory)
     model = plan.model
     start, stop = _span(model, start_s, stop_s)
+    if plan.background is not None:
+        out = plan.background.scaled(start, stop)
+        return np.ascontiguousarray(
+            out if electrodes is None else out[:, list(electrodes)]
+        )
     components, _, clicks = _background_parts(plan)
     if not components or not isinstance(components[0], np.ndarray):
         zeros = np.zeros((model.n_samples, model.n_electrodes), dtype=np.float32)

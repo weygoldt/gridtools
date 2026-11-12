@@ -35,6 +35,7 @@ __all__ = [
     "FieldConfig",
     "FootprintConfig",
     "GridConfig",
+    "HybridConfig",
     "MovementConfig",
     "NoiseConfig",
     "PlotConfig",
@@ -1019,6 +1020,102 @@ class FootprintConfig:
 
 
 @dataclasses.dataclass(frozen=True)
+class HybridConfig:
+    """Real background segments (hybrid scenes), TOML section ``[background]``.
+
+    With probability ``prob`` a scene is hybrid: a segment of a real
+    recording from the background library (:mod:`gridtools.sim.background`)
+    replaces the synthetic electrode noise, hum and clicks, and fixes the
+    grid. The electrode count is drawn as for synthetic scenes (a real
+    layout means all of the segment's channels, otherwise the drawn count,
+    capped by the segment's channel count); the channels are a subset of
+    the segment's, chosen by ``channels`` mode, and keep their positions and
+    order (positions may be nominal: the competition grids' spacing is
+    unknown). Segments at another sampling rate (field loggers at 48 kHz)
+    are resampled to the scene rate. The background is scaled so that the
+    simulated fish sit at a target SNR drawn from ``snr_*`` (the library's
+    :class:`~gridtools.background.SnrDistribution`, same definition), with
+    the gap to louder real fish capped at ``max_real_gap_db`` (hard SNRs
+    attenuate the simulated fish rather than amplify the background, see
+    ``amplify_background``). Real fish in
+    the segment join the tracks (identities from 1000 on) as non-chirping
+    fish. Hybrid scenes are limited to the segment length (60 s); longer
+    scenes stay synthetic.
+
+    Attributes
+    ----------
+    library : str
+        Library directory (default ``/mnt/data1/chirp_v2/background/v1``).
+    prob : float
+        Share of hybrid scenes (default 0.6).
+    unscreened_weight : float
+        Sampling weight of segments not screened for chirps (the 2022
+        competitions; default 0.3; screened and fish-free segments 1).
+    dataset_weights : tuple of (str, float)
+        Extra weight factors per dataset (default none). The pulse-heavy
+        field segments stay at 1: realistic negatives.
+    datasets : tuple of str
+        Use only these datasets (default all).
+    include_groups, exclude_groups : tuple of str
+        Split groups (source recordings) to keep or drop, for
+        train/validation/test splits (default none).
+    channels : {"contiguous", "random"}
+        How a channel subset is chosen (default a contiguous run in channel
+        order).
+    avoid_bad_channels : bool
+        Never choose dead or noisy channels for a subset (default True).
+    snr_hard_db, snr_typical_db : (float, float)
+        Ranges of hard and realistic target SNRs in dB (defaults 10-35 and
+        35-80).
+    snr_hard_fraction : float
+        Probability of a hard SNR (default 0.4).
+    max_real_gap_db : float or None
+        Cap on how much louder the segment's real fish may be than the
+        simulated ones: the SNR is drawn at or above ``real_snr_max_db -
+        max_real_gap_db`` (default 30; None disables the cap).
+    amplify_background : bool
+        Reach every SNR by scaling the background alone (default False:
+        nothing is amplified beyond its own level; hard SNRs attenuate the
+        simulated fish instead, see
+        :meth:`gridtools.sim.hybrid.HybridBackground.build`).
+    """
+
+    library: str = "/mnt/data1/chirp_v2/background/v1"
+    prob: float = 0.6
+    unscreened_weight: float = 0.3
+    dataset_weights: tuple[tuple[str, float], ...] = ()
+    datasets: tuple[str, ...] = ()
+    include_groups: tuple[str, ...] = ()
+    exclude_groups: tuple[str, ...] = ()
+    channels: Literal["contiguous", "random"] = "contiguous"
+    avoid_bad_channels: bool = True
+    snr_hard_db: FloatRange = (10.0, 35.0)
+    snr_typical_db: FloatRange = (35.0, 80.0)
+    snr_hard_fraction: float = 0.4
+    max_real_gap_db: float | None = 30.0
+    amplify_background: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.library:
+            msg = "background.library must not be empty"
+            raise ValueError(msg)
+        _check_number(self.prob, "background.prob", low=0.0, high=1.0)
+        _check_number(self.unscreened_weight, "background.unscreened_weight", low=0.0)
+        for name, weight in self.dataset_weights:
+            _check_number(weight, f"background.dataset_weights[{name}]", low=0.0)
+        if self.channels not in ("contiguous", "random"):
+            msg = f"background.channels must be 'contiguous' or 'random', got {self.channels!r}"
+            raise ValueError(msg)
+        _check_range(self.snr_hard_db, "background.snr_hard_db")
+        _check_range(self.snr_typical_db, "background.snr_typical_db")
+        _check_number(
+            self.snr_hard_fraction, "background.snr_hard_fraction", low=0.0, high=1.0
+        )
+        if self.max_real_gap_db is not None:
+            _check_number(self.max_real_gap_db, "background.max_real_gap_db", low=0.0)
+
+
+@dataclasses.dataclass(frozen=True)
 class PlotConfig:
     """Annotated spectrograms written next to each scene.
 
@@ -1084,7 +1181,8 @@ class SceneConfig:
         Config name; used for the default output directory (default
         ``"default"``).
     duration_s : float
-        Scene duration in s (default 120).
+        Scene duration in s (default 60, the length of the real background
+        segments; longer scenes cannot be hybrid).
     samplerate_hz : float
         Sampling rate in Hz (default 20000, as the real grids). Every
         setting is in physical units, so any rate gives the same scene.
@@ -1092,12 +1190,13 @@ class SceneConfig:
         Augmentation: if not empty, the rate is drawn per scene from these
         (default empty: always ``samplerate_hz``). ``scene.json`` records the
         resolved config with the drawn rate.
-    grid, population, chirps, movement, field, noise, clicks, tracks, plot, footprint
+    grid, population, chirps, movement, field, noise, clicks, tracks, plot,
+    footprint, background
         Sections; see their classes.
     """
 
     name: str = "default"
-    duration_s: float = 120.0
+    duration_s: float = 60.0
     samplerate_hz: float = 20_000.0
     samplerate_choices_hz: tuple[float, ...] = ()
     grid: GridConfig = dataclasses.field(default_factory=GridConfig)
@@ -1110,6 +1209,7 @@ class SceneConfig:
     tracks: TrackConfig = dataclasses.field(default_factory=TrackConfig)
     plot: PlotConfig = dataclasses.field(default_factory=PlotConfig)
     footprint: FootprintConfig = dataclasses.field(default_factory=FootprintConfig)
+    background: HybridConfig = dataclasses.field(default_factory=HybridConfig)
 
     def __post_init__(self) -> None:
         if not self.name or "/" in self.name:
