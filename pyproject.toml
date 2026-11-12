@@ -1,147 +1,58 @@
 [project]
 name = "gridtools"
-version = "0.0.1"
-description = "A toolbox to work with electrode grid recordings of wave-type weakly electric fish more efficiently."
-authors = [{ name = "weygoldt", email = "patrick@weygoldt.com" }]
-requires-python = ">=3.11, <3.13"
+version = "2.0.0.dev0"
+description = "Read and simulate multi-electrode grid recordings of wave-type weakly electric fish."
 readme = "README.md"
 license = "MIT"
-keywords = [
-    "datascience",
-    "biology",
-    "neuro",
-    "behavior",
-    "bioinformatics",
-]
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+authors = [{ name = "Patrick Weygoldt", email = "patrick@weygoldt.com" }]
+keywords = ["electric fish", "electrode grid", "simulation", "neuroethology"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
-    "numpy>=1.26.1,<2",
-    "rich>=13.6.0,<14",
-    "argparse>=1.4.0,<2",
-    "matplotlib>=3.8.0,<4",
-    "scipy>=1.11.3,<2",
-    "pydantic>=2.4.2,<3",
-    "pandas>=2.1.2,<3",
-    # "audian",
-    # "audioio",
-    # "thunderfish",
-    "pyaml>=23.9.7,<24",
-    "torch>=2.1.0,<3",
-    "torchaudio>=2.1.0,<3",
-    "pillow>=10.1.0,<11",
-    "rich-argparse>=1.4.0,<2",
-    "click>=8.1.7,<9",
-    "rich-click>=1.7.1,<2",
-    "toml>=0.10.2,<0.11",
-    "typer[all]>=0.9.0,<0.10",
-    "h5py>=3.10.0,<4",
-    "torchvision>=0.25.0",
-    "ipython>=9.10.0",
-    "thunderfish",
+    "numpy>=2.5",
+    "scipy>=1.18",
 ]
 
 [project.urls]
-Homepage = "https://weygoldt.com"
-
-[project.scripts]
-gridtools = "gridtools.gridtools:cli"
-gdt = "gridtools.gridtools:cli"
-dataconverter = "gridtools.dataconverter:dataconverter_cli"
-fakegrid = "gridtools.fakegrid:fakegrid_cli"
-hybridgrid = "gridtools.fakegrid:hybridgrid_cli"
-movement-demo = "gridtools.simulations:movement_demo"
-communication-demo = "gridtools.simulations:communication_demo"
-grid-demo = "gridtools.simulations:grid_demo"
-subset-dataset = "gridtools.datasets:subset_cli"
-extract-chirps = "gridtools.chirpextraction:extract_cli"
-resample-chirps = "gridtools.chirpextraction:resample_cli"
+Repository = "https://github.com/weygoldt/gridtools"
 
 [dependency-groups]
 dev = [
-    "pytest>=7.4.2,<8",
-    "pre-commit>=3.5.0,<4",
-    "ruff>=0.1.6,<0.2",
-    "pytest-coverage>=0.0,<0.1",
-    "pyright>=1.1.337,<2",
-]
-
-[tool.uv]
-
-[tool.uv.sources]
-thunderfish = { git = "https://github.com/janscience/thunderfish.git" }
-# audian = { git = "https://github.com/bendalab/audian.git" }
-# audioio = { git = "https://github.com/bendalab/audioio.git" }
-# thunderfish = { git = "https://github.com/janscience/thunderfish.git" }
-
-[tool.uv.build-backend]
-module-root = ""
-source-include = [
-    "data/**",
-    "tests/**",
+    "hypothesis>=6.170",
+    "pre-commit>=4.7",
+    "pyright>=1.1.414",
+    "pytest>=9.2",
+    "pytest-cov>=7.1",
+    "ruff>=0.17",
 ]
 
 [build-system]
-requires = ["uv_build>=0.10.2,<0.11.0"]
+requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--import-mode=importlib"]
+markers = [
+    "slow: long-running tests",
+    "data: tests that need the recordings on /mnt/data2 (skipped if absent)",
+]
+
 [tool.ruff]
-line-length = 79
+line-length = 88
+target-version = "py313"
 
 [tool.ruff.lint]
-select = [
-    "W", # pycodestyle
-    "E", # pycodestyle
-    "F", # Pyflakes
-    "UP", # pyupgrade
-    "B", # flake8-bugbear
-    "SIM", # flake8-simplify
-    "ANN", # flake8-annotations
-    "A", # flake8-builtins
-    "COM", # flake8-commas
-    "C4", # flake8-comprehensions
-    "EM", # flake8-error-msg
-    "EXE", # flake8-executable
-    "ICN", # flake8-import-conventions
-    "PT", # flake8-pytest-style
-    "Q", # flake8-quotes
-    "RET", # flake8-return
-    "SIM", # flake8-simplify
-    "ARG", # flake8-unused-arguments
-    "PTH", # flake8-use-pathlib
-    "PD", # pandas-vet
-    "PL", # pylint
-    "TRY", # tryceratops
-    "NPY", # numpy-specific
-    "I", # isort
-    "C90", # complexity (McCabe)
-    "N", # pep8-naming
-    "D", # pydocstyle
-]
-ignore = [
-    "COM812", # missing trailing comma
-    "TD002", # missing todo author
-    "TD003", # missing todo link
-]
-
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-line-ending = "auto"
-
-[tool.black]
-line-length = 79
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "NPY", "RUF", "PT"]
+ignore = ["E501"]
 
 [tool.pyright]
-include = ["chirpdetector", "tests"]
-defineConstant = { DEBUG = true }
-reportMissingImports = true
-reportMissingTypeStubs = false
-pythonVersion = "3.11"
-pythonPlatform = "Linux"
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
