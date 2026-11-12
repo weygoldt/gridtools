@@ -192,6 +192,8 @@ def test_local_copy_matches_the_library_cycler(library_dir: Path) -> None:
             np.random.default_rng(5),
             equalize=equalize,  # type: ignore[call-arg]
             bins=(10, 10),  # type: ignore[call-arg]
+            spacing="linear",  # type: ignore[call-arg]
+            alpha=1.0,  # type: ignore[call-arg]
         )
         groups = (
             _local_groups(pool.view, (10, 10)) if equalize else [pool.view.unique_ids()]

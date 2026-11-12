@@ -294,7 +294,16 @@ class TemplatePool:
     def cycler(self, rng: np.random.Generator) -> Cycler:
         """A stateful sampler (one per fish) drawing from ``rng``."""
         if library_api() == "gridtools.templates":
-            return self.view.cycler(rng, equalize=self.equalize, bins=self.bins)  # type: ignore[call-arg]
+            # Equal-width bins and full equalization, as documented in
+            # `sampling`; the library's own defaults (log bins, tempered
+            # weights) take over when the scene config exposes them.
+            return self.view.cycler(  # type: ignore[call-arg]
+                rng,
+                equalize=self.equalize,
+                bins=self.bins,
+                spacing="linear",
+                alpha=1.0,
+            )
         groups = (
             _local_groups(self.view, self.bins)
             if self.equalize

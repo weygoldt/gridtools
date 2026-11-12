@@ -13,8 +13,12 @@ from gridtools.templates.amplitude import (
 from gridtools.templates.build import build_library
 from gridtools.templates.config import BuildConfig
 from gridtools.templates.library import (
+    DEFAULT_ALPHA,
+    DEFAULT_BINS,
     DEFAULT_EXCLUDE,
+    DEFAULT_SPACING,
     EQUALIZE_DURATION_COLUMN,
+    MIN_DURATION_S,
     EqualizationBins,
     TemplateCycler,
     TemplateLibrary,
@@ -24,9 +28,13 @@ from gridtools.templates.library import (
 from gridtools.templates.report import write_report
 
 __all__ = [
+    "DEFAULT_ALPHA",
+    "DEFAULT_BINS",
     "DEFAULT_DIP_RANGE",
     "DEFAULT_EXCLUDE",
+    "DEFAULT_SPACING",
     "EQUALIZE_DURATION_COLUMN",
+    "MIN_DURATION_S",
     "BuildConfig",
     "EqualizationBins",
     "TemplateCycler",

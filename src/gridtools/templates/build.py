@@ -8,6 +8,7 @@ import json
 import logging
 import platform
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from gridtools.templates.features import (
     extraction_filter_gain,
     measure_template,
 )
+from gridtools.templates.library import MIN_DURATION_S
 from gridtools.templates.qc import exact_duplicates, near_duplicates
 from gridtools.templates.source import (
     describe_source_file,
@@ -101,6 +103,10 @@ class ProcessedSnippet:
     metrics: TemplateMetrics
 
 
+#: Gain of an extraction filter: ``gain(freq_hz, design_eodf_hz)``.
+FilterGain = Callable[[FloatArray, float], FloatArray]
+
+
 def process_snippet(
     traces: dict[str, FloatArray], samplerate_hz: float, config: BuildConfig
 ) -> ProcessedSnippet:
@@ -120,12 +126,65 @@ def process_snippet(
     -------
     ProcessedSnippet
     """
-    fs = samplerate_hz
-    n_out = config.n_samples(fs)
     wrap = find_wrap_index(traces["smooth_freq"])
     if wrap != find_wrap_index(traces["orig_freq"]):
         wrap = -1
     unrolled = {name: unroll_rows(trace, wrap) for name, trace in traces.items()}
+    return template_from_traces(unrolled, samplerate_hz, config, wrap_index=wrap)
+
+
+def template_from_traces(
+    traces: dict[str, FloatArray],
+    samplerate_hz: float,
+    config: BuildConfig,
+    *,
+    wrap_index: int = 0,
+    absolute_freq: bool = False,
+    peak_range: tuple[int, int] | None = None,
+    baseline_band: tuple[float, float] | None = None,
+    filter_gain: FilterGain = extraction_filter_gain,
+) -> ProcessedSnippet:
+    """Turn contiguous frequency and amplitude traces into a template.
+
+    This is the library's template construction (baseline estimate,
+    alignment on the 50% crossings, support detection, raised-cosine taper
+    to exactly 0 / 1, measurements), shared by the chirp-chamber source rows
+    (:func:`process_snippet`) and chirps harvested from grid recordings
+    (:mod:`gridtools.templates.harvest`).
+
+    Parameters
+    ----------
+    traces
+        Contiguous ``orig_freq``, ``smooth_freq``, ``orig_amp`` and
+        ``smooth_amp`` of equal length (not modified).
+    samplerate_hz
+        Sampling rate of the traces.
+    config
+        Build configuration.
+    wrap_index
+        Position of the window start in the stored row, recorded as
+        ``ProcessedSnippet.wrap_index``: 0 for contiguous traces, -1 if a
+        source row could not be unrolled (the template is then invalid).
+    absolute_freq
+        The frequency traces are absolute (Hz), not relative to the window
+        start; the baseline is then the absolute EODf.
+    peak_range
+        Sample range searched for the excursion peak (None: all).
+    baseline_band
+        Frequency range of the samples that may count as baseline (None:
+        all); see :func:`~gridtools.templates.features.analyse_snippet`.
+    filter_gain
+        Gain of the filter used to extract the amplitude, for
+        ``amp_filter_correction`` (default: the thesis extraction filter).
+
+    Returns
+    -------
+    ProcessedSnippet
+    """
+    fs = samplerate_hz
+    n_out = config.n_samples(fs)
+    wrap = wrap_index
+    unrolled = traces
     freq = unrolled[f"{config.freq_source}_freq"]
     amp = unrolled[f"{config.amp_source}_amp"]
     analysis = analyse_snippet(
@@ -143,6 +202,13 @@ def process_snippet(
         knot_threshold=config.knot_threshold,
         knot_mad_max_hz=config.knot_mad_max_hz,
         bridge_samples=round(config.crossing_bridge_s * fs),
+        decay_level_rel=config.decay_level_rel,
+        decay_level_hz=config.decay_level_hz,
+        decay_smooth_s=config.decay_smooth_s,
+        peak_range=peak_range,
+        absolute_freq=absolute_freq,
+        baseline_band=baseline_band,
+        next_event_guard_s=config.taper_ramp_s,
     )
     centre = analysis.align_index
     n_dup = round(config.duplicate_window_s * fs)
@@ -172,9 +238,7 @@ def process_snippet(
     exclude_start = max(
         0, int(analysis.crossing_10.onset - config.baseline_exclusion_pre_s * fs)
     )
-    exclude_stop = (
-        int(analysis.crossing_10.offset + config.baseline_exclusion_post_s * fs) + 1
-    )
+    exclude_stop = int(analysis.chirp_end + config.baseline_exclusion_post_s * fs) + 1
     jitter[exclude_start:exclude_stop] = 0.0
     fingerprint, _, _ = crop_centred(jitter, centre, n_dup, 0.0)
     ratio = (
@@ -196,8 +260,8 @@ def process_snippet(
     gain = np.ones(n_out, dtype=np.float64)
     eodf = analysis.baseline_eodf_hz
     if config.amp_filter_correction and np.isfinite(eodf):
-        gain = extraction_filter_gain(eodf + delta, eodf) / extraction_filter_gain(
-            eodf, eodf
+        gain = filter_gain(eodf + delta, eodf) / filter_gain(
+            np.array([eodf], dtype=np.float64), eodf
         )
     amp_rel = apply_taper_ratio(ratio / gain, window.weights)
     # truncated: the support plus ramps runs into the edge of the source window
@@ -210,6 +274,7 @@ def process_snippet(
         or wanted_stop > n_source - 1
         or analysis.crossing_10.onset_clipped
         or analysis.crossing_10.offset_clipped
+        or (analysis.decay is not None and analysis.decay.clipped)
     )
     # the template length cuts source-backed support (should never happen)
     template_cut = (
@@ -244,9 +309,10 @@ def process_snippet(
     )
 
 
-def _snippet_record(
+def snippet_record(
     template_id: int, source_row: int, snippet: ProcessedSnippet, fs: float
 ) -> dict[str, Any]:
+    """Metadata record of one template (measurements and source analysis)."""
     a = snippet.analysis
     m = snippet.metrics
     return {
@@ -352,7 +418,7 @@ def process_source(h5_path: Path | str, config: BuildConfig) -> ProcessedSource:
             amp_all[row] = snippet.amp_rel
             shape[row] = snippet.untapered_delta_hz
             fingerprint[row] = snippet.fingerprint_hz
-            records.append(_snippet_record(row, row, snippet, fs))
+            records.append(snippet_record(row, row, snippet, fs))
         hashes.extend(chunk.raw_hashes)
         log.info("processed %d / %d rows", chunk.start_row + chunk.n_rows, n_rows)
     return ProcessedSource(
@@ -441,18 +507,30 @@ def build_library(
     log.info("library written to %s", out_dir)
 
 
-def _quality_control(
-    processed: ProcessedSource, config: BuildConfig
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    meta = processed.meta.copy()
+def add_row_flags(meta: pd.DataFrame, config: BuildConfig) -> pd.DataFrame:
+    """Add the per-template family and quality flags to snippet records.
+
+    Parameters
+    ----------
+    meta
+        Records as written by :func:`snippet_record`.
+    config
+        Build configuration (thresholds).
+
+    Returns
+    -------
+    pandas.DataFrame
+        A copy with ``family``, ``multi_peak``, ``eodf_atypical``,
+        ``too_short``, ``ripple_score``, ``ripple_flag``,
+        ``amp_ripple_flag`` and ``step_flag``.
+    """
+    meta = meta.copy()
     meta["family"] = np.where(
         meta["excursion_hz"] >= config.big_chirp_threshold_hz, "big", "small"
     )
     meta["multi_peak"] = meta["n_extra_events"] > 0
-    meta["inferred_group"] = inferred_groups(
-        meta["baseline_hz"].to_numpy(dtype=float), config.group_eodf_jump_hz
-    )
     meta["eodf_atypical"] = meta["baseline_hz"] < config.eodf_atypical_below_hz
+    meta["too_short"] = meta["duration_10_s"] < config.min_duration_10_s
     meta["ripple_score"] = meta["ripple_freq_hz"] / meta["excursion_hz"]
     meta["ripple_flag"] = ~(meta["ripple_score"] <= config.ripple_score_max)
     meta["amp_ripple_flag"] = ~(meta["ripple_amp"] <= config.amp_ripple_max) | ~(
@@ -460,6 +538,16 @@ def _quality_control(
     )
     meta["step_flag"] = (meta["step_score_freq"] > config.step_score_max) | (
         meta["step_score_amp"] > config.step_score_max
+    )
+    return meta
+
+
+def _quality_control(
+    processed: ProcessedSource, config: BuildConfig
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    meta = add_row_flags(processed.meta, config)
+    meta["inferred_group"] = inferred_groups(
+        meta["baseline_hz"].to_numpy(dtype=float), config.group_eodf_jump_hz
     )
 
     exact = exact_duplicates(processed.hashes)
@@ -595,6 +683,10 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         return meta[name].to_numpy(dtype=bool)
 
     kind = meta["duplicate_kind"].to_numpy()
+    duration = meta["duration_10_s"].to_numpy(dtype=float)
+    too_short = (
+        col("too_short") if "too_short" in meta.columns else duration < MIN_DURATION_S
+    )
     # the default exclusions of TemplateLibrary.select, in this order
     criteria: list[tuple[str, npt.NDArray[np.bool_]]] = [
         ("invalid", ~col("valid")),
@@ -603,7 +695,7 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         ("near_duplicate", kind == "near"),
         ("truncated", col("truncated")),
         ("step_artefact", col("step_flag")),
-        ("eodf_atypical", col("eodf_atypical")),
+        ("too_short", too_short),
     ]
     flagged = {name: int(mask.sum()) for name, mask in criteria}
     keep = np.ones(len(meta), dtype=bool)
@@ -620,9 +712,8 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
             "all": int(col(name).sum()),
             "in_default_selection": int((keep & col(name)).sum()),
         }
-        for name in ("multi_peak", "ripple_flag", "amp_ripple_flag")
+        for name in ("eodf_atypical", "multi_peak", "ripple_flag", "amp_ripple_flag")
     }
-    duration = meta["duration_10_s"].to_numpy(dtype=float)
     excursion = meta["excursion_hz"].to_numpy(dtype=float)
     support = (meta["support_stop_s"] - meta["support_start_s"]).to_numpy(dtype=float)
     longest = int(np.nanargmax(np.where(keep, duration, np.nan)))
