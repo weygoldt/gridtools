@@ -208,3 +208,15 @@ def test_dipole_params_reach_the_mix() -> None:
         DipoleParams(reference_distance_m=0.05),
     )
     np.testing.assert_allclose(weaker.gains, near.gains / 4.0, rtol=1e-5)
+
+
+def test_track_ending_at_last_sample_is_handled() -> None:
+    # Knots past the last sample are extrapolated from the spline's end piece.
+    n = 1003
+    times = np.linspace(0.0, (n - 1) / FS_HZ, 8)
+    gains = np.linspace(1.0, 2.0, 8 * 3).reshape(8, 3).astype(np.float32)
+    track = GainTrack(times_s=times, gains=gains)
+    eod = np.ones(n, dtype=np.float32)
+    result = mix([eod], [track], samplerate_hz=FS_HZ)
+    exact = track.evaluate(np.arange(n) / FS_HZ)
+    np.testing.assert_allclose(result, exact, rtol=1e-6)

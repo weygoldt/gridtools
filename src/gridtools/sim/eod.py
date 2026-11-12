@@ -401,10 +401,11 @@ class SharedDriftParams:
     EODf of *A. leptorhynchus* rises with temperature, so a common temperature
     change shifts every fish by about the same *fraction* of its EODf. The
     water temperature logged during the 2019-2020 competition recordings
-    changed by 1-2 degC over 6-h trials (about 0.1 degC per 10 min). The
-    default standard deviation of 0.1 % (0.8 Hz at 800 Hz) is a rough guess
-    in that range, not a fitted value; calibrate it from the common-mode
-    component of the tracked EODf of fish recorded together.
+    changed by 1-2 degC over 6-h trials (0.03-0.06 degC per 10 min on
+    average). The default standard deviation of 0.1 % (0.8 Hz at 800 Hz) is a
+    rough guess of the resulting EODf change, not a fitted value; calibrate it
+    from the common-mode component of the tracked EODf of fish recorded
+    together.
 
     Attributes
     ----------
