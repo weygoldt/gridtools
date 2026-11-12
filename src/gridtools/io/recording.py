@@ -9,7 +9,9 @@ Two layouts are supported:
   configuration and thunderlab label the data mV. Some files end in a
   partial frame (an interrupted write); it is dropped with a warning;
 - wav files (PCM or float), e.g. excerpts or simulations. Integer PCM is
-  scaled to [-1, 1).
+  scaled to [-1, 1). Electrode positions come from an ``electrodes.csv``
+  (columns ``channel, x_m, y_m``) next to the wav if there is one (layouts
+  that are not a full rectangle), else from ``fishgrid.cfg``.
 
 Both are memory-mapped, so opening a 26 GB recording is instant and reading a
 few seconds anywhere in it costs only those seconds.
@@ -175,11 +177,31 @@ def _open_wav(path: Path) -> Recording:
     scale = 1.0 / 2 ** (8 * data.dtype.itemsize - 1) if data.dtype.kind == "i" else 1.0
     geometry = None
     config_path = path.parent / "fishgrid.cfg"
-    if config_path.exists():
+    electrodes_path = path.parent / "electrodes.csv"
+    if electrodes_path.exists():
+        geometry = _read_electrodes(electrodes_path, data.shape[1])
+    elif config_path.exists():
         config = read_fishgrid_config(config_path)
         if config.n_electrodes == data.shape[1]:
             geometry = config.geometry()
     return Recording(path, float(rate), data, scale, geometry)
+
+
+def _read_electrodes(path: Path, n_channels: int) -> GridGeometry | None:
+    """Electrode positions from ``electrodes.csv`` (columns channel, x_m, y_m)."""
+    table = np.genfromtxt(path, delimiter=",", names=True)
+    names = table.dtype.names or ()
+    if not {"channel", "x_m", "y_m"} <= set(names):
+        log.warning("%s: expected columns channel, x_m, y_m; ignored", path)
+        return None
+    table = np.atleast_1d(table)
+    order = np.argsort(table["channel"])
+    if table.size != n_channels:
+        log.warning(
+            "%s: %d rows for %d channels; ignored", path, table.size, n_channels
+        )
+        return None
+    return GridGeometry(np.column_stack([table["x_m"][order], table["y_m"][order]]))
 
 
 def open_recording(path: str | Path) -> Recording:
