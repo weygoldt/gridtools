@@ -25,7 +25,7 @@ from gridtools.templates.features import (
     extraction_filter_gain,
     measure_template,
 )
-from gridtools.templates.library import MIN_DURATION_S
+from gridtools.templates.library import DEFAULT_EXCLUDE, flag_mask_of
 from gridtools.templates.qc import exact_duplicates, near_duplicates
 from gridtools.templates.source import (
     describe_source_file,
@@ -521,7 +521,7 @@ def add_row_flags(meta: pd.DataFrame, config: BuildConfig) -> pd.DataFrame:
     -------
     pandas.DataFrame
         A copy with ``family``, ``multi_peak``, ``eodf_atypical``,
-        ``too_short``, ``ripple_score``, ``ripple_flag``,
+        ``too_short``, ``brief_cycles``, ``ripple_score``, ``ripple_flag``,
         ``amp_ripple_flag`` and ``step_flag``.
     """
     meta = meta.copy()
@@ -531,6 +531,9 @@ def add_row_flags(meta: pd.DataFrame, config: BuildConfig) -> pd.DataFrame:
     meta["multi_peak"] = meta["n_extra_events"] > 0
     meta["eodf_atypical"] = meta["baseline_hz"] < config.eodf_atypical_below_hz
     meta["too_short"] = meta["duration_10_s"] < config.min_duration_10_s
+    meta["brief_cycles"] = (
+        meta["duration_50_s"] * meta["baseline_hz"] <= config.max_brief_cycles
+    )
     meta["ripple_score"] = meta["ripple_freq_hz"] / meta["excursion_hz"]
     meta["ripple_flag"] = ~(meta["ripple_score"] <= config.ripple_score_max)
     meta["amp_ripple_flag"] = ~(meta["ripple_amp"] <= config.amp_ripple_max) | ~(
@@ -680,22 +683,23 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
     """
 
     def col(name: str) -> npt.NDArray[np.bool_]:
-        return meta[name].to_numpy(dtype=bool)
+        return flag_mask_of(meta, name)
 
     kind = meta["duplicate_kind"].to_numpy()
     duration = meta["duration_10_s"].to_numpy(dtype=float)
-    too_short = (
-        col("too_short") if "too_short" in meta.columns else duration < MIN_DURATION_S
-    )
     # the default exclusions of TemplateLibrary.select, in this order
     criteria: list[tuple[str, npt.NDArray[np.bool_]]] = [
-        ("invalid", ~col("valid")),
+        ("invalid", col("invalid")),
         ("has_nan", col("has_nan")),
         ("exact_duplicate", kind == "exact"),
         ("near_duplicate", kind == "near"),
         ("truncated", col("truncated")),
         ("step_artefact", col("step_flag")),
-        ("too_short", too_short),
+        *(
+            (name, col(name))
+            for name in DEFAULT_EXCLUDE
+            if name not in ("invalid", "has_nan", "duplicate", "truncated", "step_flag")
+        ),
     ]
     flagged = {name: int(mask.sum()) for name, mask in criteria}
     keep = np.ones(len(meta), dtype=bool)
@@ -712,7 +716,7 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
             "all": int(col(name).sum()),
             "in_default_selection": int((keep & col(name)).sum()),
         }
-        for name in ("eodf_atypical", "multi_peak", "ripple_flag", "amp_ripple_flag")
+        for name in ("eodf_atypical", "amp_ripple_flag")
     }
     excursion = meta["excursion_hz"].to_numpy(dtype=float)
     support = (meta["support_stop_s"] - meta["support_start_s"]).to_numpy(dtype=float)
@@ -722,11 +726,13 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         "cumulative": cumulative,
         "default_selection_per_family": per_family,
         "informational_flags": informational,
-        "amp_usable_in_default_selection": int((keep & col("amp_usable")).sum()),
+        "amp_usable_in_default_selection": int(
+            (keep & meta["amp_usable"].to_numpy(dtype=bool)).sum()
+        ),
         "baseline_hz_recovered": int(
             np.isfinite(meta["baseline_hz"].to_numpy(dtype=float)).sum()
         ),
-        "template_cut": int(col("template_cut").sum()),
+        "template_cut": int(meta["template_cut"].to_numpy(dtype=bool).sum()),
         "longest_chirp": {
             "template_id": int(meta["template_id"].to_numpy()[longest]),
             "duration_10_s": float(duration[longest]),
