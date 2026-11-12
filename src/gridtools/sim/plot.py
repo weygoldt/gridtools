@@ -603,10 +603,9 @@ def _title(
     noise = f", floor {floor:.0f} dB re 1 V²/Hz" if floor is not None else ""
     if levels.get("harder"):
         noise += f" (+{levels['harder_db']:.0f} dB harder)"
-    segment = levels.get("background_segment")
-    if segment:
+    if levels.get("background_segment"):
         noise = (
-            f", real background {segment} at SNR "
+            f", real {levels.get('background_dataset', '')} background at SNR "
             f"{levels.get('background_snr_db', math.nan):.0f} dB"
         )
     spacing = levels.get("spacing_m")
