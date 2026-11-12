@@ -9,6 +9,7 @@ chirps of known excursion and width, so the tests do not need
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,9 @@ from gridtools.sim.config import (
     PopulationConfig,
     SceneConfig,
 )
+
+if TYPE_CHECKING:
+    from gridtools.sim.scene import Scene
 
 FS = 20_000.0
 N_TEMPLATE = 4000  # 0.2 s, centre at 2000
@@ -114,3 +118,17 @@ def small_config(library: Path, **changes: object) -> SceneConfig:
 @pytest.fixture(scope="session")
 def config(library_dir: Path) -> SceneConfig:
     return small_config(library_dir)
+
+
+@pytest.fixture(scope="session")
+def scene(config: SceneConfig) -> "Scene":
+    from gridtools.sim.scene import simulate_scene
+
+    return simulate_scene(config, 7)
+
+
+@pytest.fixture(scope="session")
+def scene_path(scene: "Scene", tmp_path_factory: pytest.TempPathFactory) -> Path:
+    from gridtools.sim.scene import write_scene
+
+    return write_scene(scene, tmp_path_factory.mktemp("scene") / "000007")

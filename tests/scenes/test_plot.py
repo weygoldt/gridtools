@@ -1,14 +1,29 @@
 """Annotated scene spectrograms."""
 
 import itertools
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from gridtools.sim.config import PlotConfig
+from gridtools.sim.scene import Scene, write_scene
+
 pytest.importorskip("matplotlib")
 
-from gridtools.sim.plot import _zoom_windows, summed_spectrogram
+from gridtools.sim.plot import _zoom_windows, plot_scene_dir, summed_spectrogram
+
+
+def test_plots_are_written(scene: Scene, tmp_path: Path) -> None:
+    path = write_scene(scene, tmp_path / "with_plots", plots=True)
+    assert (path / "spectrogram_overview.png").stat().st_size > 10_000
+    assert (path / "spectrogram_zooms.png").stat().st_size > 10_000
+    out = plot_scene_dir(path, tmp_path / "again", PlotConfig(n_zooms=1, zoom_s=1.0))
+    assert [p.name for p in out] == [
+        "spectrogram_overview.png",
+        "spectrogram_zooms.png",
+    ]
 
 
 def test_summed_spectrogram_peaks_at_the_tone() -> None:

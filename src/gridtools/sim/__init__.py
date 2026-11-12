@@ -9,6 +9,16 @@ Building blocks (all random draws come from an explicit
 - :mod:`gridtools.sim.noise`: electrode noise, power-line hum, faults, clipping;
 - :mod:`gridtools.sim.mix`: chunked mixing into a multi-electrode recording.
 
+Scene assembly builds on them (import from the modules; they load the
+template library and pandas, so they are not imported here):
+
+- :mod:`gridtools.sim.config`: ``SceneConfig`` (TOML/JSON);
+- :mod:`gridtools.sim.scene`: ``simulate_scene``, ``write_scene``,
+  ``render_fish``, ``render_background``;
+- :mod:`gridtools.sim.chirps`, :mod:`gridtools.sim.render`,
+  :mod:`gridtools.sim.clicks`, :mod:`gridtools.sim.seeding`,
+  :mod:`gridtools.sim.output`, :mod:`gridtools.sim.plot`.
+
 The mixing function is imported from its module
 (``from gridtools.sim.mix import mix``) so that it does not shadow the
 ``gridtools.sim.mix`` submodule; everything else is re-exported here.

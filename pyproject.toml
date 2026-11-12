@@ -32,6 +32,7 @@ plot = [
 
 [dependency-groups]
 dev = [
+    "audioio>=2.9.0",
     "hypothesis>=6.170",
     "matplotlib>=3.11",
     "pre-commit>=4.7",
@@ -39,6 +40,7 @@ dev = [
     "pytest>=9.2",
     "pytest-cov>=7.1",
     "ruff>=0.17",
+    "soundfile>=0.14.0",
 ]
 
 [build-system]
