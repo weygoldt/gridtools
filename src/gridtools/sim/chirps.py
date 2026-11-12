@@ -480,9 +480,12 @@ class ChirpSchedule:
     n_dropped_cap: int
 
 
-def _gap_ok(first: ChirpEvent, second: ChirpEvent, min_gap: int) -> bool:
-    """Whether ``second`` starts at least ``min_gap`` after ``first`` ends."""
-    return second.start - first.stop >= min_gap
+def _spacing_ok(first: ChirpEvent, second: ChirpEvent, min_interval: int) -> bool:
+    """Chirps of one fish: centres ``min_interval`` apart, supports disjoint."""
+    return (
+        second.center_index - first.center_index >= min_interval
+        and second.start >= first.stop
+    )
 
 
 def _spontaneous(
@@ -496,14 +499,14 @@ def _spontaneous(
 ) -> list[ChirpEvent]:
     """Burst process on [0, duration]: candidates sorted by centre, unfiltered.
 
-    Burst onsets are Poisson; within a burst each chirp starts a silent gap
-    (``burst_gap_s``) after the previous chirp's support ends.
+    Burst onsets are Poisson; within a burst the centre-to-centre intervals
+    are log-normal (``burst_interval_s`` = median, log SD).
     """
     if rate_hz <= 0.0:
         return []
     duration_s = (n_samples - 1) / samplerate_hz
     burst_rate = rate_hz / config.burst_size_mean
-    gap_lo, gap_hi = config.burst_gap_s
+    median_s, log_sd = config.burst_interval_s
     events: list[ChirpEvent] = []
     t = 0.0
     while True:
@@ -511,16 +514,12 @@ def _spontaneous(
         if t > duration_s:
             break
         size = int(rng.geometric(1.0 / config.burst_size_mean))
-        centre = round(t * samplerate_hz)
-        previous: ChirpEvent | None = None
-        for _ in range(size):
+        intervals = median_s * np.exp(log_sd * rng.standard_normal(size - 1))
+        centres = t + np.concatenate([[0.0], np.cumsum(intervals)])
+        for centre_s in centres.tolist():
             template_id, before, after = draw(fish_id)
-            if previous is not None:
-                gap = round(rng.uniform(gap_lo, gap_hi) * samplerate_hz)
-                centre = previous.stop + gap + before
-            event = ChirpEvent(fish_id, centre, template_id, before, after)
-            events.append(event)
-            previous = event
+            centre = round(centre_s * samplerate_hz)
+            events.append(ChirpEvent(fish_id, centre, template_id, before, after))
     inside = [e for e in events if 0 <= e.center_index <= n_samples - 1]
     return sorted(inside, key=lambda e: e.center_index)
 
@@ -537,11 +536,10 @@ def schedule_chirps(
 ) -> ChirpSchedule:
     """Draw when every fish chirps and with which template.
 
-    See :class:`~gridtools.sim.config.ChirpConfig`. Chirps of one fish keep
-    a silent interval of at least ``min_interval_s`` between their supports
-    (from the drawn templates, so long chirps take more room); spontaneous
-    chirps that violate it are dropped (earlier ones win), and so are
-    responses.
+    See :class:`~gridtools.sim.config.ChirpConfig`. Chirps of one fish are at
+    least ``min_interval_s`` apart centre to centre and their supports (from
+    the drawn templates) never overlap; spontaneous chirps that violate this
+    are dropped (earlier ones win), and so are responses.
 
     Parameters
     ----------
@@ -552,7 +550,7 @@ def schedule_chirps(
     timing_rngs : sequence of numpy.random.Generator
         One generator per fish for its spontaneous chirps.
     response_rng : numpy.random.Generator
-        Generator for responses (couples the fish). Three numbers are drawn
+        Generator for responses (couples the fish). Five numbers are drawn
         per spontaneous chirp whatever the outcome.
     draw : callable
         ``draw(fish_id) -> (template_id, before, after)``; called for every
@@ -571,8 +569,11 @@ def schedule_chirps(
     if len(timing_rngs) != n_fish:
         msg = "need one timing generator per fish"
         raise ValueError(msg)
-    min_gap = round(config.min_interval_s * samplerate_hz)
-    cap = math.floor(config.max_rate_hz * n_samples / samplerate_hz)
+    min_interval = round(config.min_interval_s * samplerate_hz)
+    if config.max_rate_hz is None:
+        cap = math.inf
+    else:
+        cap = math.floor(config.max_rate_hz * n_samples / samplerate_hz)
     per_fish: list[list[ChirpEvent]] = []
     dropped_interval = dropped_cap = 0
     for fish_id, (rng, rate) in enumerate(zip(timing_rngs, rates_hz, strict=True)):
@@ -581,13 +582,14 @@ def schedule_chirps(
         )
         kept: list[ChirpEvent] = []
         for event in candidates:
-            if kept and not _gap_ok(kept[-1], event, min_gap):
+            if kept and not _spacing_ok(kept[-1], event, min_interval):
                 dropped_interval += 1
                 continue
             kept.append(event)
         if len(kept) > cap:
-            dropped_cap += len(kept) - cap
-            choice = np.sort(rng.choice(len(kept), size=cap, replace=False))
+            n_keep = int(cap)
+            dropped_cap += len(kept) - n_keep
+            choice = np.sort(rng.choice(len(kept), size=n_keep, replace=False))
             kept = [kept[i] for i in choice.tolist()]
         per_fish.append(kept)
 
@@ -596,26 +598,30 @@ def schedule_chirps(
         key=lambda e: (e.center_index, e.fish_id),
     )
     lag_lo, lag_hi = config.response_delay_s
+    window = config.simultaneous_window_s
     responses: list[tuple[ChirpEvent, int]] = []  # (event, trigger position)
     attempts = 0
     for position, trigger in enumerate(spontaneous):
         u = response_rng.random()
         partner = int(response_rng.integers(max(n_fish - 1, 1)))
         delay_s = response_rng.uniform(lag_lo, lag_hi)
+        simultaneous = response_rng.random() < config.simultaneous_fraction
+        offset_s = response_rng.uniform(-window, window)
         if n_fish < 2 or u >= config.response_prob:
             continue
         attempts += 1
         responder = partner if partner < trigger.fish_id else partner + 1
         template_id, before, after = draw(responder)
-        centre = trigger.center_index + round(delay_s * samplerate_hz)
+        lag = offset_s if simultaneous else delay_s
+        centre = trigger.center_index + round(lag * samplerate_hz)
         event = ChirpEvent(responder, centre, template_id, before, after, True)
         taken = per_fish[responder]
-        if centre > n_samples - 1 or len(taken) >= cap:
+        if not 0 <= centre <= n_samples - 1 or len(taken) >= cap:
             continue
         slot = int(np.searchsorted([e.center_index for e in taken], centre))
-        if slot > 0 and not _gap_ok(taken[slot - 1], event, min_gap):
+        if slot > 0 and not _spacing_ok(taken[slot - 1], event, min_interval):
             continue
-        if slot < len(taken) and not _gap_ok(event, taken[slot], min_gap):
+        if slot < len(taken) and not _spacing_ok(event, taken[slot], min_interval):
             continue
         taken.insert(slot, event)
         responses.append((event, position))

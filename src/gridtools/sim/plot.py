@@ -34,6 +34,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from gridtools.io import Tracks, load_tracks, open_recording
 from gridtools.sim.config import PlotConfig
+from gridtools.sim.footprint import HannSpectrogram, chirp_footprint
 
 __all__ = ["FISH_COLORS", "plot_scene", "plot_scene_dir", "summed_spectrogram"]
 
@@ -135,6 +136,7 @@ class _SceneView:
     fish: list[dict[str, Any]]
     title: str
     plot: PlotConfig
+    model: Any = None  # SceneModel, for footprint boxes in the zooms
 
 
 def _track_lines(tracks: Tracks) -> dict[int, tuple[np.ndarray, np.ndarray]]:
@@ -193,8 +195,8 @@ def _overview(view: _SceneView, path: Path) -> None:
     times, freqs, power = summed_spectrogram(
         view.recording,
         fs,
-        nfft=cfg.nfft,
-        hop=cfg.hop,
+        nfft=max(8, round(cfg.window_s * fs)),
+        hop=max(1, round(cfg.hop_s * fs)),
         f_min_hz=cfg.f_min_hz,
         f_max_hz=cfg.f_max_hz,
     )
@@ -354,23 +356,24 @@ def _zooms(view: _SceneView, path: Path) -> None:
     fig = _new_figure(16.0, 2.6 * n_rows + 0.5)
     axes = fig.subplots(n_rows, 1, squeeze=False)
     lines = _track_lines(view.tracks)
-    half = cfg.zoom_nfft // 2
+    half = round(cfg.zoom_window_s * fs) // 2
     centres = view.chirps["t_center_s"].to_numpy()
     for ax, (t0, t1) in zip(axes.flat, windows, strict=False):
         first = max(0, round(t0 * fs) - half)
         last = min(n_samples, round(t1 * fs) + half)
         inside = cast(pd.DataFrame, view.chirps.loc[(centres >= t0) & (centres <= t1)])
         f_lo, f_hi = _zoom_band(inside, lines, t0, t1, cfg)
-        times, freqs, power = summed_spectrogram(
-            view.recording[first:last],
-            fs,
-            nfft=cfg.zoom_nfft,
-            hop=cfg.zoom_hop,
+        panel_fn = HannSpectrogram(
+            window_s=cfg.zoom_window_s,
+            hop_s=cfg.zoom_hop_s,
             f_min_hz=f_lo,
             f_max_hz=f_hi,
-            start_index=first,
         )
+        power, freqs, times = panel_fn(view.recording[first:last], fs, first / fs)
+        power = 10.0 * np.log10(np.maximum(power, 1e-30))
         _image(ax, times, freqs, power)
+        if view.model is not None:
+            _draw_boxes(ax, view, inside, panel_fn)
         for fid, (t, f) in lines.items():
             keep = (t >= t0 - 1.0) & (t <= t1 + 1.0)
             ax.plot(t[keep], f[keep], color=_color(fid), lw=0.8, alpha=0.9)
@@ -393,17 +396,73 @@ def _zooms(view: _SceneView, path: Path) -> None:
         _style_axes(ax)
     axes.flat[-1].set_xlabel("time (s)")
     fig.suptitle(
-        f"{view.title}: zooms (nfft {cfg.zoom_nfft}, hop {cfg.zoom_hop}); "
-        "bar = excursion (just left of the chirp), caret = peak, dot = emitter EODf",
+        f"{view.title}\nzooms (window {1e3 * cfg.zoom_window_s:.1f} ms, hop "
+        f"{1e3 * cfg.zoom_hop_s:.1f} ms): box = chirp "
+        "footprint at this resolution (dashed: not visible at the reference front end), "
+        "grey = 2nd harmonic; bar = excursion (left of the chirp), caret = peak, "
+        "dot = emitter EODf",
         fontsize=9,
         color=_INK,
         x=0.05,
         ha="left",
     )
-    top = 1.0 - 0.75 / fig.get_figheight()
+    top = 1.0 - 1.0 / fig.get_figheight()
     bottom = 0.45 / fig.get_figheight()
     fig.subplots_adjust(left=0.05, right=0.99, bottom=bottom, top=top, hspace=0.45)
     fig.savefig(path, dpi=cfg.dpi)
+
+
+def _draw_boxes(
+    ax: Any, view: _SceneView, inside: pd.DataFrame, panel_fn: HannSpectrogram
+) -> None:
+    """Footprint boxes computed with the panel's own spectrogram parameters."""
+    from matplotlib.patches import Rectangle
+
+    visible = (
+        inside["visible"].to_numpy(dtype=bool)
+        if "visible" in inside.columns
+        else np.ones(len(inside), dtype=bool)
+    )
+    for chirp_id, emitter, is_visible in zip(
+        inside["chirp_id"].to_numpy(dtype=int),
+        inside["emitter_id"].to_numpy(dtype=int),
+        visible,
+        strict=True,
+    ):
+        footprint = chirp_footprint(
+            view.model,
+            int(chirp_id),
+            panel_fn,
+            margin_s=0.02,
+            harmonic_band=(panel_fn.f_min_hz, panel_fn.f_max_hz),
+        )
+        t0, t1, f0, f1 = footprint.box
+        if np.isfinite(t0):
+            ax.add_patch(
+                Rectangle(
+                    (t0, f0),
+                    t1 - t0,
+                    f1 - f0,
+                    fill=False,
+                    edgecolor=_color(int(emitter)),
+                    lw=1.2,
+                    ls="-" if is_visible else (0, (3, 2)),
+                    alpha=0.95,
+                )
+            )
+        h0, h1, g0, g1 = footprint.harmonic_box
+        if np.isfinite(h0):
+            ax.add_patch(
+                Rectangle(
+                    (h0, g0),
+                    h1 - h0,
+                    g1 - g0,
+                    fill=False,
+                    edgecolor="#8a8a8a",
+                    lw=0.7,
+                    alpha=0.9,
+                )
+            )
 
 
 def _zoom_band(
@@ -472,26 +531,45 @@ def plot_scene(scene: Any, out_dir: str | Path) -> list[Path]:
             scene.seed,
             scene.plan.levels,
             len(scene.plan.fish_info),
-            scene.plan.rows,
-            scene.plan.columns,
+            _layout_text(
+                scene.plan.layout.kind,
+                scene.plan.layout.n_electrodes,
+                scene.plan.rows,
+                scene.plan.columns,
+            ),
         ),
         plot=scene.config.plot,
+        model=scene.model,
     )
     return _write(view, Path(out_dir))
+
+
+def _layout_text(kind: str, n_electrodes: int, rows: int, columns: int) -> str:
+    if kind in ("real", "grid", "line"):
+        return f"{rows}x{columns} grid" if kind != "line" else f"line of {n_electrodes}"
+    if kind == "single":
+        return "1 electrode"
+    if kind == "pair":
+        return "electrode pair"
+    return f"{n_electrodes} electrodes ({kind})"
 
 
 def _title(
     name: str,
     seed: int,
-    levels: dict[str, float],
+    levels: dict[str, Any],
     n_fish: int,
-    rows: int,
-    columns: int,
+    layout: str,
 ) -> str:
-    return (
-        f"{name} / {seed:06d}: {n_fish} fish, {rows}x{columns} grid, "
-        f"SNR {levels['snr_db']:.1f} dB re median fish at 0.5 m"
-    )
+    floor = levels.get("noise_floor_db_v2_hz")
+    noise = f", floor {floor:.0f} dB re 1 V²/Hz" if floor is not None else ""
+    if levels.get("harder"):
+        noise += f" (+{levels['harder_db']:.0f} dB harder)"
+    spacing = levels.get("spacing_m")
+    grid = layout + (f", spacing {spacing:.2f} m" if spacing else "")
+    reference = levels.get("reference")
+    ref = f", {reference} reference" if reference else ""
+    return f"{name} / {seed:06d}: {n_fish} fish, {grid}{noise}{ref}"
 
 
 def plot_scene_dir(
@@ -538,12 +616,28 @@ def plot_scene_dir(
             int(info["seed"]),
             info["levels"],
             len(info["fish"]),
-            int(info["grid"]["rows"]),
-            int(info["grid"]["columns"]),
+            _layout_text(
+                str(info["grid"].get("kind", "grid")),
+                int(
+                    info["grid"].get(
+                        "n_electrodes",
+                        int(info["grid"]["rows"]) * int(info["grid"]["columns"]),
+                    )
+                ),
+                int(info["grid"]["rows"]),
+                int(info["grid"]["columns"]),
+            ),
         ),
         plot=plot,
+        model=_load_model(directory),
     )
     return _write(view, Path(out_dir) if out_dir is not None else directory)
+
+
+def _load_model(directory: Path) -> Any:
+    from gridtools.sim.scene import load_scene_model
+
+    return load_scene_model(directory)
 
 
 def _tuple_free(data: dict[str, Any]) -> dict[str, Any]:

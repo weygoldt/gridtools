@@ -21,23 +21,31 @@ def test_shipped_default_toml_equals_the_dataclass_defaults() -> None:
 def test_json_round_trip_is_exact() -> None:
     config = SceneConfig(
         duration_s=7.5,
-        noise=NoiseConfig(clip_limit=3.0, snr_db=(0.1, 0.30000000000000004)),
+        noise=NoiseConfig(clip_limit=3.0, harder_db=(0.1, 0.30000000000000004)),
     )
     text = config.to_json()
     assert SceneConfig.from_json(text) == config
     assert json.loads(text)["noise"]["clip_limit"] == 3.0
-    assert SceneConfig.from_json(SceneConfig().to_json()).noise.clip_limit is None
+    no_clip = SceneConfig(noise=NoiseConfig(clip_limit=None))
+    assert SceneConfig.from_json(no_clip.to_json()).noise.clip_limit is None
+    assert SceneConfig().noise.clip_limit == 0.02048
 
 
 def test_toml_name_defaults_to_file_stem(tmp_path: Path) -> None:
     path = tmp_path / "my_scenes.toml"
-    path.write_text("duration_s = 10\n[population]\nn_fish = [2, 2]\n")
+    path.write_text(
+        "duration_s = 10\n[population]\nn_fish = [2, 2]\n"
+        "[movement.light]\nmean_rest_s = 300\n"
+    )
     config = SceneConfig.from_toml(path)
     assert config.name == "my_scenes"
     assert config.duration_s == 10.0
     assert isinstance(config.duration_s, float)
     assert config.population.n_fish == (2, 2)
     assert config.chirps == ChirpConfig()
+    assert config.movement.light.mean_rest_s == 300.0
+    # a partial table falls back to MovementParams defaults, not the light regime's
+    assert config.movement.light.rest_turn_factor == 0.2
 
 
 @pytest.mark.parametrize(
@@ -56,7 +64,12 @@ def test_toml_name_defaults_to_file_stem(tmp_path: Path) -> None:
         ({"chirps": {"dip": [0.0, 1.2]}}, ValueError),
         ({"chirps": {"equalize": 1}}, TypeError),
         ({"grid": {"layouts": [[3, 0]]}}, ValueError),
-        ({"noise": {"snr_db": [10.0]}}, ValueError),
+        ({"noise": {"harder_db": [10.0]}}, ValueError),
+        ({"noise": {"floor_modes": [[-120.0, 1.0]]}}, ValueError),
+        ({"movement": {"per": "trial"}}, ValueError),
+        ({"field": {"ridge_exponents": [2.0, 1.5]}}, ValueError),
+        ({"footprint": {"background": "noise"}}, ValueError),
+        ({"grid": {"reference_prob": 2.0}}, ValueError),
         ({"samplerate_hz": 2000.0}, ValueError),  # too low for 1100 Hz fish
         ({"grid": []}, TypeError),
     ],
@@ -67,8 +80,8 @@ def test_invalid_configs_are_rejected(data: dict, error: type[Exception]) -> Non
 
 
 def test_sections_validate_on_construction() -> None:
-    with pytest.raises(ValueError, match="baseline_hz"):
-        PopulationConfig(baseline_hz=(1000.0, 900.0))
+    with pytest.raises(ValueError, match="baseline_uniform_hz"):
+        PopulationConfig(baseline_uniform_hz=(1000.0, 900.0))
     with pytest.raises(ValueError, match="clip_limit"):
         NoiseConfig(clip_limit=0.0)
 
