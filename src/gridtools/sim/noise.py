@@ -95,6 +95,7 @@ def colored_noise(
     params: ColoredNoiseParams | None = None,
     *,
     sd_scale: npt.ArrayLike | None = None,
+    workers: int = 1,
 ) -> Float32Array:
     """Independent coloured noise on each electrode, generated via FFT.
 
@@ -118,6 +119,10 @@ def colored_noise(
     sd_scale : array_like of shape (n_electrodes,), optional
         Per-electrode factor on the standard deviation (e.g.
         :attr:`ElectrodeFaults.noise_scale`).
+    workers : int
+        Electrodes transformed in parallel by the FFT (default 1). Random
+        numbers are always drawn electrode by electrode in the same order,
+        so the result does not depend on it.
 
     Returns
     -------
@@ -144,17 +149,26 @@ def colored_noise(
     amplitude *= params.sd / math.sqrt(expected_var)
     amplitude32 = amplitude.astype(np.float32)
 
+    if isinstance(workers, bool) or workers < 1:
+        msg = f"workers must be >= 1, got {workers!r}"
+        raise ValueError(msg)
+
     out = np.empty((n_samples, n_electrodes), dtype=np.float32)
     n_bins = freqs_hz.size
-    for e in range(n_electrodes):
-        spectrum = np.empty(n_bins, dtype=np.complex64)
-        spectrum.real = rng.standard_normal(n_bins, dtype=np.float32)
-        spectrum.imag = rng.standard_normal(n_bins, dtype=np.float32)
-        if n_fft % 2 == 0:
-            spectrum.imag[-1] = 0.0
-        spectrum *= amplitude32 * np.float32(scale[e])
-        signal = np.asarray(scipy.fft.irfft(spectrum, n=n_fft), dtype=np.float32)
-        out[:, e] = signal[:n_samples]
+    for first in range(0, n_electrodes, workers):
+        batch = range(first, min(n_electrodes, first + workers))
+        spectra = np.empty((len(batch), n_bins), dtype=np.complex64)
+        for row, e in enumerate(batch):
+            spectra[row].real = rng.standard_normal(n_bins, dtype=np.float32)
+            spectra[row].imag = rng.standard_normal(n_bins, dtype=np.float32)
+            if n_fft % 2 == 0:
+                spectra[row, -1] = spectra[row, -1].real
+            spectra[row] *= amplitude32 * np.float32(scale[e])
+        signals = np.asarray(
+            scipy.fft.irfft(spectra, n=n_fft, axis=-1, workers=workers),
+            dtype=np.float32,
+        )
+        out[:, first : first + len(batch)] = signals[:, :n_samples].T
     return out
 
 

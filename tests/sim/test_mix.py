@@ -98,10 +98,35 @@ def test_chunked_equals_unchunked(scene: dict, chunk: int, n_samples: int) -> No
 
 def test_gain_track_matches_full_rate_gains(scene: dict) -> None:
     track = scene["track_a"]
-    full = track.at(np.arange(N) / FS_HZ)
-    via_track = mix([scene["eod_a"]], [track], samplerate_hz=FS_HZ)
-    via_array = mix([scene["eod_a"]], [full], samplerate_hz=FS_HZ)
-    np.testing.assert_array_equal(via_track, via_array)
+    exact = track.evaluate(np.arange(N) / FS_HZ)
+    via_array = mix([scene["eod_a"]], [exact], samplerate_hz=FS_HZ)
+    per_sample = mix(
+        [scene["eod_a"]], [track], samplerate_hz=FS_HZ, gain_update_hz=None
+    )
+    np.testing.assert_array_equal(per_sample, via_array)
+    # Default: exact spline every 20 samples (1 kHz), linear in between.
+    knots = mix([scene["eod_a"]], [track], samplerate_hz=FS_HZ)
+    scale = np.abs(via_array).max(axis=0)
+    # Linear interpolation over 1 ms: error ~1e-5 of each electrode's peak.
+    assert np.max(np.abs(knots - via_array) / scale) < 1e-4
+
+
+@pytest.mark.parametrize("gain_update_hz", [None, 1000.0, 333.0])
+def test_threads_give_identical_results(
+    scene: dict, gain_update_hz: float | None
+) -> None:
+    kwargs = {
+        "samplerate_hz": FS_HZ,
+        "additive": [scene["noise"], scene["hum"]],
+        "channel_gain": np.linspace(0.8, 1.2, 9),
+        "gain_update_hz": gain_update_hz,
+        "chunk_samples": 3001,
+    }
+    eods = [scene["eod_a"], scene["eod_b"]]
+    tracks = [scene["track_a"], scene["track_b"]]
+    serial = mix(eods, tracks, workers=1, **kwargs)
+    threaded = mix(eods, tracks, workers=4, **kwargs)
+    np.testing.assert_array_equal(threaded, serial)
 
 
 def test_channel_gain_and_clipping(scene: dict) -> None:

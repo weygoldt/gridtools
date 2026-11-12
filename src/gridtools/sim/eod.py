@@ -29,6 +29,7 @@ rescaled to any sample statistic.
 """
 
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -242,6 +243,8 @@ def harmonic_waveform(
     phase_rad: npt.ArrayLike,
     harmonics: Harmonics,
     amplitude: float | npt.ArrayLike = 1.0,
+    *,
+    workers: int = 1,
 ) -> Float32Array:
     """Evaluate the harmonic series at given phases.
 
@@ -253,6 +256,9 @@ def harmonic_waveform(
         Relative amplitudes and phases of the components.
     amplitude : float or array_like of shape (n,)
         Amplitude envelope (arbitrary units), multiplied into the waveform.
+    workers : int
+        Threads evaluating chunks in parallel (default 1); the result does
+        not depend on it.
 
     Returns
     -------
@@ -274,20 +280,41 @@ def harmonic_waveform(
         msg = "amplitude contains non-finite values"
         raise ValueError(msg)
 
+    if isinstance(workers, bool) or workers < 1:
+        msg = f"workers must be >= 1, got {workers!r}"
+        raise ValueError(msg)
+
     out = np.empty(n, dtype=np.float32)
-    components = list(
-        zip(harmonics.amplitudes, harmonics.phases_rad, strict=True),
-    )
-    for start in range(0, n, _CHUNK_SAMPLES):
+    components = [
+        (k, a_k, phi_k)
+        for k, (a_k, phi_k) in enumerate(
+            zip(harmonics.amplitudes, harmonics.phases_rad, strict=True), start=1
+        )
+        if a_k != 0.0
+    ]
+
+    def render(start: int) -> None:
         stop = min(n, start + _CHUNK_SAMPLES)
         theta = phase[start:stop]
         acc = np.zeros(stop - start, dtype=np.float64)
-        for k, (a_k, phi_k) in enumerate(components, start=1):
-            if a_k == 0.0:
-                continue
-            acc += a_k * np.cos(k * theta + phi_k)
+        term = np.empty_like(acc)
+        for k, a_k, phi_k in components:
+            np.multiply(theta, k, out=term)
+            term += phi_k
+            np.cos(term, out=term)
+            term *= a_k
+            acc += term
         acc *= envelope[0] if scalar_envelope else envelope[start:stop]
         out[start:stop] = acc
+
+    starts = range(0, n, _CHUNK_SAMPLES)
+    if workers == 1:
+        for start in starts:
+            render(start)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for _ in pool.map(render, starts):
+                pass
     return out
 
 
@@ -297,6 +324,8 @@ def synthesize_eod(
     samplerate_hz: float,
     harmonics: Harmonics = APTERONOTUS_LEPTORHYNCHUS,
     phase0_rad: float = 0.0,
+    *,
+    workers: int = 1,
 ) -> Float32Array:
     """Synthesize a phase-continuous wave-type EOD.
 
@@ -315,6 +344,9 @@ def synthesize_eod(
         Waveform shape (default *A. leptorhynchus*).
     phase0_rad : float
         Phase of the fundamental at the first sample in radians.
+    workers : int
+        Threads for the waveform evaluation (default 1); the result does not
+        depend on it.
 
     Returns
     -------
@@ -327,7 +359,7 @@ def synthesize_eod(
         longer signal from one globally integrated phase.
     """
     phase = eod_phase(freq_hz, samplerate_hz, phase0_rad)
-    return harmonic_waveform(phase, harmonics, amplitude)
+    return harmonic_waveform(phase, harmonics, amplitude, workers=workers)
 
 
 @dataclass(frozen=True)

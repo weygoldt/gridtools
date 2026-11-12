@@ -217,3 +217,11 @@ def test_shared_drift_scales_all_fish_by_the_same_fraction() -> None:
 def test_drift_grid_must_resolve_timescale() -> None:
     with pytest.raises(ValueError, match="control grid"):
         DriftParams(timescale_s=1.0, control_rate_hz=1.0)
+
+
+def test_waveform_does_not_depend_on_workers() -> None:
+    n = 3 * (1 << 20) + 17  # several internal chunks plus a partial one
+    freq = 800.0 + np.sin(np.arange(n) / 1e4)
+    serial = synthesize_eod(freq, 1.0, FS_HZ)
+    threaded = synthesize_eod(freq, 1.0, FS_HZ, workers=3)
+    np.testing.assert_array_equal(threaded, serial)

@@ -136,3 +136,12 @@ def test_clipping_bounds_are_respected() -> None:
     np.testing.assert_allclose(clipped[inside], x[inside], rtol=1e-6)
     np.testing.assert_array_equal(clipped[x >= 5.0], 5.0)
     np.testing.assert_array_equal(clipped[x <= -5.0], -5.0)
+
+
+def test_noise_does_not_depend_on_workers() -> None:
+    params = ColoredNoiseParams(sd=1.0, exponent=1.0)
+    serial = colored_noise(np.random.default_rng(12), 10_001, 7, FS_HZ, params)
+    threaded = colored_noise(
+        np.random.default_rng(12), 10_001, 7, FS_HZ, params, workers=3
+    )
+    np.testing.assert_array_equal(threaded, serial)

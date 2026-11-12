@@ -246,7 +246,26 @@ class GainTrack:
                 f"[{self.times_s[0]}, {self.times_s[-1]}]"
             )
             raise ValueError(msg)
-        return np.asarray(self._spline(times), dtype=np.float32)
+        return self.evaluate(times).astype(np.float32)
+
+    def evaluate(self, times_s: npt.ArrayLike) -> FloatArray:
+        """Evaluate the spline in float64 without a range check.
+
+        Times slightly outside the track are extrapolated with the cubic end
+        pieces; :func:`gridtools.sim.mix.mix` uses this for interpolation
+        knots up to one knot spacing past the last sample. Prefer :meth:`at`
+        elsewhere.
+
+        Parameters
+        ----------
+        times_s : array_like, shape (k,)
+            Times in seconds.
+
+        Returns
+        -------
+        numpy.ndarray of float64, shape (k, E)
+        """
+        return np.asarray(self._spline(np.asarray(times_s, dtype=np.float64)))
 
 
 def gain_track(
