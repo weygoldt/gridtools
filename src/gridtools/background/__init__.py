@@ -15,7 +15,9 @@ the real fish in them tracked and counted as non-chirping candidates.
 - :mod:`gridtools.background.levels` defines background and signal levels
   and :func:`scale_for_snr`;
 - :mod:`gridtools.background.review` plots every segment and keeps the
-  author's veto table (``review.csv``).
+  author's veto table (``review.csv``);
+- :mod:`gridtools.background.report` documents a built library (needs the
+  ``plot`` extra); ``python -m gridtools.background`` runs all of it.
 
 Scenes use the API re-exported by :mod:`gridtools.sim.background`.
 """
