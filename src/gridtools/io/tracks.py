@@ -13,9 +13,13 @@ A wavetracker result directory holds five arrays:
 ``sign_v.npy`` (N, E)
     Power of every detection on each electrode in dB.
 
-``sign_v`` may have fewer columns than the recording has channels (one
-2019 recording was tracked on 8 of its 9 electrodes), so the electrode axis
-of the powers is not guaranteed to match the recording's channels.
+``sign_v`` may have fewer columns than the recording has channels, so the
+electrode axis of the powers is not guaranteed to match the recording's
+channels. In all 2019 tube competition recordings raw channel 9 carries no
+fish signal and ``sign_v`` holds channels 1-8 only; in 2020-05-11 to 05-14
+channel 2 is dead as well (verified 2026-11-12 by ``gridtools.calibrate``).
+``sign_v`` is 10 log10 of the one-sided Hann power spectral density at the
+bin nearest the fundamental (nfft 32768; 16384 in March 2020).
 
 A track exists only between its first and last detection, and only where
 its detections are not too far apart: :meth:`Track.frequency_at` returns NaN

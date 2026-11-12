@@ -163,8 +163,9 @@ class FishgridConfig:
     row_spacing_m, column_spacing_m
         Electrode spacing of the first grid.
     max_amplitude_v
-        Input range of the DAQ board in volts (``AIMaxVolt``); the raw
-        samples are in the same unit as this value.
+        Input range of the DAQ board (``AIMaxVolt``) converted to volts.
+        Raw samples are in volts regardless of the unit written in the
+        file (see :mod:`gridtools.io.recording`).
     entries
         Every ``key: value`` pair of the file, unparsed.
     """

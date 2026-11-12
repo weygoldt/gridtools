@@ -53,10 +53,23 @@ def test_read_out_of_range(tmp_path: Path) -> None:
         rec.read(-1, 5)
 
 
-def test_raw_size_must_match_channels(tmp_path: Path) -> None:
+def test_trailing_partial_frame_is_dropped(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     write_cfg(tmp_path)
-    np.zeros(16, dtype=np.float32).tofile(tmp_path / "traces-grid1.raw")
-    with pytest.raises(ValueError, match="whole number"):
+    data = np.arange(2 * 15 + 7, dtype=np.float32)  # 2 frames + 7 stray values
+    data.tofile(tmp_path / "traces-grid1.raw")
+    with caplog.at_level("WARNING"):
+        rec = open_recording(tmp_path)
+    assert rec.n_samples == 2
+    np.testing.assert_array_equal(rec.read(0, 2).ravel(), data[:30])
+    assert "partial frame" in caplog.text
+
+
+def test_raw_without_a_complete_frame(tmp_path: Path) -> None:
+    write_cfg(tmp_path)
+    np.zeros(7, dtype=np.float32).tofile(tmp_path / "traces-grid1.raw")
+    with pytest.raises(ValueError, match="no complete"):
         open_recording(tmp_path)
 
 

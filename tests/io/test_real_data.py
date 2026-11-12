@@ -26,8 +26,15 @@ def test_open_trial(trial: str, n_channels: int) -> None:
     assert tracks.times_s[-1] <= rec.duration_s + 1.0
 
 
+def test_trial_ending_in_a_partial_frame_opens() -> None:
+    # 2020-03-19 is one of the 33 analysed trials; its raw file ends mid-frame.
+    rec = open_recording(DATA_ROOT / "2020-03-19-10_00")
+    assert rec.n_channels == 15
+    assert rec.read(rec.n_samples - 10, rec.n_samples).shape == (10, 15)
+
+
 def test_sign_v_may_have_fewer_electrodes_than_the_recording() -> None:
-    # Known quirk (docs/audit-2026-11.md): 2019-12-09 was tracked on 8 of 9 electrodes.
+    # All 2019 trials: raw channel 9 has no fish signal; sign_v holds channels 1-8.
     tracks = load_tracks(DATA_ROOT / "2019-12-09-10_00")
     assert tracks.n_electrodes == 8
 

@@ -3,8 +3,11 @@
 Two layouts are supported:
 
 - fishgrid directories: ``traces-grid1.raw`` (interleaved float32, one
-  column per electrode, in the unit of ``AIMaxVolt``) next to
-  ``fishgrid.cfg``;
+  column per electrode) next to ``fishgrid.cfg``. Samples are in volts:
+  on the tube competition recordings the quantisation step is 0.625 uV
+  and the range +-20.48 mV (verified 2026-11-12), even though the
+  configuration and thunderlab label the data mV. Some files end in a
+  partial frame (an interrupted write); it is dropped with a warning;
 - wav files (PCM or float), e.g. excerpts or simulations. Integer PCM is
   scaled to [-1, 1).
 
@@ -14,6 +17,7 @@ few seconds anywhere in it costs only those seconds.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +29,8 @@ from scipy.io import wavfile
 from gridtools.io.geometry import GridGeometry, read_fishgrid_config
 
 __all__ = ["Recording", "open_recording"]
+
+log = logging.getLogger(__name__)
 
 _RAW_NAME = "traces-grid1.raw"
 
@@ -144,14 +150,19 @@ def _open_raw(path: Path) -> Recording:
     config = read_fishgrid_config(path.parent)
     n_channels = config.n_electrodes
     itemsize = np.dtype(np.float32).itemsize
-    n_bytes = path.stat().st_size
-    if n_bytes % (itemsize * n_channels):
-        msg = (
-            f"{path}: {n_bytes} bytes is not a whole number of "
-            f"{n_channels}-channel float32 frames"
-        )
+    frame_bytes = itemsize * n_channels
+    n_frames, partial = divmod(path.stat().st_size, frame_bytes)
+    if n_frames == 0:
+        msg = f"{path}: no complete {n_channels}-channel float32 frame"
         raise ValueError(msg)
-    data = np.memmap(path, dtype=np.float32, mode="r").reshape(-1, n_channels)
+    if partial:
+        log.warning(
+            "%s: dropping a trailing partial frame (%d of %d bytes)",
+            path,
+            partial,
+            frame_bytes,
+        )
+    data = np.memmap(path, dtype=np.float32, mode="r", shape=(n_frames, n_channels))
     return Recording(path, config.samplerate_hz, data, 1.0, config.geometry())
 
 
