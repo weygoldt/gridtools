@@ -72,6 +72,10 @@ def _run_one(config_json: str, seed: int, out_dir: str, plots: bool) -> dict[str
         "n_fish": len(scene.model.fish),
         "n_chirps": len(scene.chirps),
         "n_electrodes": scene.model.n_electrodes,
+        "background": "synthetic"
+        if scene.plan.background is None
+        else f"{scene.plan.background.segment.segment_id} "
+        f"({len(scene.real_fish)} real fish, SNR {scene.plan.background.snr_db:.0f} dB)",
         "peak_rss_mb": peak_rss_mb,
         **scene.timings_s,
     }
@@ -121,12 +125,13 @@ def run(
             results = [f.result() for f in futures]
     for r in results:
         logger.info(
-            "seed %06d: %d fish, %d electrodes, %d chirps; simulate %.1f s, "
-            "write %.1f s, plot %.1f s; peak RSS %.0f MB",
+            "seed %06d: %d fish, %d electrodes, %d chirps, %s background; "
+            "simulate %.1f s, write %.1f s, plot %.1f s; peak RSS %.0f MB",
             r["seed"],
             r["n_fish"],
             r["n_electrodes"],
             r["n_chirps"],
+            r["background"],
             r.get("simulate_total", float("nan")),
             r.get("write", float("nan")),
             r.get("plot", 0.0),

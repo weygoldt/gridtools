@@ -44,12 +44,24 @@ near-simultaneous chirps, higher chirp rates, noisier recordings), and vary
 the electrode count (1-16), spacing, reference and, optionally, the sampling
 rate; every setting is in physical units.
 
+Hybrid scenes (`[background]`, by default 60 % of the scenes) put the
+simulated fish on a real 60-s background segment from the background library
+(`/mnt/data1/chirp_v2/background/v1`, `gridtools.background`): the
+segment's grid (all its channels, or a subset with their positions), its
+noise, hum, clicks and non-chirping real fish, which join the tracks with
+identities from 1000 on. Synthetic noise, hum and clicks are then off; the
+background is scaled to a drawn SNR of the simulated fish (hard SNRs make
+the simulated fish quieter rather than amplify the background). Hybrid
+scenes are at most 60 s long; set `background.prob = 0` for longer ones.
+
 Each scene directory holds `recording.wav` (float32 V, one channel per
 electrode), `fishgrid.cfg` (plus `electrodes.csv` for layouts that are not a
 full rectangle), ground-truth tracks in wavetracker layout, `chirps.csv`/
 `.parquet` with each chirp's physical extent and its footprint box and
 visibility, `clicks.csv`, `paths.npz`, `chirp_traces.npz`, `scene.json` and
-two annotated spectrograms. In Python:
+two annotated spectrograms. `recording = sum of render_fish + render_background`
+(for a hybrid scene, the scaled background segment, reloaded from the library
+named in `scene.json`). In Python:
 
 ```python
 from gridtools.sim.config import SceneConfig

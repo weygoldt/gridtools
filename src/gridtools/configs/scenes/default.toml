@@ -12,7 +12,7 @@
 #   gridtools sim run my.toml --seeds 0:10 --out /mnt/data1/chirp_v2/scenes/my
 
 name = "default"
-duration_s = 120.0
+duration_s = 60.0                    # = background segment length (hybrid scenes)
 samplerate_hz = 20000.0              # all other settings are in physical units
 samplerate_choices_hz = []           # augmentation: draw the rate per scene from these
 
@@ -191,6 +191,22 @@ threshold_db = 30.0                  # box holds >= 99.5 % of the difference ene
 visible_snr_db = 0.0
 margin_s = 0.05
 background = "others"                # or "recording"
+
+[background]                         # real background segments (hybrid scenes)
+library = "/mnt/data1/chirp_v2/background/v1"
+prob = 0.6                           # share of hybrid scenes
+unscreened_weight = 0.3              # 2022 segments (not screened for chirps)
+dataset_weights = []                 # e.g. [["field_iriri2026", 0.5]]
+datasets = []                        # empty: all
+include_groups = []                  # split by source recording
+exclude_groups = []
+channels = "contiguous"              # or "random"
+avoid_bad_channels = true
+snr_hard_db = [10.0, 35.0]           # target SNR of the simulated fish (dB)
+snr_typical_db = [35.0, 80.0]
+snr_hard_fraction = 0.4
+max_real_gap_db = 30.0               # real fish at most this much louder; omit: no cap
+amplify_background = false           # true: hard SNRs amplify the background (clips)
 
 [plot]
 enabled = true
