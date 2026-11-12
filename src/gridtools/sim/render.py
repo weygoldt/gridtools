@@ -58,6 +58,7 @@ definitions are offered (``phase=``):
 """
 
 import math
+from collections import OrderedDict
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -85,6 +86,7 @@ __all__ = [
 
 #: Samples per block of the baseline phase integration.
 BLOCK = 1 << 16
+_BLOCK_CACHE_SIZE = 16
 
 PhaseMode = Literal["aligned", "natural"]
 ChirpSelection = Literal["all", "none"] | Collection[int]
@@ -245,6 +247,11 @@ class SceneModel:
     gain_update_hz : float
         Rate at which gain tracks are evaluated before linear interpolation
         (as in :func:`gridtools.sim.mix.mix`).
+    reference_xy_m : numpy.ndarray of float64, shape (2,), optional
+        Position of an in-tank reference electrode. Its potential (same
+        dipole model, per fish) is subtracted from every channel; None means
+        a distant reference. The subtraction is linear, so it acts per fish
+        and re-rendering stays exact.
     """
 
     samplerate_hz: float
@@ -254,11 +261,15 @@ class SceneModel:
     shared_drift: DriftKnots
     fish: tuple[FishModel, ...]
     gain_update_hz: float = DEFAULT_GAIN_UPDATE_HZ
+    reference_xy_m: FloatArray | None = None
     _checkpoints: dict[int, FloatArray] = field(
         default_factory=dict, init=False, repr=False
     )
     _gain_tracks: dict[int, GainTrack] = field(
         default_factory=dict, init=False, repr=False
+    )
+    _block_cache: "OrderedDict[tuple[int, int], FloatArray]" = field(
+        default_factory=OrderedDict, init=False, repr=False
     )
 
     def __post_init__(self) -> None:
@@ -272,6 +283,12 @@ class SceneModel:
             raise ValueError(msg)
         object.__setattr__(self, "electrode_xy_m", electrodes)
         object.__setattr__(self, "channel_gain", channel)
+        if self.reference_xy_m is not None:
+            reference = np.asarray(self.reference_xy_m, dtype=np.float64)
+            if reference.shape != (2,):
+                msg = f"reference_xy_m must have shape (2,), got {reference.shape}"
+                raise ValueError(msg)
+            object.__setattr__(self, "reference_xy_m", reference)
         for i, fish in enumerate(self.fish):
             if fish.fish_id != i:
                 msg = f"fish must be ordered by id, got id {fish.fish_id} at {i}"
@@ -335,7 +352,25 @@ class SceneModel:
     # -- phase ---------------------------------------------------------------
 
     def _block_cycles(self, fish_id: int, block: int, offset: float) -> FloatArray:
-        """Baseline cycles (Hz x samples) on block ``block`` plus the next sample."""
+        """Baseline cycles (Hz x samples) on block ``block`` plus the next sample.
+
+        The last few blocks are cached (re-rendering short spans, e.g. for
+        footprints, then evaluates the baseline splines only once).
+        """
+        key = (fish_id, block)
+        cached = self._block_cache.get(key)
+        if cached is not None and cached[0] == offset:
+            self._block_cache.move_to_end(key)
+            return cached
+        cycles = self._compute_block_cycles(fish_id, block, offset)
+        self._block_cache[key] = cycles
+        if len(self._block_cache) > _BLOCK_CACHE_SIZE:
+            self._block_cache.popitem(last=False)
+        return cycles
+
+    def _compute_block_cycles(
+        self, fish_id: int, block: int, offset: float
+    ) -> FloatArray:
         first = block * BLOCK
         last = min(first + BLOCK, self.n_samples - 1)  # inclusive
         freq = self.base_frequency(fish_id, first, last + 1)
@@ -446,16 +481,28 @@ class SceneModel:
     # -- field ---------------------------------------------------------------
 
     def gain_track(self, fish_id: int) -> GainTrack:
-        """Dipole gains of a fish along its path (cached)."""
+        """Dipole gains of a fish along its path, minus the reference (cached)."""
         if fish_id not in self._gain_tracks:
             fish = self.fish[fish_id]
-            self._gain_tracks[fish_id] = gain_track(
+            track = gain_track(
                 fish.path.times_s,
                 fish.path.xy_m,
                 fish.path.heading_rad,
                 self.electrode_xy_m,
                 fish.dipole,
             )
+            if self.reference_xy_m is not None:
+                reference = gain_track(
+                    fish.path.times_s,
+                    fish.path.xy_m,
+                    fish.path.heading_rad,
+                    self.reference_xy_m[None, :],
+                    fish.dipole,
+                )
+                track = GainTrack(
+                    times_s=track.times_s, gains=track.gains - reference.gains
+                )
+            self._gain_tracks[fish_id] = track
         return self._gain_tracks[fish_id]
 
     def gains(self, fish_id: int, start: int, stop: int) -> FloatArray:

@@ -26,6 +26,11 @@ STREAMS: dict[str, tuple[int, ...]] = {
     "faults": (7,),
     "clicks": (8,),
     "levels": (9,),
+    "regime": (10,),
+    "field": (11,),
+    "floors": (12,),
+    "reference": (13,),
+    "samplerate": (14,),
 }
 
 #: Last element of the per-fish spawn keys ``(100, fish_id, k)``.
@@ -37,6 +42,7 @@ FISH_STREAMS: dict[str, int] = {
     "timing": 4,
     "templates": 5,
     "dips": 6,
+    "regime": 7,
 }
 
 

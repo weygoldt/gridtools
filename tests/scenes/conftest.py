@@ -19,6 +19,7 @@ from gridtools.sim.config import (
     ChirpConfig,
     ClickConfig,
     GridConfig,
+    NoiseConfig,
     PlotConfig,
     PopulationConfig,
     SceneConfig,
@@ -74,6 +75,7 @@ def write_synthetic_library(path: Path) -> Path:
                 "duplicate_of": -1,
                 "truncated": False,
                 "step_flag": i == 5,  # one flagged template
+                "too_short": False,
                 "multi_peak": False,
                 "outlier": False,
                 "eodf_atypical": False,
@@ -102,15 +104,20 @@ def library_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def small_config(library: Path, **changes: object) -> SceneConfig:
-    """A short scene that still exercises every component."""
+    """A short scene that still exercises every component.
+
+    Clipping is off so that ``recording = sum(fish) + background`` holds
+    exactly.
+    """
     config = SceneConfig(
         name="test",
         duration_s=6.0,
-        grid=GridConfig(layouts=((3, 3),)),
+        grid=GridConfig(layouts=((3, 3),), real_layout_prob=1.0),
         population=PopulationConfig(n_fish=(3, 3)),
         chirps=ChirpConfig(library=str(library), rate_hz=(0.8, 1.0), response_prob=0.5),
-        clicks=ClickConfig(rate_hz=(1.0, 1.0)),
-        plot=PlotConfig(enabled=False, n_zooms=2, zoom_s=2.0, hop=1024),
+        clicks=ClickConfig(rate_per_h_median=3600.0, rate_log10_sd=0.0),
+        noise=NoiseConfig(clip_limit=None),
+        plot=PlotConfig(enabled=False, n_zooms=2, zoom_s=2.0, hop_s=0.0512),
     )
     return replace(config, **changes) if changes else config
 

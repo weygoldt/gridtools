@@ -1,42 +1,61 @@
-# Default scene config for `gridtools sim run`.
+# Default scene config for `gridtools sim run`, calibrated on the 33
+# tube-competition trials (calibration v1, /mnt/data1/chirp_v2/calibration/v1).
 #
 # Every key is listed with its default; delete keys to fall back to the
 # defaults, or change them. Ranges are [low, high]; one value is drawn
 # uniformly per scene or per fish (log-uniformly where noted). Units are in
-# the key names. Unknown keys are an error. Documentation of every field:
-# the dataclasses in gridtools.sim.config.
+# the key names; recordings are in volts at the ADC, like the real raw data.
+# Unknown keys are an error. Documentation of every field: the dataclasses
+# in gridtools.sim.config.
 #
 #   gridtools sim run default --seeds 0:10        # this file
 #   gridtools sim run my.toml --seeds 0:10 --out /mnt/data1/chirp_v2/scenes/my
 
 name = "default"
 duration_s = 120.0
-samplerate_hz = 20000.0
+samplerate_hz = 20000.0              # all other settings are in physical units
+samplerate_choices_hz = []           # augmentation: draw the rate per scene from these
 
 [grid]
-layouts = [[3, 3], [3, 5], [5, 3]]   # (rows, columns), one drawn per scene
-spacing_m = 0.5
-arena_margin_m = 0.25                # tank beyond the outer electrodes
+layouts = [[3, 3], [3, 5], [5, 3]]   # real layouts (rows, columns)
+real_layout_prob = 0.3               # else a drawn layout of 1-16 electrodes:
+n_electrodes = [1, 16]
+small_max = 4                        # ... 1-4 electrodes with this probability
+small_prob = 0.4
+max_aspect = 3.0                     # rectangles up to 3:1, else near-square with gaps
+jitter_rel = 0.05                    # position jitter of drawn layouts (spacings)
+rotation_prob = 0.5                  # random rotation of drawn layouts
+spacing_m = [0.15, 0.5]              # real spacing unknown (not the 0.5 m of fishgrid.cfg)
+arena_margin_rel = 0.0               # calibrated: fish stay over the grid
+reference_prob = 0.5                 # in-tank reference electrode (augmentation)
+reference_margin_rel = 1.0           # ... anywhere in the arena +- 1 spacing
 
 [population]
 n_fish = [1, 5]                      # inclusive
-baseline_hz = [600.0, 1100.0]
+baseline_uniform_hz = [550.0, 1100.0]  # broad component and clipping range
+baseline_uniform_prob = 0.3
+female_hz = [664.3, 34.9]            # mean, SD (23-26 degC)
+male_hz = [803.2, 54.2]
+male_prob = 0.5
 close_pair_prob = 0.5                # fish placed 0-20 Hz from an earlier fish
-close_pair_df_hz = [0.0, 20.0]       # no minimum dF
+close_pair_df_hz = [0.0, 20.0]       # no minimum dF (real: 2.4 % of time < 10 Hz)
 crossing_prob = 0.5                  # close pair: ramp across the partner
 ramp_overshoot_hz = [2.0, 10.0]
 ramp_prob = 0.1                      # extra random ramp per fish
 ramp_df_hz = [5.0, 30.0]
 ramp_duration_s = [10.0, 60.0]
+drift_sd_log_sd = 0.35               # per-fish spread of the drift SD ...
+drift_timescale_log_sd = 0.4         # ... and time-scale
+shared_trend_per_h = [-0.0094, 0.0028]  # relative trend: mean, SD (water cooling)
 
-[population.drift]                   # individual baseline drift
-sd_hz = 0.5
-timescale_s = 30.0
+[population.drift]                   # median individual drift
+sd_hz = 1.0
+timescale_s = 11.3
 control_rate_hz = 1.0
 
-[population.shared_drift]            # relative drift common to all fish
-sd_rel = 0.001
-timescale_s = 300.0
+[population.shared_drift]            # small stationary part of the shared drift
+sd_rel = 0.0005
+timescale_s = 600.0
 control_rate_hz = 0.1
 
 [population.harmonics]               # per-fish EOD waveform variation
@@ -44,23 +63,35 @@ amplitude_log_sd = 0.2
 phase_sd_rad = 0.2
 
 [chirps]
-library = "/mnt/data1/chirp_v2/templates/v2"
+library = "/mnt/data1/chirp_v2/templates/v4"
 families = ["small", "big"]
 exclude = ["invalid", "has_nan", "duplicate", "truncated", "step_flag",
-           "eodf_atypical"]
-equalize = true                      # every non-empty bin equally likely
-equalize_bins = [10, 10]             # equal-width bins: excursion x width at 10 %
-rate_hz = [0.05, 0.5]                # spontaneous chirps/s per fish
-max_rate_hz = 1.0                    # at most duration * this per fish
-min_interval_s = 0.2                 # silence between supports, one fish
-burst_size_mean = 2.0
-burst_gap_s = [0.2, 0.5]             # silence between chirps of a burst
+           "too_short", "brief_cycles", "ripple_flag", "multi_peak",
+           "line_in_span", "baseline_drift", "low_snr",
+           "decay_interrupted"]        # the library's default exclusions (v4: clean only)
+equalize = true
+equalize_bins = [10, 10]             # excursion x width at 10 %
+# Library sampling options; omitted = the library's defaults (v4: "log", 0.6, "individual"):
+# equalize_spacing = "log"           # or "linear"
+# equalize_alpha = 0.6               # bin weight count**(1 - alpha); 1 = flat
+# equalize_balance = "individual"    # library v4
+rate_hz = [0.05, 0.5]                # 180-1800/h per fish; real: losers ~61/h
+# max_rate_hz = 1.0                  # optional cap; omit for none
+min_interval_s = 0.2                 # centre to centre, one fish; supports disjoint
+burst_size_mean = 2.2
+burst_interval_s = [0.75, 0.45]      # median s, log SD (within bursts)
 response_prob = 0.3                  # another fish answers a chirp ...
-response_delay_s = [0.0, 0.5]        # ... this much later
+response_delay_s = [0.45, 2.2]       # ... this much later (measured excess)
+simultaneous_fraction = 0.1          # ... or within +-0.25 s (v1 missed these)
+simultaneous_window_s = 0.25
 amplitude_mode = "frequency"         # or "measured" (amp_usable templates)
 dip = [0.0, 0.8]                     # EOD amplitude 100-20 % at the chirp peak
 
-[movement]                           # gridtools.sim.movement.MovementParams
+[movement]
+light_prob = 0.5                     # resting (light) vs active (dark) regime
+per = "scene"                        # or "fish"
+
+[movement.dark]                      # active: the MovementParams defaults
 rate_hz = 30.0
 mean_rest_s = 10.0
 mean_move_s = 20.0
@@ -78,48 +109,97 @@ rest_turn_factor = 0.2
 wall_margin_m = 0.15
 wall_turn_rate_rad_s = 6.0
 
+[movement.light]                     # resting, little rotation
+rate_hz = 30.0
+mean_rest_s = 600.0
+mean_move_s = 10.0
+speed_mean_m_s = 0.1
+speed_shape = 4.0
+speed_max_m_s = 0.5
+speed_fluct_log_sd = 0.3
+speed_fluct_timescale_s = 1.0
+speed_response_s = 0.3
+backward_prob = 0.1
+turn_rate_sd_rad_s = 0.8
+turn_rate_timescale_s = 0.5
+turn_rate_max_rad_s = 6.0
+rest_turn_factor = 0.05
+wall_margin_m = 0.15
+wall_turn_rate_rad_s = 6.0
+
 [field]
-amplitude = [0.5, 2.0]               # log-uniform; sets the recording unit
-fish_depth_m = [0.05, 0.15]
-electrode_depth_m = 0.15
-min_distance_m = 0.1
-distance_exponent = 2.0
+amplitude_median_v = 0.00216         # EOD amplitude, log-normal across fish
+amplitude_log_sd = 0.748
+amplitude_clip_sd = 2.5
+exponent = [1.5, 2.0]                # falloff n, drawn per scene along the ridge
+ridge_exponents = [1.5, 1.75, 2.0]
+ridge_regularisers_rel = [0.05, 0.15, 0.3]   # a / spacing at each n
+calibration_exponent = 1.5           # field the amplitude was fitted for
+calibration_regulariser_rel = 0.05
+calibration_spacing_m = 0.5
 reference_distance_m = 0.1
 
 [noise]
-snr_db = [-15.0, 20.0]               # median fish at 0.5 m vs noise SD
-exponent = [0.5, 1.5]                # 0 white, 1 pink
+colored = true                       # synthetic electrode noise (switchable)
+exponent = [0.0, 0.0]                # white
 f_min_hz = 1.0
-hum_db = [-20.0, 20.0]               # hum fundamental re median fish at 0.5 m
+floor_modes = [[-121.4, 1.3, 0.42], [-131.9, 1.6, 0.58]]  # dB re 1 V^2/Hz, SD, weight
+electrode_floor_sd_db = 2.32
+harder_prob = 0.5                    # harder than real ...
+harder_db = [0.0, 20.0]              # ... by this much
+hum = true
+hum_amplitude_v = [2.65e-6, 2.64e-4] # 50-Hz line on the strongest electrode, log-uniform
 hum_line_freq_hz = 50.0
-hum_n_harmonics = 5
+hum_n_harmonics = [8, 32]
+hum_harmonic_decay = 0.788
+hum_coupling_log_sd = 1.15
 gain_mismatch_log_sd = 0.1
-dead_prob = 0.05
-noisy_prob = 0.05
+dead_prob = 0.044
+noisy_prob = 0.023
 dead_gain = 0.001
-noisy_factor = 5.0
-# clip_limit = 20.0                  # omit for no clipping
+noisy_factor = 5.04
+clip_limit = 0.02048                 # ADC range in V; omit the key for no clipping
 
 [clicks]
-rate_hz = [0.0, 0.1]
+rate_per_h_median = 792.0            # log-normal across scenes
+rate_log10_sd = 1.0
+rate_per_h_max = 50000.0
+pair_fraction = 0.1                  # partner click 30 ms later
+pair_gap_s = 0.03
+periodic_prob = 0.1                  # clicks every 10.24 s
+periodic_interval_s = 10.24
+led_prob = 0.1                       # LED sync: onset/offset pairs every ~1 s
+led_interval_s = 1.0
+led_pulse_s = 0.1
 duration_s = [0.0001, 0.005]         # log-uniform
-amplitude_rel = [10.0, 10000.0]      # x noise SD, log-uniform
+amplitude_rel = [10.0, 200.0]        # x noise SD, log-uniform
 electrodes_mean = 1.5
 spread = [0.1, 1.0]
 burst_prob = 0.5
 
 [tracks]
-step_s = 0.1229                      # frame grid of the 2020 production tracks
-power_nfft = 16384                   # sign_v density reference
+step_s = 0.1229                      # frame grid of the production tracks
+power_resolution_hz = 0.6103515625  # sign_v: 20 kHz / 32768 (/ 16384 in March 2020)
+
+[footprint]                          # chirp boxes (reference front end)
+enabled = true
+window_s = 0.2048                    # Hann window (4096 samples at 20 kHz)
+hop_s = 0.005
+f_min_hz = 500.0
+f_max_hz = 1500.0
+threshold_db = 30.0                  # box holds >= 99.5 % of the difference energy
+visible_snr_db = 0.0
+margin_s = 0.05
+background = "others"                # or "recording"
 
 [plot]
 enabled = true
 f_min_hz = 500.0
 f_max_hz = 1500.0
-nfft = 4096
-hop = 512
+window_s = 0.2048
+hop_s = 0.0256
 n_zooms = 6
 zoom_s = 5.0
-zoom_nfft = 512
-zoom_hop = 32
+zoom_window_s = 0.0256
+zoom_hop_s = 0.0016
 dpi = 110

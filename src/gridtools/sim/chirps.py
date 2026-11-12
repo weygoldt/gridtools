@@ -15,34 +15,36 @@ Three parts:
   baseline, plus ground-truth measures of the trace that is actually
   rendered.
 
-Library API versions. The template library v2 API
-(``TemplateLibrary.equalization_bins``/``cycler(equalize=...)``,
-``amplitude_from_frequency``, ``random_dips``) is used when the installed
-:mod:`gridtools.templates` provides it. Older installs fall back to exact
-local copies of the same algorithms (same random draws in the same order),
-so a scene does not depend on which path ran; ``scene.json`` records it.
-Template length is taken from the arrays (no fixed 0.2/0.4 s), and
-everything downstream works on the chirp's support, not the template
-length.
+Sampling, the amplitude model and the dip draw are the library's own
+(``TemplateLibrary.cycler``, ``amplitude_from_frequency``, ``random_dips``).
+Template length is taken from the arrays (0.2-1.2 s across library
+versions), and everything downstream works on each chirp's support, not the
+template length.
 """
 
 import functools
 import hashlib
+import inspect
 import logging
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 import numpy.typing as npt
 
-import gridtools.templates as _templates
 from gridtools.sim._common import Float32Array, FloatArray, IntArray
 from gridtools.sim.config import ChirpConfig
-from gridtools.templates import TemplateLibrary, load_library
+from gridtools.templates import (
+    EQUALIZE_DURATION_COLUMN,
+    TemplateLibrary,
+    load_library,
+)
+from gridtools.templates import amplitude_from_frequency as _amplitude_from_frequency
+from gridtools.templates import random_dips as _random_dips
 
 __all__ = [
     "ChirpEvent",
@@ -50,7 +52,6 @@ __all__ = [
     "ChirpSchedule",
     "TemplatePool",
     "amplitude_from_frequency",
-    "library_api",
     "place_chirp",
     "random_dips",
     "schedule_chirps",
@@ -58,64 +59,21 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: Metadata column used as chirp duration for equalisation (library v2 default).
-EQUALIZE_DURATION_COLUMN = "duration_10_s"
-
-
-def library_api() -> str:
-    """Which template API is used: ``"gridtools.templates"`` or ``"local copy"``."""
-    if hasattr(TemplateLibrary, "equalization_bins") and hasattr(
-        _templates, "amplitude_from_frequency"
-    ):
-        return "gridtools.templates"
-    return "local copy"
-
 
 def amplitude_from_frequency(delta_f_hz: npt.ArrayLike, dip: float) -> FloatArray:
-    """Chirp amplitude envelope from its frequency trace.
+    """Chirp amplitude envelope from its frequency trace (library function).
 
     ``1 - dip * clip(delta_f, 0) / max(delta_f)``: the inverted, normalised
-    frequency excursion scaled by ``dip`` (MSc thesis; decision 10). The EOD
-    amplitude falls to ``1 - dip`` at the frequency peak and is 1 where the
-    frequency is at or below baseline. Uses
-    ``gridtools.templates.amplitude_from_frequency`` when available.
-
-    Parameters
-    ----------
-    delta_f_hz : array_like, shape (n,)
-        Frequency excursion relative to baseline in Hz.
-    dip : float
-        Relative amplitude drop at the frequency peak, in [0, 1].
-
-    Returns
-    -------
-    numpy.ndarray of float64
+    frequency excursion scaled by ``dip`` (MSc thesis; decision 10).
     """
-    impl = getattr(_templates, "amplitude_from_frequency", None)
-    if impl is not None:
-        return np.asarray(impl(delta_f_hz, dip), dtype=np.float64)
-    delta = np.asarray(delta_f_hz, dtype=np.float64)
-    if not 0.0 <= dip <= 1.0:
-        msg = "dip must lie in [0, 1]"
-        raise ValueError(msg)
-    positive = np.clip(delta, 0.0, None)
-    peak = positive.max(axis=-1, keepdims=True)
-    shape = np.divide(positive, peak, out=np.zeros_like(positive), where=peak > 0)
-    return 1.0 - dip * shape
+    return np.asarray(_amplitude_from_frequency(delta_f_hz, dip), dtype=np.float64)
 
 
 def random_dips(
     rng: np.random.Generator, n: int, dip_range: tuple[float, float]
 ) -> FloatArray:
-    """``n`` amplitude dips, uniform in ``dip_range`` (library's ``random_dips``)."""
-    impl = getattr(_templates, "random_dips", None)
-    if impl is not None:
-        return np.asarray(impl(rng, n, dip_range), dtype=np.float64)
-    low, high = dip_range
-    if not 0.0 <= low <= high <= 1.0:
-        msg = f"dip_range must satisfy 0 <= low <= high <= 1, got {dip_range}"
-        raise ValueError(msg)
-    return rng.uniform(low, high, size=n)
+    """``n`` amplitude dips, uniform in ``dip_range`` (library function)."""
+    return np.asarray(_random_dips(rng, n, dip_range), dtype=np.float64)
 
 
 # -- template access -------------------------------------------------------
@@ -127,84 +85,6 @@ class Cycler(Protocol):
     def draw(self, n: int) -> npt.NDArray[np.int64]:
         """Return the next ``n`` template ids."""
         ...
-
-
-class _PermutationQueue:
-    """Successive random permutations of a pool (copy of the library's)."""
-
-    def __init__(self, pool: npt.NDArray[np.int64], rng: np.random.Generator) -> None:
-        self._pool = np.array(pool, dtype=np.int64, copy=True)
-        self._rng = rng
-        self._queue = np.empty(0, dtype=np.int64)
-
-    def take(self, n: int) -> npt.NDArray[np.int64]:
-        out: list[npt.NDArray[np.int64]] = []
-        needed = n
-        while needed > 0:
-            if self._queue.size == 0:
-                self._queue = self._rng.permutation(self._pool)
-            k = min(needed, self._queue.size)
-            out.append(self._queue[:k])
-            self._queue = self._queue[k:]
-            needed -= k
-        return np.concatenate(out) if out else np.empty(0, dtype=np.int64)
-
-
-class _LocalCycler:
-    """Exact copy of ``gridtools.templates.TemplateCycler`` (library v2)."""
-
-    def __init__(
-        self, groups: Sequence[npt.NDArray[np.int64]], rng: np.random.Generator
-    ) -> None:
-        groups = [np.asarray(g, dtype=np.int64) for g in groups if np.size(g) > 0]
-        if not groups:
-            msg = "cannot sample from an empty template pool"
-            raise ValueError(msg)
-        self._groups = [_PermutationQueue(g, rng) for g in groups]
-        self._group_queue = _PermutationQueue(
-            np.arange(len(groups), dtype=np.int64), rng
-        )
-
-    def draw(self, n: int) -> npt.NDArray[np.int64]:
-        if len(self._groups) == 1:
-            return self._groups[0].take(n)
-        which = self._group_queue.take(n)
-        out = np.empty(n, dtype=np.int64)
-        for g in np.unique(which):
-            positions = np.flatnonzero(which == g)
-            out[positions] = self._groups[int(g)].take(positions.size)
-        return out
-
-
-def _local_groups(
-    view: TemplateLibrary, bins: tuple[int, int]
-) -> list[npt.NDArray[np.int64]]:
-    """Template ids per non-empty equalisation bin (copy of library v2).
-
-    Equal-width bins from minimum to maximum of the pool (one template per
-    duplicate group) on excursion and on width at 10 %.
-    """
-    n_exc, n_dur = bins
-    pool = view.unique_ids()
-    rows = view.rows_of(pool)
-    excursion = view.metadata["excursion_hz"].to_numpy(dtype=np.float64)[rows]
-    duration = view.metadata[EQUALIZE_DURATION_COLUMN].to_numpy(dtype=np.float64)[rows]
-    finite = np.isfinite(excursion) & np.isfinite(duration)
-    pool, excursion, duration = pool[finite], excursion[finite], duration[finite]
-    if pool.size == 0:
-        msg = "cannot bin an empty template pool"
-        raise ValueError(msg)
-    exc_edges = np.linspace(excursion.min(), excursion.max(), n_exc + 1)
-    dur_edges = np.linspace(duration.min(), duration.max(), n_dur + 1)
-    exc_bin = np.clip(
-        np.searchsorted(exc_edges, excursion, side="right") - 1, 0, n_exc - 1
-    )
-    dur_bin = np.clip(
-        np.searchsorted(dur_edges, duration, side="right") - 1, 0, n_dur - 1
-    )
-    flat = (exc_bin * n_dur + dur_bin).astype(np.int64)
-    counts = np.bincount(flat, minlength=n_exc * n_dur)
-    return [pool[flat == b] for b in np.flatnonzero(counts)]
 
 
 @dataclass(frozen=True, eq=False)
@@ -230,6 +110,9 @@ class TemplatePool:
         Histogram-equalised sampling.
     bins : (int, int)
         Equalisation bins on excursion and width at 10 %.
+    options : tuple of (str, value)
+        Sampling options passed to ``TemplateLibrary.cycler`` (only those
+        set in the config; the rest take the library's defaults).
     require_amp : bool
         Only templates with a usable measured amplitude trace (and their
         amplitude change counts towards the support).
@@ -241,6 +124,7 @@ class TemplatePool:
     manifest_sha256: str
     equalize: bool
     bins: tuple[int, int]
+    options: tuple[tuple[str, Any], ...]
     require_amp: bool
     _rows: dict[int, int] = field(repr=False)
     _supports: dict[tuple[int, float], tuple[int, int]] = field(
@@ -257,6 +141,15 @@ class TemplatePool:
             config.amplitude_mode == "measured",
             config.equalize,
             tuple(config.equalize_bins),
+            tuple(
+                (name, value)
+                for name, value in (
+                    ("spacing", config.equalize_spacing),
+                    ("alpha", config.equalize_alpha),
+                    ("balance", config.equalize_balance),
+                )
+                if value is not None
+            ),
         )
 
     @property
@@ -280,36 +173,36 @@ class TemplatePool:
         return self.view.template_ids
 
     @property
+    def sampling_options(self) -> dict[str, Any]:
+        """Sampling options in effect: library defaults updated by the config."""
+        parameters = inspect.signature(self.view.cycler).parameters
+        defaults = {
+            name: p.default
+            for name, p in parameters.items()
+            if p.default is not inspect.Parameter.empty
+        }
+        defaults.update(equalize=self.equalize, bins=self.bins)
+        defaults.update(dict(self.options))
+        return defaults
+
+    @property
     def sampling(self) -> str:
         """Description of the sampling scheme (for ``scene.json``)."""
         if not self.equalize:
             return "natural: successive permutations of the eligible pool"
+        options = ", ".join(
+            f"{k}={v!r}" for k, v in self.sampling_options.items() if k != "equalize"
+        )
         return (
-            f"equalized: {self.bins[0]}x{self.bins[1]} equal-width bins over "
-            f"excursion_hz x {EQUALIZE_DURATION_COLUMN}, bins from successive "
-            "permutations of the non-empty bins, templates from permutations "
-            f"within a bin ({library_api()})"
+            f"equalized over excursion_hz x {EQUALIZE_DURATION_COLUMN} with "
+            f"gridtools.templates.TemplateLibrary.cycler({options})"
         )
 
     def cycler(self, rng: np.random.Generator) -> Cycler:
         """A stateful sampler (one per fish) drawing from ``rng``."""
-        if library_api() == "gridtools.templates":
-            # Equal-width bins and full equalization, as documented in
-            # `sampling`; the library's own defaults (log bins, tempered
-            # weights) take over when the scene config exposes them.
-            return self.view.cycler(  # type: ignore[call-arg]
-                rng,
-                equalize=self.equalize,
-                bins=self.bins,
-                spacing="linear",
-                alpha=1.0,
-            )
-        groups = (
-            _local_groups(self.view, self.bins)
-            if self.equalize
-            else [self.view.unique_ids()]
+        return self.view.cycler(
+            rng, equalize=self.equalize, bins=self.bins, **dict(self.options)
         )
-        return _LocalCycler(groups, rng)
 
     def traces(self, template_id: int) -> tuple[Float32Array, Float32Array]:
         """Frequency excursion (Hz) and measured amplitude factor of one template."""
@@ -369,6 +262,7 @@ def _open_pool(
     require_amp: bool,
     equalize: bool,
     bins: tuple[int, int],
+    options: tuple[tuple[str, Any], ...],
 ) -> TemplatePool:
     path = Path(library_path)
     if not path.is_dir():
@@ -400,6 +294,7 @@ def _open_pool(
         manifest_sha256=hashlib.sha256(manifest).hexdigest(),
         equalize=equalize,
         bins=bins,
+        options=options,
         require_amp=require_amp,
         _rows={int(t): i for i, t in enumerate(ids)},
     )
@@ -489,9 +384,12 @@ class ChirpSchedule:
     n_dropped_cap: int
 
 
-def _gap_ok(first: ChirpEvent, second: ChirpEvent, min_gap: int) -> bool:
-    """Whether ``second`` starts at least ``min_gap`` after ``first`` ends."""
-    return second.start - first.stop >= min_gap
+def _spacing_ok(first: ChirpEvent, second: ChirpEvent, min_interval: int) -> bool:
+    """Chirps of one fish: centres ``min_interval`` apart, supports disjoint."""
+    return (
+        second.center_index - first.center_index >= min_interval
+        and second.start >= first.stop
+    )
 
 
 def _spontaneous(
@@ -505,14 +403,14 @@ def _spontaneous(
 ) -> list[ChirpEvent]:
     """Burst process on [0, duration]: candidates sorted by centre, unfiltered.
 
-    Burst onsets are Poisson; within a burst each chirp starts a silent gap
-    (``burst_gap_s``) after the previous chirp's support ends.
+    Burst onsets are Poisson; within a burst the centre-to-centre intervals
+    are log-normal (``burst_interval_s`` = median, log SD).
     """
     if rate_hz <= 0.0:
         return []
     duration_s = (n_samples - 1) / samplerate_hz
     burst_rate = rate_hz / config.burst_size_mean
-    gap_lo, gap_hi = config.burst_gap_s
+    median_s, log_sd = config.burst_interval_s
     events: list[ChirpEvent] = []
     t = 0.0
     while True:
@@ -520,16 +418,12 @@ def _spontaneous(
         if t > duration_s:
             break
         size = int(rng.geometric(1.0 / config.burst_size_mean))
-        centre = round(t * samplerate_hz)
-        previous: ChirpEvent | None = None
-        for _ in range(size):
+        intervals = median_s * np.exp(log_sd * rng.standard_normal(size - 1))
+        centres = t + np.concatenate([[0.0], np.cumsum(intervals)])
+        for centre_s in centres.tolist():
             template_id, before, after = draw(fish_id)
-            if previous is not None:
-                gap = round(rng.uniform(gap_lo, gap_hi) * samplerate_hz)
-                centre = previous.stop + gap + before
-            event = ChirpEvent(fish_id, centre, template_id, before, after)
-            events.append(event)
-            previous = event
+            centre = round(centre_s * samplerate_hz)
+            events.append(ChirpEvent(fish_id, centre, template_id, before, after))
     inside = [e for e in events if 0 <= e.center_index <= n_samples - 1]
     return sorted(inside, key=lambda e: e.center_index)
 
@@ -546,11 +440,10 @@ def schedule_chirps(
 ) -> ChirpSchedule:
     """Draw when every fish chirps and with which template.
 
-    See :class:`~gridtools.sim.config.ChirpConfig`. Chirps of one fish keep
-    a silent interval of at least ``min_interval_s`` between their supports
-    (from the drawn templates, so long chirps take more room); spontaneous
-    chirps that violate it are dropped (earlier ones win), and so are
-    responses.
+    See :class:`~gridtools.sim.config.ChirpConfig`. Chirps of one fish are at
+    least ``min_interval_s`` apart centre to centre and their supports (from
+    the drawn templates) never overlap; spontaneous chirps that violate this
+    are dropped (earlier ones win), and so are responses.
 
     Parameters
     ----------
@@ -561,7 +454,7 @@ def schedule_chirps(
     timing_rngs : sequence of numpy.random.Generator
         One generator per fish for its spontaneous chirps.
     response_rng : numpy.random.Generator
-        Generator for responses (couples the fish). Three numbers are drawn
+        Generator for responses (couples the fish). Five numbers are drawn
         per spontaneous chirp whatever the outcome.
     draw : callable
         ``draw(fish_id) -> (template_id, before, after)``; called for every
@@ -580,8 +473,11 @@ def schedule_chirps(
     if len(timing_rngs) != n_fish:
         msg = "need one timing generator per fish"
         raise ValueError(msg)
-    min_gap = round(config.min_interval_s * samplerate_hz)
-    cap = math.floor(config.max_rate_hz * n_samples / samplerate_hz)
+    min_interval = round(config.min_interval_s * samplerate_hz)
+    if config.max_rate_hz is None:
+        cap = math.inf
+    else:
+        cap = math.floor(config.max_rate_hz * n_samples / samplerate_hz)
     per_fish: list[list[ChirpEvent]] = []
     dropped_interval = dropped_cap = 0
     for fish_id, (rng, rate) in enumerate(zip(timing_rngs, rates_hz, strict=True)):
@@ -590,13 +486,14 @@ def schedule_chirps(
         )
         kept: list[ChirpEvent] = []
         for event in candidates:
-            if kept and not _gap_ok(kept[-1], event, min_gap):
+            if kept and not _spacing_ok(kept[-1], event, min_interval):
                 dropped_interval += 1
                 continue
             kept.append(event)
         if len(kept) > cap:
-            dropped_cap += len(kept) - cap
-            choice = np.sort(rng.choice(len(kept), size=cap, replace=False))
+            n_keep = int(cap)
+            dropped_cap += len(kept) - n_keep
+            choice = np.sort(rng.choice(len(kept), size=n_keep, replace=False))
             kept = [kept[i] for i in choice.tolist()]
         per_fish.append(kept)
 
@@ -605,26 +502,30 @@ def schedule_chirps(
         key=lambda e: (e.center_index, e.fish_id),
     )
     lag_lo, lag_hi = config.response_delay_s
+    window = config.simultaneous_window_s
     responses: list[tuple[ChirpEvent, int]] = []  # (event, trigger position)
     attempts = 0
     for position, trigger in enumerate(spontaneous):
         u = response_rng.random()
         partner = int(response_rng.integers(max(n_fish - 1, 1)))
         delay_s = response_rng.uniform(lag_lo, lag_hi)
+        simultaneous = response_rng.random() < config.simultaneous_fraction
+        offset_s = response_rng.uniform(-window, window)
         if n_fish < 2 or u >= config.response_prob:
             continue
         attempts += 1
         responder = partner if partner < trigger.fish_id else partner + 1
         template_id, before, after = draw(responder)
-        centre = trigger.center_index + round(delay_s * samplerate_hz)
+        lag = offset_s if simultaneous else delay_s
+        centre = trigger.center_index + round(lag * samplerate_hz)
         event = ChirpEvent(responder, centre, template_id, before, after, True)
         taken = per_fish[responder]
-        if centre > n_samples - 1 or len(taken) >= cap:
+        if not 0 <= centre <= n_samples - 1 or len(taken) >= cap:
             continue
         slot = int(np.searchsorted([e.center_index for e in taken], centre))
-        if slot > 0 and not _gap_ok(taken[slot - 1], event, min_gap):
+        if slot > 0 and not _spacing_ok(taken[slot - 1], event, min_interval):
             continue
-        if slot < len(taken) and not _gap_ok(event, taken[slot], min_gap):
+        if slot < len(taken) and not _spacing_ok(event, taken[slot], min_interval):
             continue
         taken.insert(slot, event)
         responses.append((event, position))

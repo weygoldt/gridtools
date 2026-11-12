@@ -8,9 +8,7 @@ import pytest
 
 from gridtools.sim.chirps import (
     TemplatePool,
-    _local_groups,
     amplitude_from_frequency,
-    library_api,
     place_chirp,
     random_dips,
     resample_template,
@@ -60,8 +58,9 @@ def test_schedule_respects_interval_cap_and_response_lags(seed: int) -> None:
     for fish in range(3):
         own = [e for e in events if e.fish_id == fish]
         for first, second in itertools.pairwise(own):
-            assert second.start - first.stop >= round(config.min_interval_s * FS)
-        assert len(own) <= int(config.max_rate_hz * duration_s)
+            assert second.center_index - first.center_index >= 0.2 * FS
+            assert second.start >= first.stop
+        assert len(own) <= int(1.0 * duration_s)  # max_rate_hz
     for event in events:
         assert event.template_id == event.fish_id  # from the fake draw
         if event.is_response:
@@ -69,30 +68,69 @@ def test_schedule_respects_interval_cap_and_response_lags(seed: int) -> None:
             assert not trigger.is_response
             assert trigger.fish_id != event.fish_id
             lag_s = (event.center_index - trigger.center_index) / FS
-            assert config.response_delay_s[0] - 1 / FS <= lag_s
-            assert lag_s <= config.response_delay_s[1] + 1 / FS
+            in_delay = (
+                config.response_delay_s[0] - 1 / FS
+                <= lag_s
+                <= config.response_delay_s[1] + 1 / FS
+            )
+            near = abs(lag_s) <= config.simultaneous_window_s + 1 / FS
+            assert in_delay or near
         else:
             assert event.trigger == -1
     assert schedule.n_responses <= schedule.n_response_attempts
     assert schedule.n_spontaneous + schedule.n_responses == len(events)
 
 
+def test_no_rate_cap_by_default() -> None:
+    config = ChirpConfig(burst_size_mean=3.0)
+    assert config.max_rate_hz is None
+    schedule = _schedule(config, [1.6], 0, 60.0)
+    assert len(schedule.events) > 60  # above one per second
+    assert schedule.n_dropped_cap == 0
+
+
+def test_near_simultaneous_responses_follow_their_fraction() -> None:
+    config = ChirpConfig(response_prob=1.0, simultaneous_fraction=0.25)
+    near = total = 0
+    for seed in range(20):
+        schedule = _schedule(config, [0.3, 0.3], seed, 120.0)
+        for event in schedule.events:
+            if event.is_response:
+                lag = event.center_index - schedule.events[event.trigger].center_index
+                near += abs(lag) <= 0.25 * FS
+                total += 1
+    # the response lags 0.45-2.2 s never fall in the +-0.25 s window
+    assert abs(near / total - 0.25) < 4 * np.sqrt(0.25 * 0.75 / total)
+
+
+def test_within_burst_intervals_follow_the_lognormal() -> None:
+    config = ChirpConfig(burst_size_mean=50.0, burst_interval_s=(0.75, 0.45))
+    rng = np.random.default_rng(0)
+    from gridtools.sim.chirps import _spontaneous
+
+    events = _spontaneous(0, rng, 0.5, config, _draw(10, 10), round(600 * FS), FS)
+    intervals = np.diff([e.center_index for e in events]) / FS
+    intervals = intervals[intervals < 5.0]  # within bursts
+    assert np.median(intervals) == pytest.approx(0.75, rel=0.1)
+    assert np.std(np.log(intervals)) == pytest.approx(0.45, rel=0.15)
+
+
 def test_spacing_uses_the_drawn_supports() -> None:
-    """Long chirps take more room: 300-ms supports still keep 200 ms of silence."""
+    """Long chirps take more room: their supports never overlap."""
     rng = np.random.default_rng(3)
 
     def draw(fish_id: int) -> tuple[int, int, int]:
         long = rng.random() < 0.5
-        return int(long), (2000 if long else 300), (4000 if long else 900)
+        return int(long), (2000 if long else 300), (6000 if long else 900)
 
-    config = ChirpConfig(burst_size_mean=4.0, burst_gap_s=(0.2, 0.3))
+    config = ChirpConfig(burst_size_mean=4.0, burst_interval_s=(0.3, 0.3))
     schedule = _schedule(config, [1.0], 0, 120.0, draw)
     events = schedule.events
     assert any(e.template_id == 1 for e in events)
-    gaps = [b.start - a.stop for a, b in itertools.pairwise(events)]
-    assert min(gaps) >= 0.2 * FS
-    # within bursts the gap is drawn from burst_gap_s, so many are short
-    assert np.mean(np.array(gaps) < 0.3 * FS) > 0.2
+    assert schedule.n_dropped_interval > 0
+    for a, b in itertools.pairwise(events):
+        assert b.start >= a.stop
+        assert b.center_index - a.center_index >= 0.2 * FS
 
 
 def test_response_attempts_follow_response_prob() -> None:
@@ -119,50 +157,35 @@ def test_zero_rate_gives_no_chirps() -> None:
 
 
 def test_pool_excludes_flags_and_equalizes(library_dir: Path) -> None:
-    pool = TemplatePool.open(ChirpConfig(library=str(library_dir)))
+    flat = ChirpConfig(
+        library=str(library_dir), equalize_spacing="linear", equalize_alpha=1.0
+    )
+    pool = TemplatePool.open(flat)
     assert 5 not in pool.template_ids  # step_flag
     assert pool.template_ids.size == 23
     assert pool.n_samples == 4000
-    draws = pool.cycler(np.random.default_rng(1)).draw(4600)
-    big = np.isin(draws, [i for i in pool.template_ids if pool.family(i) == "big"])
-    # every non-empty (excursion x width) bin is equally likely: linear bins
-    # over 40-400 Hz put 40 and 60 Hz into one bin; 4 small and 3 big
-    # excursion bins times 3 widths give 21 groups, 9 of them big
-    groups = _local_groups(pool.view, (10, 10))
-    assert len(groups) == 21
+    assert "spacing='linear'" in pool.sampling
+    assert pool.sampling_options["alpha"] == 1.0
+    cycler = pool.cycler(np.random.default_rng(1))
+    draws = np.concatenate([cycler.draw(1) for _ in range(4600)])
+    groups = pool.view.equalization_bins((10, 10), spacing="linear").groups()
     big_groups = sum(pool.family(int(g[0])) == "big" for g in groups)
-    assert big_groups == 9
-    assert abs(big.mean() - 9 / 21) < 0.03
-    natural = pool.cycler(np.random.default_rng(1))
-    assert natural.draw(1).size == 1
+    big = np.isin(draws, [i for i in pool.template_ids if pool.family(i) == "big"])
+    # alpha = 1: every non-empty (excursion x width) bin equally likely
+    assert abs(big.mean() - big_groups / len(groups)) < 0.03
+    tempered = TemplatePool.open(ChirpConfig(library=str(library_dir)))
+    assert tempered.options == ()  # the library's own defaults
+    from gridtools.templates.library import DEFAULT_ALPHA, DEFAULT_SPACING
+
+    assert tempered.sampling_options["spacing"] == DEFAULT_SPACING
+    assert tempered.sampling_options["alpha"] == DEFAULT_ALPHA
+    tempered_cycler = tempered.cycler(np.random.default_rng(2))
+    ids = np.concatenate([tempered_cycler.draw(1) for _ in range(200)])
+    assert np.isin(ids, tempered.template_ids).all()
     measured = TemplatePool.open(
         ChirpConfig(library=str(library_dir), amplitude_mode="measured")
     )
     assert np.all(measured.template_ids % 2 == 0)
-
-
-def test_local_copy_matches_the_library_cycler(library_dir: Path) -> None:
-    from gridtools.sim.chirps import _LocalCycler
-
-    pool = TemplatePool.open(ChirpConfig(library=str(library_dir)))
-    if library_api() != "gridtools.templates":
-        pytest.skip("installed gridtools.templates predates library v2")
-    for equalize in (True, False):
-        library = pool.view.cycler(
-            np.random.default_rng(5),
-            equalize=equalize,  # type: ignore[call-arg]
-            bins=(10, 10),  # type: ignore[call-arg]
-            spacing="linear",  # type: ignore[call-arg]
-            alpha=1.0,  # type: ignore[call-arg]
-        )
-        groups = (
-            _local_groups(pool.view, (10, 10)) if equalize else [pool.view.unique_ids()]
-        )
-        local = _LocalCycler(groups, np.random.default_rng(5))
-        # scenes draw one template at a time; compare in that mode
-        expected = np.concatenate([library.draw(1) for _ in range(300)])
-        got = np.concatenate([local.draw(1) for _ in range(300)])
-        np.testing.assert_array_equal(got, expected)
 
 
 def test_support_is_measured_on_the_trace(library_dir: Path) -> None:

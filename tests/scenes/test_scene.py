@@ -1,5 +1,6 @@
 """Scene assembly: determinism, seeding, writers, ground-truth tables."""
 
+import itertools
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -20,6 +21,7 @@ from gridtools.sim.config import (
 )
 from gridtools.sim.scene import (
     CHIRP_COLUMNS,
+    FOOTPRINT_COLUMNS,
     Scene,
     fish_power_db,
     plan_scene,
@@ -55,11 +57,15 @@ def test_different_seed_differs(config: SceneConfig, scene: Scene) -> None:
 def test_noise_config_leaves_fish_untouched(config: SceneConfig, scene: Scene) -> None:
     noisy = replace(
         config,
-        noise=NoiseConfig(snr_db=(-20.0, -20.0), exponent=(0.0, 0.0), dead_prob=0.0),
-        clicks=ClickConfig(rate_hz=(5.0, 5.0)),
+        noise=NoiseConfig(
+            floor_modes=((-100.0, 0.0, 1.0),), exponent=(1.0, 1.0), dead_prob=0.0
+        ),
+        clicks=ClickConfig(rate_per_h_median=18000.0, rate_log10_sd=0.0),
     )
     other = simulate_scene(noisy, 7)
-    pd.testing.assert_frame_equal(other.chirps, scene.chirps)
+    # footprint visibility depends on the noise; the boxes do not
+    same = [*CHIRP_COLUMNS, "box_t0_s", "box_t1_s", "box_f0_hz", "box_f1_hz"]
+    pd.testing.assert_frame_equal(other.chirps.loc[:, same], scene.chirps.loc[:, same])
     assert not np.array_equal(other.recording, scene.recording)
     for i in range(len(scene.model.fish)):
         # channel gains include dead electrodes, so compare before them
@@ -132,19 +138,31 @@ def test_tracks_round_trip_and_follow_the_baselines(
         assert f == pytest.approx(row["baseline_hz"], abs=0.05)
 
 
-def test_sign_v_is_the_fundamental_power(scene: Scene) -> None:
-    model = scene.model
+def test_sign_v_matches_an_independent_recomputation(scene: Scene) -> None:
+    """sign_v as wavetracker: Hann PSD (specgram scaling) at the nearest bin."""
     tracks = scene.tracks
     assert tracks.powers_db is not None
-    track = tracks.track(0)
-    assert track.powers_db is not None
-    t = track.times_s[10]
-    fish = model.fish[0]
-    gains = model.gain_track(0).evaluate([t])[0]
-    amplitude = (
-        model.channel_gain * gains * fish.amplitude * fish.harmonics.amplitudes[0]
+    nfft = scene.config.tracks.power_nfft(FS)
+    x = scene.recording.astype(np.float64)
+    window = np.hanning(nfft + 1)[:nfft]
+    rows = np.flatnonzero(
+        (tracks.times_s[tracks.time_indices] * FS >= nfft / 2)
+        & (tracks.times_s[tracks.time_indices] * FS + nfft / 2 <= x.shape[0])
     )
-    np.testing.assert_allclose(track.powers_db[10], fish_power_db(amplitude, FS, 16384))
+    assert rows.size > 10
+    for row in rows[:: max(1, rows.size // 10)]:
+        centre = round(float(tracks.times_s[tracks.time_indices[row]]) * FS)
+        segment = x[centre - nfft // 2 : centre + nfft // 2]
+        segment = segment - segment.mean(axis=0)
+        spectrum = np.fft.rfft(segment * window[:, None], axis=0)
+        power = 2.0 * np.abs(spectrum) ** 2 / (FS * np.sum(window**2))
+        k = round(float(tracks.freqs_hz[row]) * nfft / FS)
+        np.testing.assert_allclose(
+            tracks.powers_db[row], 10 * np.log10(power[k]), atol=0.02
+        )
+
+
+def test_fish_power_db_is_the_bin_centred_density() -> None:
     # a sinusoid of amplitude 1 centred on a bin: 1/2 / ENBW
     assert fish_power_db(1.0, FS, 16384) == pytest.approx(
         10 * np.log10(0.5 / (1.5 * FS / 16384))
@@ -153,7 +171,7 @@ def test_sign_v_is_the_fundamental_power(scene: Scene) -> None:
 
 def test_chirp_table_is_consistent(scene: Scene) -> None:
     table = scene.chirps
-    assert tuple(table.columns) == CHIRP_COLUMNS
+    assert tuple(table.columns) == CHIRP_COLUMNS + FOOTPRINT_COLUMNS
     assert table["chirp_id"].tolist() == list(range(len(table)))
     assert np.all(np.diff(table["t_center_s"]) >= 0)
     np.testing.assert_allclose(
@@ -190,7 +208,8 @@ def test_chirp_table_is_consistent(scene: Scene) -> None:
         if row["is_response"]:
             trigger = records[row["response_to"]]
             assert trigger["emitter_id"] != row["emitter_id"]
-            assert 0 <= row["t_center_s"] - trigger["t_center_s"] <= 0.5 + 1 / FS
+            lag = row["t_center_s"] - trigger["t_center_s"]
+            assert 0.45 - 1 / FS <= lag <= 2.2 + 1 / FS or abs(lag) <= 0.25 + 1 / FS
     assert any(r["overlaps_other_chirp"] for r in records)
     assert any(r["is_response"] for r in records)
 
@@ -221,16 +240,25 @@ def test_scene_json_is_complete(scene: Scene, scene_path: Path) -> None:
         assert key in info, key
     assert info["seed"] == 7
     assert info["duration_s"] == 6.0  # read by chirpdetector.evaluation
-    assert "visible" not in scene.chirps.columns  # reserved for visibility labels
+    assert scene.chirps["visible"].dtype == bool  # chirpdetector's ignore flag
     assert SceneConfig.from_dict(info["config"]) == scene.config
     assert len(info["templates"]["manifest_sha256"]) == 64
+    assert info["templates"]["sampling_options"]["bins"] == [10, 10]
     assert info["grid"]["electrode_xy_m"] == scene.model.electrode_xy_m.tolist()
     assert info["versions"]["gridtools"]
     assert len(info["fish"]) == len(scene.model.fish)
     for fish in info["fish"]:
-        assert {"baseline_hz", "amplitude", "depth_m", "close_to", "n_chirps"} <= set(
-            fish
-        )
+        assert {
+            "baseline_hz",
+            "amplitude_v",
+            "drift_sd_hz",
+            "movement",
+            "close_to",
+            "n_chirps",
+        } <= set(fish)
+    assert info["grid"]["spacing_m"] == scene.plan.spacing_m
+    assert info["grid"]["reference"] in {"in tank", "distant"}
+    assert info["footprint"]["window_s"] == 0.2048
     paths = np.load(scene_path / "paths.npz")
     assert paths["xy_m"].shape[0] == len(scene.model.fish)
 
@@ -265,7 +293,9 @@ def test_close_pairs_and_crossings_occur_at_configured_rates(library_dir: Path) 
 
 
 def test_crossing_ramps_cross_the_partner(library_dir: Path) -> None:
-    population = PopulationConfig(n_fish=(2, 2), close_pair_prob=1.0, crossing_prob=1.0)
+    population = PopulationConfig(
+        n_fish=(2, 2), close_pair_prob=1.0, crossing_prob=1.0, ramp_prob=0.0
+    )
     config = small_config(library_dir, duration_s=30.0, population=population)
     for seed in range(10):
         plan = plan_scene(config, seed)
@@ -275,7 +305,7 @@ def test_crossing_ramps_cross_the_partner(library_dir: Path) -> None:
         assert np.sign(df[0]) != np.sign(df[-1])
 
 
-def test_spacing_and_rate_cap_hold_in_scenes(library_dir: Path) -> None:
+def test_spacing_holds_in_scenes(library_dir: Path) -> None:
     config = small_config(
         library_dir,
         duration_s=20.0,
@@ -286,9 +316,10 @@ def test_spacing_and_rate_cap_hold_in_scenes(library_dir: Path) -> None:
     for seed in range(5):
         plan = plan_scene(config, seed)
         for fish in plan.model.fish:
-            centres = np.array([c.center_index for c in fish.chirps])
-            assert centres.size <= 20
-            assert np.all(np.diff(np.sort(centres)) >= 0.2 * FS)
+            chirps = sorted(fish.chirps, key=lambda c: c.center_index)
+            for a, b in itertools.pairwise(chirps):
+                assert b.center_index - a.center_index >= 0.2 * FS
+                assert b.support_start >= a.support_stop
 
 
 def test_edge_chirps_are_truncated_and_render(library_dir: Path) -> None:

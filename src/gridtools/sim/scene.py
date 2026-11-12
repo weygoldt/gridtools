@@ -47,6 +47,7 @@ changing one component's config does not reshuffle the others (e.g. the
 noise config leaves the fish untouched).
 """
 
+import dataclasses
 import functools
 import importlib.metadata
 import json
@@ -59,19 +60,18 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 from gridtools.io import GridGeometry, Tracks, save_tracks
-from gridtools.sim._common import Float32Array
+from gridtools.sim._common import Float32Array, FloatArray
 from gridtools.sim.chirps import (
     ChirpPlacement,
     ChirpSchedule,
     TemplatePool,
     amplitude_from_frequency,
-    library_api,
     place_chirp,
     random_dips,
     schedule_chirps,
@@ -90,7 +90,9 @@ from gridtools.sim.movement import Arena, FishPath, simulate_path
 from gridtools.sim.noise import (
     ColoredNoiseParams,
     ElectrodeFaultParams,
+    ElectrodeFaults,
     GainMismatchParams,
+    Hum,
     HumParams,
     colored_noise,
     electrode_faults,
@@ -114,10 +116,14 @@ from gridtools.sim.seeding import (
     stream,
 )
 
+if TYPE_CHECKING:
+    from gridtools.sim.footprint import HannSpectrogram
+
 __all__ = [
     "CHIRP_COLUMNS",
     "DEFAULT_ROOT",
     "FISH_STREAMS",
+    "FOOTPRINT_COLUMNS",
     "STREAMS",
     "Scene",
     "ScenePlan",
@@ -169,25 +175,38 @@ CHIRP_COLUMNS: tuple[str, ...] = (
     "emitter_power_db_max",
 )
 
+#: Footprint columns of ``chirps.csv`` (reference front end, see
+#: :mod:`gridtools.sim.footprint`); ``visible`` is the label/ignore flag.
+FOOTPRINT_COLUMNS: tuple[str, ...] = (
+    "box_t0_s",
+    "box_t1_s",
+    "box_f0_hz",
+    "box_f1_hz",
+    "snr_db",
+    "snr_baseline_db",
+    "snr_excursion_db",
+    "visible_fraction",
+    "visible",
+    "harmonic_box_t0_s",
+    "harmonic_box_t1_s",
+    "harmonic_box_f0_hz",
+    "harmonic_box_f1_hz",
+)
+
 
 def fish_power_db(
     fundamental_amplitude: np.ndarray | float,
     samplerate_hz: float,
     nfft: int,
 ) -> np.ndarray:
-    """Power of an EOD fundamental as wavetracker reports it, in dB.
+    """Noise-free power density of an EOD fundamental, in dB re 1 V^2/Hz.
 
-    wavetracker's ``sign_v`` is the power spectral density at the fish's
-    frequency bin (matplotlib ``specgram`` scaling with a Hann window,
-    units^2/Hz), in dB re 1 unit^2/Hz in the 2020 production tracks. For a
-    sinusoid of amplitude ``a`` centred on a bin this is
-    ``(a**2 / 2) / ENBW`` with the Hann window's equivalent noise bandwidth
-    ``ENBW = 1.5 * samplerate_hz / nfft``. Here ``a`` is the noise-free
-    amplitude of the fundamental on an electrode (channel gain x field
-    gain x EOD amplitude x fundamental's relative amplitude), so the value
-    is the fish's own power, without noise or other fish, floored at
-    -300 dB. The 2020 trackers' ``nfft`` is not recorded; 16384 matches
-    their frame grid (first frame at nfft/2, step 0.15 nfft).
+    For a sinusoid of amplitude ``a`` centred on a bin of a Hann-window
+    spectrum with ``specgram`` scaling the peak density is
+    ``(a**2 / 2) / ENBW`` with ``ENBW = 1.5 * samplerate_hz / nfft``. Used for
+    ``emitter_power_db_max`` in ``chirps.csv`` (the fish's own power without
+    noise, other fish or scalloping); ``sign_v`` itself is measured on the
+    recording (:func:`sign_v_powers`). Floored at -300 dB.
 
     Parameters
     ----------
@@ -196,7 +215,7 @@ def fish_power_db(
     samplerate_hz : float
         Sampling rate.
     nfft : int
-        Window length of the reference spectrogram.
+        Window length of the reference spectrum.
 
     Returns
     -------
@@ -220,7 +239,11 @@ class ScenePlan:
     config : SceneConfig
     seed : int
     rows, columns : int
-        Grid layout.
+        Grid size for ``fishgrid.cfg`` (``1 x E`` for irregular layouts).
+    spacing_m : float
+        Electrode spacing.
+    layout : Layout
+        Electrode layout.
     geometry : GridGeometry
         Electrode positions.
     arena : Arena
@@ -243,12 +266,14 @@ class ScenePlan:
     seed: int
     rows: int
     columns: int
+    spacing_m: float
+    layout: "Layout"
     geometry: GridGeometry
     arena: Arena
     model: SceneModel
     schedule: ChirpSchedule
     fish_info: list[dict[str, Any]]
-    levels: dict[str, float]
+    levels: dict[str, Any]
     channels: dict[str, Any]
     pool: TemplatePool
 
@@ -284,14 +309,14 @@ def _population(
     rng = stream(seed, "population")
     scene_s = config.duration_s
     n_fish = int(rng.integers(pop.n_fish[0], pop.n_fish[1] + 1))
-    lo, hi = pop.baseline_hz
+    lo, hi = pop.baseline_uniform_hz
     baselines: list[float] = []
     ramps: list[list[Ramp]] = []
     info: list[dict[str, Any]] = []
     for i in range(n_fish):
         # fixed number of draws per fish, whatever the branches
-        u = rng.random(13)
-        uniform_f = lo + u[0] * (hi - lo)
+        u = rng.random(15)
+        z = float(rng.standard_normal())
         close = i > 0 and u[1] < pop.close_pair_prob
         partner = min(int(u[2] * i), i - 1) if i > 0 else -1
         df = pop.close_pair_df_hz[0] + u[3] * (
@@ -309,15 +334,31 @@ def _population(
         random_sign = 1.0 if u[10] < 0.5 else -1.0
         random_dur = dur_lo + u[11] * (dur_hi - dur_lo)
         start_u = u[12]
+        if u[13] < pop.baseline_uniform_prob:
+            group = "uniform"
+            drawn = lo + u[0] * (hi - lo)
+        else:
+            group = "male" if u[14] < pop.male_prob else "female"
+            mean, sd = pop.male_hz if group == "male" else pop.female_hz
+            drawn = min(max(mean + sd * z, lo), hi)
 
         fish_ramps: list[Ramp] = []
-        entry: dict[str, Any] = {"close_to": -1, "close_df_hz": None, "crossing": False}
+        entry: dict[str, Any] = {
+            "baseline_group": group,
+            "close_to": -1,
+            "close_df_hz": None,
+            "crossing": False,
+        }
         if close:
             f = baselines[partner] + sign * df
             if not lo <= f <= hi:
                 sign = -sign
                 f = baselines[partner] + sign * df
-            entry.update(close_to=partner, close_df_hz=float(f - baselines[partner]))
+            entry.update(
+                baseline_group="close pair",
+                close_to=partner,
+                close_df_hz=float(f - baselines[partner]),
+            )
             if cross:
                 # move towards and past the partner
                 fish_ramps.append(
@@ -325,7 +366,7 @@ def _population(
                 )
                 entry["crossing"] = True
         else:
-            f = uniform_f
+            f = drawn
         if random_ramp:
             fish_ramps.append(
                 _ramp(random_dur, scene_s, 1.0 - start_u, random_sign * random_df)
@@ -334,6 +375,195 @@ def _population(
         ramps.append(fish_ramps)
         info.append(entry)
     return baselines, ramps, info
+
+
+def _shared_knots(
+    config: SceneConfig, seed: int, duration_s: float
+) -> tuple[DriftKnots, float]:
+    """Shared relative drift: linear trend (centred) plus a stationary part."""
+    pop = config.population
+    rng = stream(seed, "shared_drift")
+    mean, sd = pop.shared_trend_per_h
+    trend_per_h = float(mean + sd * rng.standard_normal())
+    shared = pop.shared_drift
+    knots = _drift_knots(
+        rng,
+        duration_s,
+        sd=shared.sd_rel,
+        timescale_s=shared.timescale_s,
+        control_rate_hz=shared.control_rate_hz,
+    )
+    values = knots.values + trend_per_h * (knots.times_s - duration_s / 2) / 3600.0
+    return DriftKnots(knots.times_s, values), trend_per_h
+
+
+@dataclass(frozen=True, eq=False)
+class Layout:
+    """Electrode positions of a scene.
+
+    Attributes
+    ----------
+    positions_m : numpy.ndarray, shape (E, 2)
+        Electrode positions in metres, by channel.
+    rows, columns : int
+        Grid size written to ``fishgrid.cfg``; ``1 x E`` for layouts that are
+        not a full rectangle.
+    kind : str
+        ``"real"``, ``"single"``, ``"pair"``, ``"line"``, ``"grid"`` or
+        ``"irregular"`` (a near-square grid with positions missing).
+    regular : bool
+        Whether the positions are exactly ``GridGeometry.regular(columns,
+        rows, spacing)`` (no jitter, rotation or gaps). Otherwise the
+        positions are written to ``electrodes.csv``.
+    spacing_m : float
+        Electrode spacing.
+    """
+
+    positions_m: FloatArray
+    rows: int
+    columns: int
+    kind: str
+    regular: bool
+    spacing_m: float
+
+    @property
+    def n_electrodes(self) -> int:
+        """Number of electrodes."""
+        return int(self.positions_m.shape[0])
+
+
+def _rectangle(n: int, max_aspect: float) -> tuple[int, int] | None:
+    """Most square r x c (r <= c, r >= 2) with r * c = n and c / r <= max_aspect."""
+    best = None
+    for r in range(2, math.isqrt(n) + 1):
+        if n % r == 0 and (n // r) / r <= max_aspect:
+            best = (r, n // r)
+    return best
+
+
+def draw_layout(config: SceneConfig, seed: int) -> Layout:
+    """Electrode layout of a scene (grid stream); see :class:`GridConfig`."""
+    grid = config.grid
+    rng = stream(seed, "grid")
+    u = rng.random(8)
+    spacing = float(rng.uniform(*grid.spacing_m))
+    if u[0] < grid.real_layout_prob:
+        rows, columns = grid.layouts[
+            min(int(u[1] * len(grid.layouts)), len(grid.layouts) - 1)
+        ]
+        positions = GridGeometry.regular(columns, rows, spacing, spacing).positions_m
+        return Layout(np.array(positions), rows, columns, "real", True, spacing)
+
+    lo, hi = grid.n_electrodes
+    small = (lo, min(grid.small_max, hi))
+    large = (max(grid.small_max + 1, lo), hi)
+    use_small = (u[2] < grid.small_prob and small[0] <= small[1]) or large[0] > large[1]
+    first, last = small if use_small else large
+    n = first + min(int(u[3] * (last - first + 1)), last - first)
+
+    if n == 1:
+        rows, columns, kind = 1, 1, "single"
+    elif n == 2:
+        rows, columns, kind = 1, 2, "pair"
+    elif n <= 4:
+        if u[4] < 0.5:
+            rows, columns, kind = 1, n, "line"
+        else:
+            rows, columns, kind = 2, 2, "grid" if n == 4 else "irregular"
+    else:
+        shape = _rectangle(n, grid.max_aspect)
+        if shape is not None:
+            rows, columns, kind = shape[0], shape[1], "grid"
+        else:
+            columns = math.ceil(math.sqrt(n))
+            rows = math.ceil(n / columns)
+            kind = "irregular"
+    if u[5] < 0.5:
+        rows, columns = columns, rows
+    positions = np.array(
+        GridGeometry.regular(columns, rows, spacing, spacing).positions_m
+    )
+    if rows * columns > n:  # near-square grid with positions missing
+        keep = np.sort(rng.permutation(rows * columns)[:n])
+        positions = positions[keep]
+    jitter = rng.standard_normal(positions.shape) * grid.jitter_rel * spacing
+    positions = positions + jitter
+    rotated = u[6] < grid.rotation_prob
+    if rotated and n > 1:
+        angle = 2.0 * math.pi * u[7]
+        centre = positions.mean(axis=0)
+        c, s_ = math.cos(angle), math.sin(angle)
+        positions = (positions - centre) @ np.array([[c, s_], [-s_, c]]) + centre
+    positions = positions - positions.min(axis=0)
+    regular = kind != "irregular" and grid.jitter_rel == 0.0 and not rotated
+    if kind == "irregular":
+        rows, columns = 1, n
+    return Layout(positions, rows, columns, kind, regular, spacing)
+
+
+def layout_arena(layout: Layout, margin_rel: float) -> Arena:
+    """Bounding box of the electrodes plus a margin, at least a spacing wide."""
+    spacing = layout.spacing_m
+    lo = layout.positions_m.min(axis=0) - margin_rel * spacing
+    hi = layout.positions_m.max(axis=0) + margin_rel * spacing
+    for axis in range(2):
+        width = hi[axis] - lo[axis]
+        if width < spacing:
+            pad = (spacing - width) / 2.0
+            lo[axis] -= pad
+            hi[axis] += pad
+    return Arena(float(lo[0]), float(hi[0]), float(lo[1]), float(hi[1]))
+
+
+def median_strongest_gain(
+    electrode_xy_m: np.ndarray,
+    arena: Arena,
+    exponent: float,
+    regulariser_m: float,
+    reference_distance_m: float,
+    *,
+    n_positions: int = 41,
+    n_headings: int = 24,
+) -> float:
+    """Median over the arena of the largest |gain| across electrodes.
+
+    Positions on a regular ``n_positions`` x ``n_positions`` grid over the
+    arena, headings equally spaced; deterministic, so it consumes no random
+    numbers. Used to keep the calibrated fundamental at the strongest
+    electrode fixed when the field, the spacing or the layout changes.
+    """
+    xs = np.linspace(arena.x_min_m, arena.x_max_m, n_positions)
+    ys = np.linspace(arena.y_min_m, arena.y_max_m, n_positions)
+    gx, gy = np.meshgrid(xs, ys)
+    points = np.column_stack([gx.ravel(), gy.ravel()])
+    headings = (np.arange(n_headings) + 0.5) * 2.0 * np.pi / n_headings
+    xy = np.repeat(points, n_headings, axis=0)
+    heading = np.tile(headings, points.shape[0])
+    gains = dipole_gain(
+        xy,
+        heading,
+        electrode_xy_m,
+        fish_depth_m=0.0,
+        electrode_depth_m=0.0,
+        min_distance_m=regulariser_m,
+        distance_exponent=exponent,
+        reference_distance_m=reference_distance_m,
+    )
+    return float(np.median(np.max(np.abs(gains), axis=1)))
+
+
+def calibrated_strongest_gain(field_cfg: Any) -> float:
+    """Median strongest-electrode gain of the calibrated field (3 x 5 grid)."""
+    spacing = field_cfg.calibration_spacing_m
+    electrodes = GridGeometry.regular(5, 3, spacing, spacing).positions_m
+    arena = Arena(0.0, 4 * spacing, 0.0, 2 * spacing)
+    return median_strongest_gain(
+        np.asarray(electrodes),
+        arena,
+        field_cfg.calibration_exponent,
+        field_cfg.calibration_regulariser_rel * spacing,
+        field_cfg.reference_distance_m,
+    )
 
 
 def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
@@ -356,70 +586,113 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
         msg = f"seed must be a non-negative integer, got {seed!r}"
         raise ValueError(msg)
     seed = int(seed)
+    if config.samplerate_choices_hz:  # augmentation: the rate is drawn per scene
+        choices = config.samplerate_choices_hz
+        rate = choices[int(stream(seed, "samplerate").integers(len(choices)))]
+        config = dataclasses.replace(
+            config, samplerate_hz=float(rate), samplerate_choices_hz=()
+        )
     fs = config.samplerate_hz
     n_samples = config.n_samples
     duration_s = n_samples / fs
     pool = TemplatePool.open(config.chirps)
 
-    # grid and arena
-    grid_rng = stream(seed, "grid")
-    rows, columns = config.grid.layouts[
-        int(grid_rng.integers(len(config.grid.layouts)))
-    ]
-    spacing = config.grid.spacing_m
-    geometry = GridGeometry.regular(columns, rows, spacing, spacing)
-    margin = config.grid.arena_margin_m
-    arena = Arena(
-        -margin,
-        (columns - 1) * spacing + margin,
-        -margin,
-        (rows - 1) * spacing + margin,
+    # electrodes and arena
+    layout = draw_layout(config, seed)
+    spacing = layout.spacing_m
+    rows, columns = layout.rows, layout.columns
+    geometry = GridGeometry(layout.positions_m)
+    arena = layout_arena(layout, config.grid.arena_margin_rel)
+
+    # field along the fitted ridge, amplitude normalised to the calibration
+    field_cfg = config.field
+    exponent = float(stream(seed, "field").uniform(*field_cfg.exponent))
+    regulariser_rel = field_cfg.regulariser_rel(exponent)
+    dipole = DipoleParams(
+        fish_depth_m=0.0,
+        electrode_depth_m=0.0,
+        min_distance_m=regulariser_rel * spacing,
+        distance_exponent=exponent,
+        reference_distance_m=field_cfg.reference_distance_m,
     )
+    gain_scene = median_strongest_gain(
+        layout.positions_m,
+        arena,
+        exponent,
+        regulariser_rel * spacing,
+        field_cfg.reference_distance_m,
+    )
+    gain_calibrated = calibrated_strongest_gain(field_cfg)
+    amplitude_scale = gain_calibrated / gain_scene
+
+    # movement regime: once per scene or per fish
+    movement = config.movement
+    scene_light = bool(stream(seed, "regime").random() < movement.light_prob)
 
     baselines, ramps, pair_info = _population(config, seed)
     n_fish = len(baselines)
-    shared = config.population.shared_drift
-    shared_knots = _drift_knots(
-        stream(seed, "shared_drift"),
-        duration_s,
-        sd=shared.sd_rel,
-        timescale_s=shared.timescale_s,
-        control_rate_hz=shared.control_rate_hz,
-    )
+    shared_knots, trend_per_h = _shared_knots(config, seed, duration_s)
 
     # per-fish body, waveform, drift, path, chirp rate
-    field_cfg = config.field
+    pop = config.population
     bodies = []
     for i in range(n_fish):
         body = fish_stream(seed, i, "body")
-        amp_lo, amp_hi = field_cfg.amplitude
-        amplitude = float(np.exp(body.uniform(np.log(amp_lo), np.log(amp_hi))))
-        depth = float(body.uniform(*field_cfg.fish_depth_m))
+        z = float(
+            np.clip(
+                body.standard_normal(),
+                -field_cfg.amplitude_clip_sd,
+                field_cfg.amplitude_clip_sd,
+            )
+        )
+        amplitude = field_cfg.amplitude_median_v * math.exp(
+            field_cfg.amplitude_log_sd * z
+        )
+        amplitude *= amplitude_scale
         phase0 = float(body.uniform(0.0, 2.0 * np.pi))
         harmonics = jitter_harmonics(
             fish_stream(seed, i, "harmonics"),
             APTERONOTUS_LEPTORHYNCHUS,
-            config.population.harmonics,
+            pop.harmonics,
         )
-        drift = config.population.drift
+        drift_rng = fish_stream(seed, i, "drift")
+        factors = np.exp(
+            drift_rng.standard_normal(2)
+            * [pop.drift_sd_log_sd, pop.drift_timescale_log_sd]
+        )
+        drift_sd = pop.drift.sd_hz * float(factors[0])
+        drift_tau = max(
+            pop.drift.timescale_s * float(factors[1]), 2.0 / pop.drift.control_rate_hz
+        )
         drift_knots = _drift_knots(
-            fish_stream(seed, i, "drift"),
+            drift_rng,
             duration_s,
-            sd=drift.sd_hz,
-            timescale_s=drift.timescale_s,
-            control_rate_hz=drift.control_rate_hz,
+            sd=drift_sd,
+            timescale_s=drift_tau,
+            control_rate_hz=pop.drift.control_rate_hz,
         )
+        if movement.per == "scene":
+            light = scene_light
+        else:
+            light = bool(fish_stream(seed, i, "regime").random() < movement.light_prob)
         path = simulate_path(
-            fish_stream(seed, i, "movement"), duration_s, arena, config.movement
+            fish_stream(seed, i, "movement"),
+            duration_s,
+            arena,
+            movement.light if light else movement.dark,
         )
-        dipole = DipoleParams(
-            fish_depth_m=depth,
-            electrode_depth_m=field_cfg.electrode_depth_m,
-            min_distance_m=field_cfg.min_distance_m,
-            distance_exponent=field_cfg.distance_exponent,
-            reference_distance_m=field_cfg.reference_distance_m,
+        bodies.append(
+            (
+                amplitude,
+                phase0,
+                harmonics,
+                drift_knots,
+                path,
+                drift_sd,
+                drift_tau,
+                light,
+            )
         )
-        bodies.append((amplitude, depth, phase0, harmonics, drift_knots, path, dipole))
 
     # chirp timing and templates (one template cycler per fish)
     timing_rngs = [fish_stream(seed, i, "timing") for i in range(n_fish)]
@@ -445,9 +718,7 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
     placements = _place_chirps(config, seed, schedule, pool, n_fish, n_samples)
 
     fish_models = []
-    for i, (amplitude, _, phase0, harmonics, drift_knots, path, dipole) in enumerate(
-        bodies
-    ):
+    for i, (amplitude, phase0, harmonics, drift_knots, path, *_) in enumerate(bodies):
         own = sorted((p for p in placements if p.fish_id == i), key=lambda p: p.start)
         fish_models.append(
             FishModel(
@@ -482,7 +753,40 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
             noisy_factor=noise_cfg.noisy_factor,
         ),
     )
+    if faults.dead.all():  # keep at least one live electrode
+        dead = faults.dead.copy()
+        dead[0] = False
+        faults = ElectrodeFaults(
+            dead=dead,
+            noisy=faults.noisy,
+            signal_gain=np.where(dead, noise_cfg.dead_gain, 1.0).astype(np.float32),
+            noise_scale=faults.noise_scale,
+        )
     channel_gain = mismatch.astype(np.float64) * faults.signal_gain.astype(np.float64)
+    floor_spread = 10.0 ** (
+        stream(seed, "floors").standard_normal(n_electrodes)
+        * noise_cfg.electrode_floor_sd_db
+        / 20.0
+    )
+    noise_scale = faults.noise_scale.astype(np.float64) * floor_spread
+
+    # reference electrode: in the tank (augmentation) or at infinity
+    ref_rng = stream(seed, "reference")
+    in_tank = bool(ref_rng.random() < config.grid.reference_prob)
+    ref_margin = config.grid.reference_margin_rel * spacing
+    ref_u = ref_rng.random(2)
+    reference_xy = None
+    if in_tank:
+        reference_xy = np.array(
+            [
+                arena.x_min_m
+                - ref_margin
+                + ref_u[0] * (arena.width_m + 2 * ref_margin),
+                arena.y_min_m
+                - ref_margin
+                + ref_u[1] * (arena.height_m + 2 * ref_margin),
+            ]
+        )
 
     model = SceneModel(
         samplerate_hz=fs,
@@ -491,56 +795,71 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
         channel_gain=channel_gain,
         shared_drift=shared_knots,
         fish=tuple(fish_models),
+        reference_xy_m=reference_xy,
     )
 
-    # levels relative to the median fish at 0.5 m
-    amplitudes = np.array([b[0] for b in bodies])
-    depths = np.array([b[1] for b in bodies])
-    g_ref = abs(
-        float(
-            dipole_gain(
-                [[0.0, 0.0]],
-                [0.0],
-                [[0.5, 0.0]],
-                fish_depth_m=float(np.median(depths)),
-                electrode_depth_m=field_cfg.electrode_depth_m,
-                min_distance_m=field_cfg.min_distance_m,
-                distance_exponent=field_cfg.distance_exponent,
-                reference_distance_m=field_cfg.reference_distance_m,
-            )[0, 0]
+    # noise levels in volts
+    levels_rng = stream(seed, "levels")
+    modes = noise_cfg.floor_modes
+    weights = np.array([w for _, _, w in modes], dtype=np.float64)
+    pick = int(
+        np.searchsorted(
+            np.cumsum(weights / weights.sum()), levels_rng.random(), side="right"
         )
     )
-    a_ref = float(np.median(amplitudes)) * g_ref
-    levels_rng = stream(seed, "levels")
-    snr_db = float(levels_rng.uniform(*noise_cfg.snr_db))
-    exponent = float(levels_rng.uniform(*noise_cfg.exponent))
-    levels = {
-        "a_ref": a_ref,
-        "gain_at_0.5m": g_ref,
-        "snr_db": snr_db,
-        "noise_sd": a_ref * 10.0 ** (-snr_db / 20.0),
-        "noise_exponent": exponent,
-        "hum_amplitude_low": a_ref * 10.0 ** (noise_cfg.hum_db[0] / 20.0),
-        "hum_amplitude_high": a_ref * 10.0 ** (noise_cfg.hum_db[1] / 20.0),
+    pick = min(pick, len(modes) - 1)
+    floor_db = float(modes[pick][0] + modes[pick][1] * levels_rng.standard_normal())
+    harder = bool(levels_rng.random() < noise_cfg.harder_prob)
+    harder_db = float(levels_rng.uniform(*noise_cfg.harder_db))
+    extra_db = harder_db if harder else 0.0
+    floor_db += extra_db
+    noise_exponent = float(levels_rng.uniform(*noise_cfg.exponent))
+    hum_lo, hum_hi = noise_cfg.hum_n_harmonics
+    hum_n = int(levels_rng.integers(hum_lo, hum_hi + 1))
+    amp_lo, amp_hi = noise_cfg.hum_amplitude_v
+    hum_amplitude = math.exp(levels_rng.uniform(math.log(amp_lo), math.log(amp_hi)))
+    levels: dict[str, Any] = {
+        "noise_floor_db_v2_hz": floor_db,
+        "noise_floor_mode": pick,
+        "harder": harder,
+        "harder_db": extra_db,
+        "noise_sd": math.sqrt(10.0 ** (floor_db / 10.0) * fs / 2.0),
+        "noise_exponent": noise_exponent,
+        "hum_n_harmonics": hum_n,
+        "hum_amplitude_v": hum_amplitude,
+        "spacing_m": spacing,
+        "field_exponent": exponent,
+        "field_regulariser_rel": regulariser_rel,
+        "field_regulariser_m": regulariser_rel * spacing,
+        "median_strongest_gain": gain_scene,
+        "median_strongest_gain_calibrated": gain_calibrated,
+        "amplitude_scale": amplitude_scale,
+        "shared_trend_per_h": trend_per_h,
+        "movement_light": scene_light if movement.per == "scene" else None,
+        "reference": "in tank" if in_tank else "distant",
+        "reference_xy_m": None if reference_xy is None else reference_xy.tolist(),
     }
     channels = {
         "gain_mismatch": mismatch.astype(np.float64).tolist(),
         "dead": faults.dead.tolist(),
         "noisy": faults.noisy.tolist(),
-        "noise_scale": faults.noise_scale.astype(np.float64).tolist(),
+        "noise_scale": noise_scale.tolist(),
         "channel_gain": channel_gain.tolist(),
     }
 
     fish_info = []
     for i, fish in enumerate(fish_models):
         n_resp = sum(1 for c in fish.chirps if c.is_response)
+        _, _, _, _, _, drift_sd, drift_tau, light = bodies[i]
         fish_info.append(
             {
                 "fish_id": i,
                 "baseline_hz": fish.baseline_hz,
-                "amplitude": fish.amplitude,
-                "depth_m": fish.dipole.fish_depth_m,
+                "amplitude_v": fish.amplitude,
                 "phase0_rad": fish.phase0_rad,
+                "drift_sd_hz": drift_sd,
+                "drift_timescale_s": drift_tau,
+                "movement": "light" if light else "dark",
                 "chirp_rate_hz": rates[i],
                 "n_chirps": len(fish.chirps),
                 "n_responses": n_resp,
@@ -554,6 +873,8 @@ def plan_scene(config: SceneConfig, seed: int) -> ScenePlan:
         seed=seed,
         rows=rows,
         columns=columns,
+        spacing_m=spacing,
+        layout=layout,
         geometry=geometry,
         arena=arena,
         model=model,
@@ -666,39 +987,60 @@ class Scene:
 
 def _background_parts(
     plan: ScenePlan, *, workers: int = 1
-) -> tuple[Float32Array, Any, float, list[Click]]:
-    """Noise array, hum, click rate and clicks of a scene (deterministic)."""
+) -> tuple[list[Any], float, list[Click]]:
+    """Additive components (noise array, hum), click rate and clicks (deterministic).
+
+    The coloured noise comes first when enabled, so it can serve as the
+    output buffer of the mix.
+    """
     config = plan.config
     seed = plan.seed
     model = plan.model
     noise_cfg = config.noise
-    noise = colored_noise(
-        stream(seed, "noise"),
-        model.n_samples,
-        model.n_electrodes,
-        model.samplerate_hz,
-        ColoredNoiseParams(
-            sd=plan.levels["noise_sd"],
-            exponent=plan.levels["noise_exponent"],
-            f_min_hz=noise_cfg.f_min_hz,
-        ),
-        sd_scale=np.asarray(plan.channels["noise_scale"], dtype=np.float32),
-        workers=workers,
-    )
-    hum = powerline_hum(
-        stream(seed, "hum"),
-        model.n_samples,
-        model.n_electrodes,
-        model.samplerate_hz,
-        HumParams(
-            line_freq_hz=noise_cfg.hum_line_freq_hz,
-            n_harmonics=noise_cfg.hum_n_harmonics,
-            amplitude_range=(
-                plan.levels["hum_amplitude_low"],
-                plan.levels["hum_amplitude_high"],
+    components: list[Any] = []
+    if noise_cfg.colored:
+        components.append(
+            colored_noise(
+                stream(seed, "noise"),
+                model.n_samples,
+                model.n_electrodes,
+                model.samplerate_hz,
+                ColoredNoiseParams(
+                    sd=plan.levels["noise_sd"],
+                    exponent=plan.levels["noise_exponent"],
+                    f_min_hz=noise_cfg.f_min_hz,
+                ),
+                sd_scale=np.asarray(plan.channels["noise_scale"], dtype=np.float32),
+                workers=workers,
+            )
+        )
+    if noise_cfg.hum:
+        hum = powerline_hum(
+            stream(seed, "hum"),
+            model.n_samples,
+            model.n_electrodes,
+            model.samplerate_hz,
+            HumParams(
+                line_freq_hz=noise_cfg.hum_line_freq_hz,
+                n_harmonics=int(plan.levels["hum_n_harmonics"]),
+                amplitude_range=(
+                    plan.levels["hum_amplitude_v"],
+                    plan.levels["hum_amplitude_v"],
+                ),
+                harmonic_decay=noise_cfg.hum_harmonic_decay,
+                coupling_log_sd=noise_cfg.hum_coupling_log_sd,
             ),
-        ),
-    )
+        )
+        # the drawn amplitude is the line on the electrode with most hum
+        coupling = hum.coupling / np.max(hum.coupling)
+        components.append(
+            Hum(
+                source=hum.source,
+                coupling=coupling.astype(np.float32),
+                frequencies_hz=hum.frequencies_hz,
+                amplitudes=hum.amplitudes,
+            )
+        )
     rate, clicks = draw_clicks(
         stream(seed, "clicks"),
         config.clicks,
@@ -707,7 +1049,7 @@ def _background_parts(
         samplerate_hz=model.samplerate_hz,
         noise_sd=plan.levels["noise_sd"],
     )
-    return noise, hum, rate, clicks
+    return components, rate, clicks
 
 
 def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene:
@@ -730,6 +1072,7 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
     timings: dict[str, float] = {}
     t0 = time.perf_counter()
     plan = plan_scene(config, seed)
+    config = plan.config  # resolved (e.g. a drawn sampling rate)
     model = plan.model
     timings["plan"] = time.perf_counter() - t0
 
@@ -739,20 +1082,26 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
     timings["fish"] = time.perf_counter() - t1
 
     t2 = time.perf_counter()
-    noise, hum, click_rate, clicks = _background_parts(plan, workers=workers)
+    components, click_rate, clicks = _background_parts(plan, workers=workers)
     timings["noise"] = time.perf_counter() - t2
 
     t3 = time.perf_counter()
+    buffer = (
+        components[0] if components and isinstance(components[0], np.ndarray) else None
+    )
+    if buffer is None and not eods:
+        buffer = np.zeros((model.n_samples, model.n_electrodes), dtype=np.float32)
+        components = [buffer, *components]
     recording = mix(
         eods,
         gains,
         samplerate_hz=model.samplerate_hz,
-        additive=[noise, hum],
+        additive=components,
         channel_gain=model.channel_gain,
         clip=None,
         gain_update_hz=model.gain_update_hz,
         workers=workers,
-        out=noise,
+        out=buffer,
     )
     add_clicks(recording, clicks)
     if config.noise.clip_limit is not None:
@@ -762,8 +1111,12 @@ def simulate_scene(config: SceneConfig, seed: int, *, workers: int = 1) -> Scene
 
     t4 = time.perf_counter()
     chirps = chirp_table(plan)
-    tracks = ground_truth_tracks(plan)
+    tracks = ground_truth_tracks(plan, recording, workers=workers)
     timings["tables"] = time.perf_counter() - t4
+    if config.footprint.enabled:
+        t5 = time.perf_counter()
+        chirps = add_footprints(chirps, plan, recording, workers=workers)
+        timings["footprints"] = time.perf_counter() - t5
     timings["simulate_total"] = time.perf_counter() - t0
     logger.info(
         "scene %s/%06d: %d fish, %d chirps, %d clicks, %.2f s",
@@ -794,7 +1147,7 @@ def chirp_table(plan: ScenePlan) -> pd.DataFrame:
     rows = []
     centres = np.array([c.center_index / fs for c in chirps])
     emitters = np.array([c.fish_id for c in chirps])
-    power_nfft = plan.config.tracks.power_nfft
+    power_nfft = plan.config.tracks.power_nfft(fs)
     for chirp in chirps:
         t_c = chirp.center_index / fs
         fish = model.fish[chirp.fish_id]
@@ -872,8 +1225,138 @@ def chirp_table(plan: ScenePlan) -> pd.DataFrame:
     )
 
 
-def ground_truth_tracks(plan: ScenePlan) -> Tracks:
-    """Baseline EODf (no chirps) and per-electrode power on a wavetracker grid."""
+def reference_spectrogram(
+    config: SceneConfig, *, workers: int = 1
+) -> "HannSpectrogram":
+    """The front end of the footprint columns (``config.footprint``)."""
+    from gridtools.sim.footprint import HannSpectrogram
+
+    fp = config.footprint
+    return HannSpectrogram(
+        window_s=fp.window_s,
+        hop_s=fp.hop_s,
+        f_min_hz=fp.f_min_hz,
+        f_max_hz=fp.f_max_hz,
+        workers=workers,
+    )
+
+
+def add_footprints(
+    table: pd.DataFrame, plan: ScenePlan, recording: np.ndarray, *, workers: int = 1
+) -> pd.DataFrame:
+    """Append the footprint columns (:data:`FOOTPRINT_COLUMNS`) to a chirp table."""
+    from gridtools.sim.footprint import scene_footprints
+
+    fp = plan.config.footprint
+    footprints = scene_footprints(
+        plan.model,
+        reference_spectrogram(plan.config, workers=workers),
+        chirp_ids=table["chirp_id"].tolist(),
+        threshold_db=fp.threshold_db,
+        visible_snr_db=fp.visible_snr_db,
+        margin_s=fp.margin_s,
+        harmonic_band=(fp.f_min_hz, fp.f_max_hz),
+        recording=recording,
+        background=fp.background,
+    )
+    columns: dict[str, list[Any]] = {name: [] for name in FOOTPRINT_COLUMNS}
+    for footprint in footprints:
+        for name, value in zip(FOOTPRINT_COLUMNS[:4], footprint.box, strict=True):
+            columns[name].append(value)
+        columns["snr_db"].append(footprint.snr_db)
+        columns["snr_baseline_db"].append(footprint.snr_baseline_db)
+        columns["snr_excursion_db"].append(footprint.snr_excursion_db)
+        columns["visible_fraction"].append(footprint.visible_fraction)
+        columns["visible"].append(footprint.visible)
+        for name, value in zip(
+            FOOTPRINT_COLUMNS[-4:], footprint.harmonic_box, strict=True
+        ):
+            columns[name].append(value)
+    out = table.copy()
+    for name in FOOTPRINT_COLUMNS:
+        out[name] = np.asarray(
+            columns[name], dtype=bool if name == "visible" else np.float64
+        )
+    return out
+
+
+def sign_v_powers(
+    recording: np.ndarray,
+    samplerate_hz: float,
+    frame_times_s: np.ndarray,
+    freqs_hz: np.ndarray,
+    nfft: int,
+    *,
+    workers: int = 1,
+    chunk: int = 64,
+) -> np.ndarray:
+    """Per-electrode power at given frequencies as wavetracker's ``sign_v``.
+
+    For every frame: ``nfft`` samples centred at ``round(t * fs)``, mean
+    removed per channel, periodic Hann window, one-sided power spectral
+    density with matplotlib ``specgram`` scaling (``2 |X|^2 / (fs sum w^2)``,
+    V^2/Hz), at the bin nearest each frequency, in dB (floored at -300 dB).
+    This is the definition verified on the production tracks (calibration
+    v1). Samples outside the recording are zero (wavetracker has no frames
+    there). The FFTs run in float32.
+
+    Parameters
+    ----------
+    recording : numpy.ndarray, shape (n, E)
+    samplerate_hz : float
+    frame_times_s : numpy.ndarray, shape (T,)
+    freqs_hz : numpy.ndarray, shape (F, T)
+        Frequency of each of F fish at each frame.
+    nfft : int
+    workers : int
+        Threads for the FFTs.
+    chunk : int
+        Frames transformed at once.
+
+    Returns
+    -------
+    numpy.ndarray, shape (F, T, E)
+        Power in dB re 1 V^2/Hz.
+    """
+    import scipy.fft
+
+    n, n_electrodes = recording.shape
+    half = nfft // 2
+    window = np.hanning(nfft + 1)[:nfft]
+    scale = 2.0 / (samplerate_hz * float(np.sum(window**2)))
+    window32 = window.astype(np.float32)
+    centres = np.round(np.asarray(frame_times_s) * samplerate_hz).astype(np.int64)
+    bins = np.round(np.asarray(freqs_hz) * nfft / samplerate_hz).astype(np.int64)
+    bins = np.clip(bins, 0, nfft // 2)
+    out = np.empty((bins.shape[0], centres.size, n_electrodes), dtype=np.float64)
+    offsets = np.arange(nfft)
+    length = max(n, int(centres.max(initial=0)) + 1) + nfft
+    for e in range(n_electrodes):
+        padded = np.zeros(length, dtype=np.float32)
+        padded[half : half + n] = recording[:, e]
+        for first in range(0, centres.size, chunk):
+            frames = centres[first : first + chunk]
+            block = padded[frames[:, None] + offsets[None, :]]  # starts at c - half
+            block -= block.mean(axis=1, keepdims=True)
+            block *= window32
+            spectrum = np.asarray(scipy.fft.rfft(block, axis=1, workers=workers))
+            rows = np.arange(frames.size)
+            for f in range(bins.shape[0]):
+                values = spectrum[rows, bins[f, first : first + frames.size]]
+                power = scale * (
+                    np.real(values).astype(np.float64) ** 2
+                    + np.imag(values).astype(np.float64) ** 2
+                )
+                out[f, first : first + frames.size, e] = 10.0 * np.log10(
+                    np.maximum(power, 1e-30)
+                )
+    return out
+
+
+def ground_truth_tracks(
+    plan: ScenePlan, recording: np.ndarray, *, workers: int = 1
+) -> Tracks:
+    """Baseline EODf (no chirps) and ``sign_v`` measured on the recording."""
     model = plan.model
     cfg = plan.config.tracks
     fs = model.samplerate_hz
@@ -882,17 +1365,7 @@ def ground_truth_tracks(plan: ScenePlan) -> Tracks:
     # within the tracks (wavetracker's frames would stop earlier)
     n_frames = math.ceil(last_s / cfg.step_s - 1e-9) + 1
     times = np.arange(n_frames, dtype=np.float64) * cfg.step_s
-    freqs, idents, indices, powers = [], [], [], []
-    for fish in model.fish:
-        freqs.append(model.base_frequency_at(fish.fish_id, times))
-        idents.append(np.full(n_frames, float(fish.fish_id)))
-        indices.append(np.arange(n_frames, dtype=np.int64))
-        gains = model.gain_track(fish.fish_id).evaluate(times)
-        fundamental = (
-            gains * model.channel_gain * fish.amplitude * fish.harmonics.amplitudes[0]
-        )
-        powers.append(fish_power_db(fundamental, fs, cfg.power_nfft))
-    if not freqs:
+    if not model.fish:
         return Tracks(
             times_s=times,
             freqs_hz=np.empty(0),
@@ -900,15 +1373,20 @@ def ground_truth_tracks(plan: ScenePlan) -> Tracks:
             time_indices=np.empty(0, dtype=np.int64),
             powers_db=np.empty((0, model.n_electrodes)),
         )
-    index = np.concatenate(indices)
-    ident = np.concatenate(idents)
+    freqs = np.stack([model.base_frequency_at(f.fish_id, times) for f in model.fish])
+    powers = sign_v_powers(
+        recording, fs, times, freqs, cfg.power_nfft(fs), workers=workers
+    )
+    n_fish = len(model.fish)
+    index = np.tile(np.arange(n_frames, dtype=np.int64), n_fish)
+    ident = np.repeat(np.arange(n_fish, dtype=np.float64), n_frames)
     order = np.lexsort((ident, index))  # frame-major, like wavetracker output
     return Tracks(
         times_s=times,
-        freqs_hz=np.concatenate(freqs)[order],
+        freqs_hz=freqs.reshape(-1)[order],
         idents=ident[order],
         time_indices=index[order],
-        powers_db=np.concatenate(powers)[order],
+        powers_db=powers.reshape(-1, model.n_electrodes)[order],
     )
 
 
@@ -976,6 +1454,9 @@ def _model_dict(model: SceneModel) -> dict[str, Any]:
         "n_samples": model.n_samples,
         "gain_update_hz": model.gain_update_hz,
         "electrode_xy_m": model.electrode_xy_m.tolist(),
+        "reference_xy_m": None
+        if model.reference_xy_m is None
+        else model.reference_xy_m.tolist(),
         "channel_gain": model.channel_gain.tolist(),
         "shared_drift": model.shared_drift.to_dict(),
         "fish": [
@@ -1025,15 +1506,27 @@ def scene_info(scene: Scene) -> dict[str, Any]:
             "n_samples": plan.pool.n_samples,
             "n_eligible": int(plan.pool.template_ids.size),
             "sampling": plan.pool.sampling,
-            "api": library_api(),
+            "sampling_options": {
+                k: list(v) if isinstance(v, tuple) else v
+                for k, v in plan.pool.sampling_options.items()
+            },
         },
         "grid": {
             "rows": plan.rows,
             "columns": plan.columns,
-            "spacing_m": config.grid.spacing_m,
-            "channel_order": "row-major: channel r * columns + c at (c, r) * spacing",
+            "spacing_m": plan.spacing_m,
+            "n_electrodes": plan.layout.n_electrodes,
+            "kind": plan.layout.kind,
+            "regular": plan.layout.regular,
+            "channel_order": (
+                "row-major: channel r * columns + c at (c, r) * spacing"
+                if plan.layout.regular
+                else "electrode_xy_m (also electrodes.csv)"
+            ),
             "electrode_xy_m": model.electrode_xy_m.tolist(),
             "arena_m": vars(plan.arena),
+            "reference": plan.levels["reference"],
+            "reference_xy_m": plan.levels["reference_xy_m"],
         },
         "recording": {
             "file": "recording.wav",
@@ -1041,10 +1534,7 @@ def scene_info(scene: Scene) -> dict[str, Any]:
             "n_samples": model.n_samples,
             "n_channels": model.n_electrodes,
             "dtype": "float32",
-            "unit": (
-                "EOD potential on the body axis at field.reference_distance_m of a "
-                "fish with amplitude 1 (nominally mV)"
-            ),
+            "unit": "V at the ADC (electrode potential x 100), as the real raw data",
             "clip_limit": config.noise.clip_limit,
         },
         "levels": plan.levels,
@@ -1059,6 +1549,24 @@ def scene_info(scene: Scene) -> dict[str, Any]:
             "n_dropped_cap": schedule.n_dropped_cap,
         },
         "clicks": {"rate_hz": scene.click_rate_hz, "n_clicks": len(scene.clicks)},
+        "footprint": {
+            **dataclasses.asdict(config.footprint),
+            "spectrogram": (
+                "Hann window, frames centred at nfft/2 + k hop, one-sided PSD "
+                "(specgram scaling) summed over electrodes, linear power"
+            ),
+            "definition": (
+                "D = |P(emitter with all chirps) - P(emitter without this chirp, "
+                "phase aligned)|; footprint = cells with D >= max(D) * "
+                "10**(-threshold_db/10) connected to the chirp trajectory; box at "
+                "cell edges; 10 log10(sum D / sum B) over the footprint (snr_db), its "
+                "cells in the emitter's baseline band (snr_baseline_db) and outside all "
+                "baseline bands (snr_excursion_db); visible = max(baseline, excursion) "
+                ">= visible_snr_db; B = "
+                "spectrogram of the recording minus the emitter ('others') or minus "
+                "this chirp ('recording'), see background"
+            ),
+        },
         "model": _model_dict(model),
         "timings_s": scene.timings_s,
     }
@@ -1152,8 +1660,19 @@ def write_scene(
         samplerate_hz=model.samplerate_hz,
         rows=scene.plan.rows,
         columns=scene.plan.columns,
-        spacing_m=scene.config.grid.spacing_m,
+        spacing_m=scene.plan.spacing_m,
     )
+    electrodes_csv = out / "electrodes.csv"
+    if not scene.plan.layout.regular:
+        pd.DataFrame(
+            {
+                "channel": np.arange(model.n_electrodes),
+                "x_m": model.electrode_xy_m[:, 0],
+                "y_m": model.electrode_xy_m[:, 1],
+            }
+        ).to_csv(electrodes_csv, index=False)
+    elif electrodes_csv.exists():
+        electrodes_csv.unlink()
     save_tracks(scene.tracks, out)
     scene.chirps.to_csv(out / "chirps.csv", index=False)
     scene.chirps.to_parquet(out / "chirps.parquet", index=False)
@@ -1267,6 +1786,9 @@ def _model_from_dir(directory: Path) -> SceneModel:
         shared_drift=DriftKnots.from_dict(data["shared_drift"]),
         fish=tuple(fish),
         gain_update_hz=float(data["gain_update_hz"]),
+        reference_xy_m=None
+        if data.get("reference_xy_m") is None
+        else np.asarray(data["reference_xy_m"], dtype=np.float64),
     )
 
 
@@ -1391,14 +1913,17 @@ def render_background(
     plan = scene.plan if isinstance(scene, Scene) else _plan_from_dir(Path(scene))
     model = plan.model
     start, stop = _span(model, start_s, stop_s)
-    noise, hum, _, clicks = _background_parts(plan)
+    components, _, clicks = _background_parts(plan)
+    if not components or not isinstance(components[0], np.ndarray):
+        zeros = np.zeros((model.n_samples, model.n_electrodes), dtype=np.float32)
+        components = [zeros, *components]
     background = mix(
         [],
         [],
         samplerate_hz=model.samplerate_hz,
-        additive=[noise, hum],
+        additive=components,
         channel_gain=model.channel_gain,
-        out=noise,
+        out=components[0],
     )
     add_clicks(background, clicks)
     out = background[start:stop]

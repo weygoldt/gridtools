@@ -2,6 +2,7 @@
 
 import json
 import logging
+import resource
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -63,11 +64,15 @@ def _run_one(config_json: str, seed: int, out_dir: str, plots: bool) -> dict[str
     config = SceneConfig.from_json(config_json)
     scene = simulate_scene(config, seed)
     path = write_scene(scene, Path(out_dir) / f"{seed:06d}", plots=plots)
+    # peak resident memory of this process so far (KiB on Linux)
+    peak_rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     return {
         "seed": seed,
         "path": str(path),
         "n_fish": len(scene.model.fish),
         "n_chirps": len(scene.chirps),
+        "n_electrodes": scene.model.n_electrodes,
+        "peak_rss_mb": peak_rss_mb,
         **scene.timings_s,
     }
 
@@ -116,17 +121,58 @@ def run(
             results = [f.result() for f in futures]
     for r in results:
         logger.info(
-            "seed %06d: %d fish, %d chirps; simulate %.1f s, write %.1f s, plot %.1f s",
+            "seed %06d: %d fish, %d electrodes, %d chirps; simulate %.1f s, "
+            "write %.1f s, plot %.1f s; peak RSS %.0f MB",
             r["seed"],
             r["n_fish"],
+            r["n_electrodes"],
             r["n_chirps"],
             r.get("simulate_total", float("nan")),
             r.get("write", float("nan")),
             r.get("plot", 0.0),
+            r["peak_rss_mb"],
         )
     logger.info(
         "%d scenes in %s (%.1f s wall)", len(results), root, time.perf_counter() - t0
     )
+
+
+@app.command()
+def compare(
+    scenes: Annotated[
+        Path, typer.Argument(help="Directory of scene directories (one per seed).")
+    ],
+    calibration: Annotated[
+        Path, typer.Option(help="calibration.json of gridtools.calibrate.")
+    ] = Path("/mnt/data1/chirp_v2/calibration/v1/calibration.json"),
+    out: Annotated[
+        Path | None,
+        typer.Option(help="Output stem; default SCENES/comparison(.md, .csv)."),
+    ] = None,
+) -> None:
+    """Measure scenes with the calibration's definitions and compare to real data."""
+    from gridtools.calibrate.scenes import compare_scenes
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
+    dirs = sorted(p for p in scenes.iterdir() if (p / "scene.json").exists())
+    if not dirs:
+        msg = f"no scene directories in {scenes}"
+        raise typer.BadParameter(msg)
+    table = compare_scenes(list(dirs), calibration)
+    stem = out if out is not None else scenes / "comparison"
+    table.to_csv(stem.with_suffix(".csv"), index=False)
+    lines = [
+        f"Simulated ({len(dirs)} scenes in {scenes}) vs real ({calibration}); "
+        "median (5-95 %).",
+        "",
+        "| quantity | simulated | real |",
+        "|---|---|---|",
+        *(f"| {q} | {s} | {r} |" for q, s, r in table.itertuples(index=False)),
+    ]
+    stem.with_suffix(".md").write_text("\n".join(lines) + "\n")
+    typer.echo("\n".join(lines))
 
 
 @app.command()
