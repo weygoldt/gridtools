@@ -284,7 +284,7 @@ class FieldScanConfig:
     ----------
     probes_per_folder : int
         Windows tested per deployment, spread evenly over its chunks
-        (default 12).
+        (default 8).
     segments_per_folder : int
         At most this many fish-free windows kept per deployment, spread over
         the passing ones (default 2).
@@ -299,14 +299,21 @@ class FieldScanConfig:
     default_spacing_m : float
         Electrode spacing of the regular 4 x 4 layout used when a deployment
         has no layout file (default 0.5 m).
+    skip_edges_s : float
+        Chunks this close to the start or end of a deployment are not
+        tested (default 30 min: deployment and retrieval disturb the
+        water and the cables; an Iriri grid 6 min after the logger started
+        was full of broadband transients). Ignored for deployments too
+        short to leave anything.
     """
 
-    probes_per_folder: int = 12
+    probes_per_folder: int = 8
     segments_per_folder: int = 2
     margin_s: float = 2.0
     band_hz: tuple[float, float] = (300.0, 2000.0)
     threshold_db: float = 8.0
     default_spacing_m: float = 0.5
+    skip_edges_s: float = 1800.0
 
 
 def _layout(
@@ -411,8 +418,13 @@ def scan_folder(
         return [], info
     key = zlib.crc32(folder.key.encode("utf-8"))
     rng = np.random.default_rng(np.random.SeedSequence(seed, spawn_key=(key,)))
-    n_probes = min(scan.probes_per_folder, len(chunks))
-    edges = np.linspace(0, len(chunks), n_probes + 1)
+    # skip deployment and retrieval (people in the water, cables handled)
+    skip = math.ceil(scan.skip_edges_s / chunk_s)
+    first, last = skip, len(chunks) - skip
+    if last - first < 1:
+        first, last = 0, len(chunks)
+    n_probes = min(scan.probes_per_folder, last - first)
+    edges = np.linspace(first, last, n_probes + 1)
     picks = sorted(
         {
             int(min(len(chunks) - 1, lo + rng.integers(0, max(1, int(hi - lo)))))

@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> None:
     build.add_argument("--root-iriri2026", type=Path, default=IRIRI2026_ROOT)
     build.add_argument("--root-flona2025", type=Path, default=FLONA2025_ROOT)
     build.add_argument("--root-flona2023", type=Path, default=FLONA2023_ROOT)
-    build.add_argument("--field-probes", type=int, default=12)
+    build.add_argument("--field-probes", type=int, default=8)
     build.add_argument("--field-segments", type=int, default=2)
     build.add_argument("--recordings-2019", nargs="+", default=None)
     build.add_argument("--recordings-2022", nargs="+", default=None)
