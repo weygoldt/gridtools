@@ -18,31 +18,49 @@ log = logging.getLogger(__name__)
 SUPPORTED_FORMAT_VERSIONS = (1,)
 
 #: Flags excluded by :meth:`TemplateLibrary.select` unless told otherwise:
-#: demonstrable artefacts only (broken or incomplete traces, duplicates) plus
-#: the atypical-EODf group. Excursion and duration are never exclusion
-#: criteria.
+#: demonstrable artefacts (broken or incomplete traces, duplicates) and events
+#: shorter than :data:`MIN_DURATION_S`. Large and long chirps are never
+#: excluded for their size, and the atypical-EODf group (320--440 Hz baseline,
+#: possibly *Eigenmannia*) is kept: templates are baseline-relative.
 DEFAULT_EXCLUDE: tuple[str, ...] = (
     "invalid",
     "has_nan",
     "duplicate",
     "truncated",
     "step_flag",
-    "eodf_atypical",
+    "too_short",
 )
 
 #: Every flag name accepted by :meth:`TemplateLibrary.select`.
 KNOWN_FLAGS: tuple[str, ...] = (
     *DEFAULT_EXCLUDE,
+    "eodf_atypical",
     "multi_peak",
     "ripple_flag",
     "amp_ripple_flag",
 )
+
+#: Shortest chirp kept by default: full width at 10% of the excursion (the
+#: equalization duration) below this sets ``too_short`` (author decision:
+#: nothing below 5 ms is a real chirp).
+MIN_DURATION_S = 0.005
 
 #: Duration measure used for histogram equalization: full width at 10% of the
 #: excursion, the thesis' chirp width (crossings descended to 10% of the peak).
 EQUALIZE_DURATION_COLUMN = "duration_10_s"
 
 Family = Literal["small", "big"]
+Spacing = Literal["linear", "log"]
+
+#: Default equalization grid: bins on excursion x duration.
+DEFAULT_BINS: tuple[int, int] = (10, 10)
+#: Default bin spacing. Log-spaced bins split the crowded small, short chirps
+#: over several bins instead of one.
+DEFAULT_SPACING: Spacing = "log"
+#: Default tempering exponent: a bin with ``c`` templates is drawn with
+#: probability proportional to ``c ** (1 - alpha)`` (each template with weight
+#: ``c ** -alpha``); 1 is full equalization, 0 the natural distribution.
+DEFAULT_ALPHA = 0.6
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +151,10 @@ class TemplateLibrary:
             return ~meta["valid"].to_numpy(dtype=bool)
         if flag == "duplicate":
             return meta["duplicate_of"].to_numpy() >= 0
+        if flag == "too_short" and flag not in meta.columns:
+            # libraries built before the flag existed (v1, v2)
+            duration = meta[EQUALIZE_DURATION_COLUMN].to_numpy(dtype=np.float64)
+            return duration < MIN_DURATION_S
         if flag in KNOWN_FLAGS:
             return meta[flag].to_numpy(dtype=bool)
         msg = f"unknown flag {flag!r}; known: {', '.join(KNOWN_FLAGS)}"
@@ -154,8 +176,8 @@ class TemplateLibrary:
             Keep only these families (``"small"``, ``"big"``); None keeps all.
         exclude
             Flags whose templates are dropped (default ``DEFAULT_EXCLUDE``:
-            invalid, NaN, duplicates, truncated, step artefacts, atypical
-            EODf). Pass ``()`` to keep everything.
+            invalid, NaN, duplicates, truncated, step artefacts, shorter than
+            5 ms). Pass ``()`` to keep everything.
         require_amp
             Keep only templates whose amplitude trace is usable
             (``amp_usable``).
@@ -223,15 +245,17 @@ class TemplateLibrary:
 
     def equalization_bins(
         self,
-        bins: tuple[int, int] = (10, 10),
+        bins: tuple[int, int] = DEFAULT_BINS,
         duration_column: str = EQUALIZE_DURATION_COLUMN,
+        *,
+        spacing: Spacing = DEFAULT_SPACING,
     ) -> EqualizationBins:
         """Bin the sampling pool on excursion and duration.
 
-        Equal-width bins span the minimum to the maximum of the pool (one
-        template per duplicate group, see :meth:`unique_ids`); the maximum
-        falls into the last bin. Templates with a non-finite excursion or
-        duration are left out.
+        Bins span the minimum to the maximum of the pool (one template per
+        duplicate group, see :meth:`unique_ids`); the maximum falls into the
+        last bin. Templates with a non-finite (or, for log spacing,
+        non-positive) excursion or duration are left out.
 
         Parameters
         ----------
@@ -239,6 +263,10 @@ class TemplateLibrary:
             Number of bins on excursion and on duration.
         duration_column
             Metadata column with the duration (default: full width at 10%).
+        spacing
+            ``"log"`` (default): bins of equal width in log excursion and log
+            duration, so the many small, short chirps spread over several
+            bins. ``"linear"``: equal-width bins (library v2 scheme).
 
         Returns
         -------
@@ -248,11 +276,16 @@ class TemplateLibrary:
         if n_exc < 1 or n_dur < 1:
             msg = f"bins must be positive, got {bins}"
             raise ValueError(msg)
+        if spacing not in ("linear", "log"):
+            msg = f"spacing must be 'linear' or 'log', got {spacing!r}"
+            raise ValueError(msg)
         pool = self.unique_ids()
         rows = self.rows_of(pool)
         excursion = self.metadata["excursion_hz"].to_numpy(dtype=np.float64)[rows]
         duration = self.metadata[duration_column].to_numpy(dtype=np.float64)[rows]
         finite = np.isfinite(excursion) & np.isfinite(duration)
+        if spacing == "log":
+            finite &= (excursion > 0) & (duration > 0)
         if not finite.all():
             log.warning(
                 "%d templates without excursion or duration left out", (~finite).sum()
@@ -261,8 +294,9 @@ class TemplateLibrary:
         if pool.size == 0:
             msg = "cannot bin an empty template pool"
             raise ValueError(msg)
-        exc_edges = np.linspace(excursion.min(), excursion.max(), n_exc + 1)
-        dur_edges = np.linspace(duration.min(), duration.max(), n_dur + 1)
+        edges = np.geomspace if spacing == "log" else np.linspace
+        exc_edges = edges(excursion.min(), excursion.max(), n_exc + 1)
+        dur_edges = edges(duration.min(), duration.max(), n_dur + 1)
         exc_bin = np.clip(
             np.searchsorted(exc_edges, excursion, side="right") - 1, 0, n_exc - 1
         )
@@ -278,6 +312,7 @@ class TemplateLibrary:
             duration_column=duration_column,
             bin_of=flat,
             counts=counts.astype(np.int64),
+            spacing=spacing,
         )
 
     def cycler(
@@ -285,16 +320,21 @@ class TemplateLibrary:
         rng: np.random.Generator,
         *,
         equalize: bool = True,
-        bins: tuple[int, int] = (10, 10),
+        bins: tuple[int, int] = DEFAULT_BINS,
+        spacing: Spacing = DEFAULT_SPACING,
+        alpha: float = DEFAULT_ALPHA,
     ) -> TemplateCycler:
         """Return a stateful sampler that keeps its balance across calls.
 
         Use one cycler per simulation when chirps are drawn one at a time.
-        See :meth:`sample` for the two modes.
+        See :meth:`sample` for the modes and parameters.
         """
         if not equalize:
             return TemplateCycler([self.unique_ids()], rng)
-        return TemplateCycler(self.equalization_bins(bins).groups(), rng)
+        eq = self.equalization_bins(bins, spacing=spacing)
+        groups = eq.groups()
+        weights = eq.bin_probabilities(alpha)
+        return TemplateCycler(groups, rng, weights=weights[weights > 0])
 
     def sample(
         self,
@@ -302,7 +342,9 @@ class TemplateLibrary:
         n: int,
         *,
         equalize: bool = True,
-        bins: tuple[int, int] = (10, 10),
+        bins: tuple[int, int] = DEFAULT_BINS,
+        spacing: Spacing = DEFAULT_SPACING,
+        alpha: float = DEFAULT_ALPHA,
     ) -> TemplateSample:
         """Draw ``n`` templates without inflating duplicates.
 
@@ -310,12 +352,22 @@ class TemplateLibrary:
 
         ``equalize=True`` (histogram equalization, as in the thesis, but as
         sampling weights instead of duplicated rows): the pool is binned on
-        excursion and duration (:meth:`equalization_bins`); every non-empty
-        bin is equally likely (bins are taken from successive random
-        permutations of the non-empty bins) and within a bin templates come
-        from successive random permutations of its members. A template in a
-        bin with ``c`` members out of ``K`` non-empty bins is drawn
-        ``n / (K * c)`` times on average.
+        excursion and duration (:meth:`equalization_bins`). A bin with ``c``
+        members is drawn with probability proportional to ``c ** (1 -
+        alpha)``, so each of its templates has weight ``c ** -alpha``.
+        Within a bin templates come from successive random permutations of
+        its members, so repeats are spread evenly. With ``alpha=1`` every
+        non-empty bin is equally likely (bins from successive random
+        permutations of the non-empty bins; a template in a bin with ``c``
+        members out of ``K`` non-empty bins is drawn ``n / (K * c)`` times on
+        average). With ``alpha < 1`` bins come in shuffled blocks whose bin
+        counts are within one of their expectation (systematic sampling).
+
+        The default (log-spaced 10 x 10 bins, ``alpha = 0.6``) keeps the
+        small, short chirps that dominate real recordings in the majority of
+        draws, with their variety, while large and long chirps are drawn
+        far more often than their natural share. ``spacing="linear",
+        alpha=1.0`` is the library v2 scheme.
 
         ``equalize=False`` (natural distribution): templates come from
         successive random permutations of the whole pool, so with
@@ -334,13 +386,20 @@ class TemplateLibrary:
             distribution.
         bins
             Bins on excursion and duration for equalization.
+        spacing
+            ``"log"`` or ``"linear"`` bins (see :meth:`equalization_bins`).
+        alpha
+            Tempering exponent in [0, 1]: 1 is full equalization, 0 the
+            natural distribution (but still drawn per bin).
 
         Returns
         -------
         TemplateSample
             Template ids and traces, in draw order.
         """
-        ids = self.cycler(rng, equalize=equalize, bins=bins).draw(n)
+        ids = self.cycler(
+            rng, equalize=equalize, bins=bins, spacing=spacing, alpha=alpha
+        ).draw(n)
         return self.get(ids)
 
 
@@ -361,6 +420,8 @@ class EqualizationBins:
         of every pool template.
     counts
         Templates per bin, shape (n_excursion_bins, n_duration_bins).
+    spacing
+        ``"linear"`` or ``"log"`` bin edges.
     """
 
     template_ids: npt.NDArray[np.int64]
@@ -369,6 +430,7 @@ class EqualizationBins:
     duration_column: str
     bin_of: npt.NDArray[np.int64]
     counts: npt.NDArray[np.int64]
+    spacing: Spacing = "linear"
 
     @property
     def n_nonempty(self) -> int:
@@ -382,10 +444,37 @@ class EqualizationBins:
             for b in np.flatnonzero(self.counts.ravel())
         ]
 
-    def expected_draws(self, n: float) -> npt.NDArray[np.float64]:
-        """Expected number of draws of every pool template in ``n`` draws."""
+    def bin_probabilities(
+        self, alpha: float = DEFAULT_ALPHA
+    ) -> npt.NDArray[np.float64]:
+        """Draw probability of every bin (flat order), ``∝ count ** (1 - alpha)``.
+
+        Empty bins have probability 0. ``alpha=1`` makes all non-empty bins
+        equally likely, ``alpha=0`` gives each bin its natural share.
+        """
+        if not 0.0 <= alpha <= 1.0:
+            msg = f"alpha must lie in [0, 1], got {alpha}"
+            raise ValueError(msg)
+        counts = self.counts.ravel().astype(np.float64)
+        weights = np.zeros_like(counts)
+        nonempty = counts > 0
+        weights[nonempty] = counts[nonempty] ** (1.0 - alpha)
+        return weights / weights.sum()
+
+    def template_probabilities(
+        self, alpha: float = DEFAULT_ALPHA
+    ) -> npt.NDArray[np.float64]:
+        """Draw probability of every pool template (order of ``template_ids``)."""
         per_bin = self.counts.ravel()[self.bin_of].astype(np.float64)
-        return n / (self.n_nonempty * per_bin)
+        return self.bin_probabilities(alpha)[self.bin_of] / per_bin
+
+    def expected_draws(self, n: float, alpha: float = 1.0) -> npt.NDArray[np.float64]:
+        """Expected number of draws of every pool template in ``n`` draws.
+
+        ``alpha`` defaults to 1 (full equalization, ``n / (K * c)``) for
+        backward compatibility; pass the sampling ``alpha`` otherwise.
+        """
+        return n * self.template_probabilities(alpha)
 
     def table(self) -> pd.DataFrame:
         """Occupancy table: one row per excursion bin, one column per duration bin."""
@@ -419,12 +508,46 @@ class _PermutationQueue:
         return np.concatenate(out) if out else np.empty(0, dtype=np.int64)
 
 
+class _SystematicQueue:
+    """Group indices in shuffled blocks with near-exact weighted counts.
+
+    Each block of ``block`` draws is a systematic sample of the groups (group
+    ``g`` appears ``floor`` or ``ceil`` of ``block * p[g]`` times), shuffled.
+    """
+
+    def __init__(
+        self, probabilities: npt.NDArray[np.float64], rng: np.random.Generator
+    ) -> None:
+        p = np.asarray(probabilities, dtype=np.float64)
+        self._cdf = np.cumsum(p / p.sum())
+        self._cdf[-1] = 1.0
+        smallest = float(p[p > 0].min()) / float(p.sum())
+        self._block = int(min(max(p.size, np.ceil(4.0 / smallest), 1024), 1 << 20))
+        self._rng = rng
+        self._queue = np.empty(0, dtype=np.int64)
+
+    def take(self, n: int) -> npt.NDArray[np.int64]:
+        out: list[npt.NDArray[np.int64]] = []
+        needed = n
+        while needed > 0:
+            if self._queue.size == 0:
+                u = (self._rng.uniform() + np.arange(self._block)) / self._block
+                block = np.searchsorted(self._cdf, u, side="right").astype(np.int64)
+                self._queue = self._rng.permutation(block)
+            k = min(needed, self._queue.size)
+            out.append(self._queue[:k])
+            self._queue = self._queue[k:]
+            needed -= k
+        return np.concatenate(out) if out else np.empty(0, dtype=np.int64)
+
+
 class TemplateCycler:
     """Draw template ids with balanced repeats, across any number of calls.
 
     With one group, ids come from successive random permutations of it. With
     several groups (histogram bins), the group of each draw comes from
-    successive random permutations of the groups, and the id from successive
+    successive random permutations of the groups (equal weights) or from
+    shuffled systematic blocks (unequal weights), and the id from successive
     random permutations of that group's members.
 
     Parameters
@@ -433,19 +556,44 @@ class TemplateCycler:
         Template ids per group (each id should be a distinct chirp).
     rng
         Random generator; drawing advances its state.
+    weights
+        Relative probability of each group (non-empty groups, in order);
+        None or all equal: every group equally likely.
     """
 
     def __init__(
-        self, groups: Sequence[npt.NDArray[np.int64]], rng: np.random.Generator
+        self,
+        groups: Sequence[npt.NDArray[np.int64]],
+        rng: np.random.Generator,
+        *,
+        weights: npt.ArrayLike | None = None,
     ) -> None:
-        groups = [np.asarray(g, dtype=np.int64) for g in groups if np.size(g) > 0]
-        if not groups:
+        arrays = [np.asarray(g, dtype=np.int64) for g in groups]
+        w = (
+            np.ones(len(arrays))
+            if weights is None
+            else np.asarray(weights, dtype=np.float64)
+        )
+        if w.shape != (len(arrays),):
+            msg = f"need one weight per group, got {w.shape} for {len(arrays)} groups"
+            raise ValueError(msg)
+        if np.any(w < 0) or not np.all(np.isfinite(w)):
+            msg = "weights must be finite and non-negative"
+            raise ValueError(msg)
+        keep = [i for i, g in enumerate(arrays) if g.size > 0 and w[i] > 0]
+        if not keep:
             msg = "cannot sample from an empty template pool"
             raise ValueError(msg)
+        groups = [arrays[i] for i in keep]
+        w = w[keep]
         self._groups = [_PermutationQueue(g, rng) for g in groups]
-        self._group_queue = _PermutationQueue(
-            np.arange(len(groups), dtype=np.int64), rng
-        )
+        self._group_queue: _PermutationQueue | _SystematicQueue
+        if np.all(w == w[0]):
+            self._group_queue = _PermutationQueue(
+                np.arange(len(groups), dtype=np.int64), rng
+            )
+        else:
+            self._group_queue = _SystematicQueue(w, rng)
         self._pool_size = int(sum(g.size for g in groups))
 
     @property

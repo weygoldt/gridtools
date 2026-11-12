@@ -21,6 +21,7 @@ import pytest
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
 
+from gridtools.io import Tracks
 from gridtools.templates.features import extraction_filter_gain
 
 FS = 20_000.0
@@ -181,3 +182,148 @@ def synthetic_h5(tmp_path: Path) -> tuple[Path, list[SourceRow]]:
     )  # fmt: skip
     path = write_source_file(tmp_path / "extracted_chirps.h5", rows)
     return path, rows
+
+
+# --------------------------------------------------------------------------
+# Synthetic grid recordings with long chirps (harvest tests)
+# --------------------------------------------------------------------------
+
+
+def plateau_decay_chirp(
+    t_s: npt.NDArray[np.float64],
+    onset_s: float,
+    excursion_hz: float,
+    plateau_s: float,
+    decay_tau_s: float,
+    rise_s: float = 0.002,
+) -> npt.NDArray[np.float64]:
+    """Long chirp: logistic rise, flat plateau, exponential decay to baseline."""
+    rise = 1.0 / (1.0 + np.exp(-(t_s - onset_s) / rise_s))
+    end = onset_s + plateau_s
+    decay = np.where(t_s > end, np.exp(-np.clip(t_s - end, 0, None) / decay_tau_s), 1.0)
+    return excursion_hz * rise * decay
+
+
+@dataclass(frozen=True)
+class SyntheticGrid:
+    """A synthetic multi-electrode recording with one long chirp."""
+
+    data: npt.NDArray[np.float32]
+    samplerate_hz: float
+    delta_true_hz: npt.NDArray[np.float64]
+    emitter_hz: float
+    other_hz: float
+    onset_s: float
+    excursion_hz: float
+    end_2pct_s: float
+    box: dict[str, float]
+
+
+def make_synthetic_grid(
+    rng: np.random.Generator,
+    *,
+    duration_s: float = 3.0,
+    emitter_hz: float = 800.0,
+    other_hz: float = 700.0,
+    onset_s: float = 1.3,
+    excursion_hz: float = 450.0,
+    plateau_s: float = 0.15,
+    decay_tau_s: float = 0.06,
+    amp_dip: float = 0.8,
+    noise: float = 0.003,
+    fs: float = FS,
+) -> SyntheticGrid:
+    """Two fish on six electrodes; the emitter makes one plateau-and-decay chirp.
+
+    Both EODs have a second harmonic (30%); the fish have different field
+    patterns; white noise on every electrode.
+    """
+    n = round(duration_s * fs)
+    t = np.arange(n) / fs
+    delta = plateau_decay_chirp(t, onset_s, excursion_hz, plateau_s, decay_tau_s)
+    amp = 1.0 - amp_dip * delta / excursion_hz
+    phase_e = 2 * np.pi * np.cumsum(emitter_hz + delta) / fs + rng.uniform(0, 6.3)
+    phase_o = 2 * np.pi * other_hz * t + rng.uniform(0, 6.3)
+    eod_e = amp * (np.sin(phase_e) + 0.3 * np.sin(2 * phase_e + 0.5))
+    eod_o = np.sin(phase_o) + 0.3 * np.sin(2 * phase_o + 1.0)
+    pattern_e = np.array([1.0, -0.6, 0.35, 0.15, -0.1, 0.05])
+    pattern_o = np.array([0.1, 0.3, -0.2, 0.9, 0.6, -0.4])
+    data = eod_e[:, None] * pattern_e[None, :] + eod_o[:, None] * pattern_o[None, :]
+    data += rng.normal(0.0, noise, data.shape)
+    end_2pct = onset_s + plateau_s + decay_tau_s * np.log(50.0)
+    box = {
+        "box_index": 0,
+        "t_start_s": onset_s - 0.08,
+        "t_end_s": end_2pct + 0.08,
+        "f_low_hz": emitter_hz - 20.0,
+        "f_high_hz": emitter_hz + excursion_hz + 60.0,
+        "score": 0.9,
+        "emitter_hz": emitter_hz,
+        "track_id": 1,
+    }
+    return SyntheticGrid(
+        data.astype(np.float32),
+        fs,
+        delta,
+        emitter_hz,
+        other_hz,
+        onset_s,
+        excursion_hz,
+        end_2pct,
+        box,
+    )
+
+
+def synthetic_tracks(grid: SyntheticGrid) -> Tracks:
+    """Wavetracker-style tracks: id 1 = emitter, id 2 = the other fish."""
+    duration = grid.data.shape[0] / grid.samplerate_hz
+    times = np.arange(0.0, duration, 0.1)
+    k = times.size
+    return Tracks(
+        times_s=times,
+        freqs_hz=np.concatenate(
+            [np.full(k, grid.emitter_hz), np.full(k, grid.other_hz)]
+        ),
+        idents=np.concatenate([np.ones(k), np.full(k, 2.0)]),
+        time_indices=np.concatenate([np.arange(k), np.arange(k)]),
+    )
+
+
+def write_grid_directory(path: Path, grid: SyntheticGrid) -> Path:
+    """Write a fishgrid directory: raw traces, config, tracks and one v1 box."""
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "fishgrid.cfg").write_text(
+        "*FishGrid\n"
+        "  Grid &1:\n"
+        "      Columns1         : 3\n"
+        "      Rows1            : 2\n"
+        "      ColumnDistance1  : 50.0cm\n"
+        "      RowDistance1     : 50.0cm\n"
+        "  Hardware Settings:\n"
+        "      DAQ board:\n"
+        f"          AISampleRate: {grid.samplerate_hz / 1000:.3f}kHz\n"
+        "          AIMaxVolt   : 20.0mV\n"
+    )
+    grid.data.astype(np.float32).tofile(path / "traces-grid1.raw")
+    tracks = synthetic_tracks(grid)
+    np.save(path / "times.npy", tracks.times_s)
+    np.save(path / "fund_v.npy", tracks.freqs_hz)
+    np.save(path / "ident_v.npy", tracks.idents)
+    np.save(path / "idx_v.npy", tracks.time_indices)
+    b = grid.box
+    (path / "chirpdetector_bboxes.csv").write_text(
+        "t1,f1,t2,f2,score,emitter_eodf,track_id\n"
+        f"{b['t_start_s']},{b['f_low_hz']},{b['t_end_s']},{b['f_high_hz']},"
+        f"{b['score']},{b['emitter_hz']},{b['track_id']}\n"
+    )
+    return path
+
+
+@pytest.fixture
+def synthetic_grid() -> Callable[..., SyntheticGrid]:
+    """Factory for synthetic grid recordings (seeded per call via ``seed=``)."""
+
+    def factory(seed: int = 0, **kwargs: float) -> SyntheticGrid:
+        return make_synthetic_grid(np.random.default_rng(seed), **kwargs)
+
+    return factory
