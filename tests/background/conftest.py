@@ -66,6 +66,7 @@ def write_trial(
     seed: int = 0,
     name: str | None = None,
     partial_frame: bool = False,
+    noisy_channel: int | None = None,
 ) -> Trial:
     """Write a synthetic fishgrid trial into ``directory``."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -74,6 +75,8 @@ def write_trial(
     n = int(duration_s * FS)
     t = np.arange(n) / FS
     x = rng.normal(0.0, NOISE_SD, (n, n_electrodes))
+    if noisy_channel is not None:
+        x[:, noisy_channel] *= 4.0  # +12 dB floor
     gains = fish_gains(n_electrodes)
     present = t >= fish_from_s
     for f, g in zip(FISH_HZ, gains, strict=True):

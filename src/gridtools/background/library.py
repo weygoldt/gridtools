@@ -21,20 +21,20 @@ holds ``manifest.parquet`` (and the same table as ``manifest.csv``),
 
 Hybrid scenes
 -------------
-A hybrid scene takes its grid from the background: draw a segment first
-(:meth:`BackgroundLibrary.sample`), then place the simulated fish on
-``segment.geometry`` with ``segment.samplerate_hz`` and
-``segment.n_samples``. Never pick electrode subsets: the electrode count and
-positions of the scene and the segment are identical, so the real fish keep
-their spatial pattern and the simulated fish get the real one. Channels in
-``segment.dead_channels`` carry no fish signal in the source recording;
-give the simulated fish zero gain there too. Add the background after the
-scene's channel gains (it already went through the real recording chain):
+A hybrid scene takes its electrodes from the background: draw a segment
+first (:meth:`BackgroundLibrary.sample` with the scene's electrode count),
+then place the simulated fish on ``segment.geometry`` (the positions of the
+chosen channels: the whole grid, or a contiguous run or random subset of a
+larger one) with ``segment.samplerate_hz`` and ``segment.n_samples``. The
+scene never maps channels to positions of its own, so real and simulated
+fish share one geometry. Dead and noisy channels are avoided by default.
+Add the background after the scene's channel gains (it already went
+through the real recording chain):
 
 .. code-block:: python
 
     lib = BackgroundLibrary.load()
-    segment = lib.select(screened=True, geometry_known=True).sample(rng, 60.0)
+    segment = lib.select(screened=True).sample(rng, 60.0, n_electrodes=9)
     ...  # simulate fish on segment.geometry, get their fundamentals
     signal = fish_signal_level(fundamentals)          # unit**2 of the scene
     scale = scale_for_snr(segment.level, signal, snr_db)
@@ -64,6 +64,7 @@ import pandas as pd
 from gridtools.io import GridGeometry, Tracks, load_tracks, open_recording
 
 __all__ = [
+    "CHANNEL_MODES",
     "DEFAULT_LIBRARY",
     "JSON_COLUMNS",
     "MANIFEST_COLUMNS",
@@ -71,6 +72,7 @@ __all__ = [
     "BackgroundLibrary",
     "BackgroundSegment",
     "add_background",
+    "choose_channels",
     "clip_tracks",
     "merge_tracks",
     "read_manifest",
@@ -81,6 +83,9 @@ DEFAULT_LIBRARY = Path("/mnt/data1/chirp_v2/background/v1")
 
 #: Real fish get identities from this value on when merged into a scene.
 REAL_FISH_IDENT_OFFSET = 1000
+
+#: How :meth:`BackgroundLibrary.sample` picks a channel subset.
+CHANNEL_MODES = ("contiguous", "random")
 
 MANIFEST_COLUMNS: tuple[str, ...] = (
     "segment_id",
@@ -103,6 +108,7 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
     "row_spacing_m",
     "column_spacing_m",
     "geometry_known",
+    "spacing_known",
     "electrode_positions_m",
     "units",
     "n_v1_detections_margin",
@@ -124,6 +130,7 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
     "untracked_peaks_hz",
     "tracks_complete",
     "dead_channels",
+    "noisy_channels",
     "noise_psd",
     "noise_psd_db",
     "noise_psd_spread_db",
@@ -152,6 +159,7 @@ JSON_COLUMNS: tuple[str, ...] = (
     "fish_snr_db",
     "untracked_peaks_hz",
     "dead_channels",
+    "noisy_channels",
 )
 
 
@@ -369,9 +377,13 @@ class BackgroundSegment:
     tracks : Tracks or None
         Real fish tracks of the excerpt (times from its first sample).
     info : mapping
-        The segment's manifest row.
+        The segment's manifest row; for a channel subset, ``n_electrodes``,
+        ``electrode_positions_m``, ``level``, ``dead_channels``,
+        ``noisy_channels`` and ``fish_snr_db`` refer to the subset.
     offset_s : float
         Start of the excerpt within the stored segment.
+    channels : tuple of int
+        Channels of the stored segment in ``data`` (all, or a subset).
     """
 
     segment_id: str
@@ -381,6 +393,7 @@ class BackgroundSegment:
     tracks: Tracks | None
     info: Mapping[str, Any] = field(repr=False)
     offset_s: float = 0.0
+    channels: tuple[int, ...] = ()
 
     @property
     def n_samples(self) -> int:
@@ -404,13 +417,27 @@ class BackgroundSegment:
 
     @property
     def dead_channels(self) -> list[int]:
-        """Channels without fish signal in the source recording (0-based)."""
+        """Columns of ``data`` without fish signal in the source (0-based)."""
         return [int(c) for c in self.info.get("dead_channels", [])]
 
     @property
+    def noisy_channels(self) -> list[int]:
+        """Columns of ``data`` whose floor is > 6 dB above the source's median."""
+        return [int(c) for c in self.info.get("noisy_channels", [])]
+
+    @property
     def geometry_known(self) -> bool:
-        """Whether :attr:`geometry` gives the real electrode positions."""
+        """Whether the grid layout (rows, columns, channel order) is known."""
         return bool(self.info.get("geometry_known", True))
+
+    @property
+    def positions_nominal(self) -> bool:
+        """True if :attr:`geometry` uses a nominal spacing, not measured positions.
+
+        The competition grids' ``fishgrid.cfg`` spacing (0.5 m) conflicts with
+        the tank size in the paper; their true spacing is unknown.
+        """
+        return not bool(self.info.get("spacing_known", False))
 
     def read(self, start: int = 0, stop: int | None = None) -> npt.NDArray[np.float32]:
         """Float32 copy of samples ``[start, stop)``."""
@@ -541,6 +568,104 @@ def _resample(
         np.asarray(data, dtype=np.float64), ratio.numerator, ratio.denominator, axis=0
     )
     return np.asarray(out, dtype=np.float32)
+
+
+def choose_channels(
+    rng: np.random.Generator,
+    n_channels: int,
+    k: int,
+    bad: Sequence[int] = (),
+    mode: str = "contiguous",
+) -> tuple[int, ...] | None:
+    """Pick ``k`` of ``n_channels`` channels, avoiding ``bad`` ones.
+
+    Parameters
+    ----------
+    rng : numpy.random.Generator
+    n_channels : int
+        Channels of the segment.
+    k : int
+        Channels wanted (1 <= k).
+    bad : sequence of int
+        Channels that must not be chosen.
+    mode : {"contiguous", "random"}
+        ``"contiguous"``: a run of ``k`` consecutive channels in channel order
+        (uniform over the runs without bad channels; on a row-major grid a
+        run may wrap to the next row). ``"random"``: ``k`` distinct allowed
+        channels, uniformly, in ascending order.
+
+    Returns
+    -------
+    tuple of int or None
+        The channels, or None if no choice avoids the bad channels.
+    """
+    if mode not in CHANNEL_MODES:
+        msg = f"mode must be one of {CHANNEL_MODES}, got {mode!r}"
+        raise ValueError(msg)
+    if k < 1:
+        msg = f"k must be >= 1, got {k}"
+        raise ValueError(msg)
+    allowed = np.ones(n_channels, dtype=bool)
+    allowed[[c for c in bad if 0 <= c < n_channels]] = False
+    if k > n_channels:
+        return None
+    if mode == "contiguous":
+        runs = [s for s in range(n_channels - k + 1) if bool(allowed[s : s + k].all())]
+        if not runs:
+            return None
+        start = runs[int(rng.integers(len(runs)))]
+        return tuple(range(start, start + k))
+    pool = np.flatnonzero(allowed)
+    if pool.size < k:
+        return None
+    return tuple(int(c) for c in np.sort(rng.choice(pool, size=k, replace=False)))
+
+
+def _bad_channels(row: Mapping[str, Any]) -> list[int]:
+    return sorted(
+        {int(c) for c in row.get("dead_channels", []) or []}
+        | {int(c) for c in row.get("noisy_channels", []) or []}
+    )
+
+
+def _subset_info(
+    info: dict[str, Any], directory: Path, chosen: tuple[int, ...]
+) -> dict[str, Any]:
+    """Manifest row restricted to a channel subset (see :meth:`segment`)."""
+    out = dict(info)
+    index = {c: i for i, c in enumerate(chosen)}
+    out["source_channels"] = list(chosen)
+    out["n_electrodes"] = len(chosen)
+    positions = info.get("electrode_positions_m")
+    if isinstance(positions, list) and positions:
+        out["electrode_positions_m"] = [positions[c] for c in chosen]
+    for key in ("dead_channels", "noisy_channels"):
+        out[key] = [index[c] for c in info.get(key, []) or [] if c in index]
+    details_path = directory / "segment.json"
+    if details_path.exists():
+        details = json.loads(details_path.read_text())
+        floors = np.asarray(details.get("noise_psd_per_electrode", []), dtype=float)
+        if floors.size > max(chosen):
+            noise = float(np.median(floors[list(chosen)]))
+            out["noise_psd"] = noise
+            out["level"] = noise * float(info["reference_bandwidth_hz"])
+            out["level_db"] = 10 * math.log10(out["level"])
+            out["noise_psd_db"] = 10 * math.log10(noise)
+            snrs = []
+            for fish in details.get("fish", []):
+                power = np.asarray(fish.get("power_per_electrode", []), dtype=float)
+                best = (
+                    float(np.nanmax(power[list(chosen)]))
+                    if power.size > max(chosen)
+                    and np.isfinite(power[list(chosen)]).any()
+                    else math.nan
+                )
+                snrs.append(
+                    10 * math.log10(best / out["level"]) if best > 0 else math.nan
+                )
+            if snrs:
+                out["fish_snr_db"] = snrs
+    return out
 
 
 class BackgroundLibrary:
@@ -681,6 +806,7 @@ class BackgroundLibrary:
         offset_s: float = 0.0,
         duration_s: float | None = None,
         samplerate_hz: float | None = None,
+        channels: Sequence[int] | None = None,
     ) -> BackgroundSegment:
         """Load a segment (or an excerpt of it).
 
@@ -696,12 +822,19 @@ class BackgroundLibrary:
             :func:`scipy.signal.resample_poly`; the excerpt is then held in
             memory instead of memory-mapped). The level stays valid: it is a
             density in 500-1500 Hz, far below the anti-aliasing cut-off.
+        channels : sequence of int, optional
+            Keep only these channels (in this order). Positions, the tracks'
+            ``powers_db`` columns, dead and noisy channels, the level (median
+            floor of the chosen electrodes) and the real fish's SNRs (their
+            strongest chosen electrode, from the per-electrode medians) are
+            restricted to them.
 
         Returns
         -------
         BackgroundSegment
             Geometry from the manifest's ``electrode_positions_m`` (exact
-            positions of field grids), else from ``fishgrid.cfg``.
+            positions of field grids, nominal ones of the competition grids),
+            else from ``fishgrid.cfg``.
         """
         row = self._row(segment_id)
         directory = self.root / str(row["path"])
@@ -731,6 +864,23 @@ class BackgroundLibrary:
         data = np.asarray(rec.data[start : start + n], dtype=np.float32)
         if rec.scale != 1.0:
             data = data * np.float32(rec.scale)
+        info = row.to_dict()
+        chosen = tuple(range(rec.n_channels)) if channels is None else tuple(channels)
+        if channels is not None:
+            if not chosen or any(not 0 <= c < rec.n_channels for c in chosen):
+                msg = f"channels {chosen} not in 0..{rec.n_channels - 1}"
+                raise ValueError(msg)
+            data = data[:, list(chosen)]
+            geometry = GridGeometry(geometry.positions_m[list(chosen)])
+            if tracks is not None and tracks.powers_db is not None:
+                tracks = Tracks(
+                    times_s=tracks.times_s,
+                    freqs_hz=tracks.freqs_hz,
+                    idents=tracks.idents,
+                    time_indices=tracks.time_indices,
+                    powers_db=tracks.powers_db[:, list(chosen)],
+                )
+            info = _subset_info(info, directory, chosen)
         rate = fs
         if samplerate_hz is not None and not math.isclose(samplerate_hz, fs):
             data, rate = _resample(data, fs, samplerate_hz), float(samplerate_hz)
@@ -742,8 +892,9 @@ class BackgroundLibrary:
             samplerate_hz=rate,
             geometry=geometry,
             tracks=tracks,
-            info=row.to_dict(),
+            info=info,
             offset_s=start / fs,
+            channels=chosen,
         )
 
     def weights(
@@ -778,12 +929,14 @@ class BackgroundLibrary:
         duration_s: float,
         *,
         n_electrodes: int | None = None,
+        channels: str = "contiguous",
+        avoid_bad_channels: bool = True,
         geometry: GridGeometry | None = None,
         samplerate_hz: float | None = None,
         resample: bool = False,
         weights: str | npt.ArrayLike | None = "weight",
     ) -> BackgroundSegment:
-        """Draw a segment and a random excerpt of ``duration_s`` from it.
+        """Draw a segment, a random excerpt of ``duration_s`` and its channels.
 
         Parameters
         ----------
@@ -792,9 +945,21 @@ class BackgroundLibrary:
         duration_s : float
             Excerpt length; segments shorter than this are not eligible.
         n_electrodes : int, optional
-            Only segments with this many electrodes.
+            Electrodes of the scene. Segments with at least this many
+            channels are eligible; the excerpt keeps ``n_electrodes`` of them
+            (:func:`choose_channels`), so a single-electrode scene can use any
+            segment. Default: all channels of the drawn segment.
+        channels : {"contiguous", "random"}
+            How the subset is chosen (default a contiguous run in channel
+            order).
+        avoid_bad_channels : bool
+            Never choose dead or noisy channels (default True). With
+            ``n_electrodes`` equal to a segment's channel count this excludes
+            segments with bad channels; without ``n_electrodes`` it has no
+            effect (the whole grid, bad channels listed in the segment).
         geometry : GridGeometry, optional
-            Only segments with exactly these electrode positions.
+            Only segments with exactly these electrode positions (whole grid,
+            no subset).
         samplerate_hz : float, optional
             Only segments at this rate, or, with ``resample``, every segment
             resampled to it (field loggers record at 48 or 96 kHz).
@@ -813,11 +978,28 @@ class BackgroundLibrary:
         ValueError
             If no segment is eligible.
         """
+        if channels not in CHANNEL_MODES:
+            msg = f"channels must be one of {CHANNEL_MODES}, got {channels!r}"
+            raise ValueError(msg)
         w = self.weights(weights)
         m = self.manifest
         eligible = m["duration_s"].to_numpy(dtype=float) >= duration_s - 1e-9
         if n_electrodes is not None:
-            eligible &= (m["n_electrodes"] == n_electrodes).to_numpy()
+            probe = np.random.default_rng(0)  # feasibility only, not the draw
+            eligible &= np.array(
+                [
+                    choose_channels(
+                        probe,
+                        int(r["n_electrodes"]),
+                        n_electrodes,
+                        _bad_channels(r) if avoid_bad_channels else (),
+                        channels,
+                    )
+                    is not None
+                    for r in m.to_dict("records")
+                ],
+                dtype=bool,
+            )
         if samplerate_hz is not None and not resample:
             eligible &= np.isclose(
                 m["samplerate_hz"].to_numpy(dtype=float), samplerate_hz
@@ -845,9 +1027,19 @@ class BackgroundLibrary:
         n = round(duration_s * fs)
         slack = int(row["n_samples"]) - n
         start = int(rng.integers(0, slack + 1)) if slack > 0 else 0
+        subset = None
+        if n_electrodes is not None:
+            subset = choose_channels(
+                rng,
+                int(row["n_electrodes"]),
+                n_electrodes,
+                _bad_channels(row.to_dict()) if avoid_bad_channels else (),
+                channels,
+            )
         return self.segment(
             str(row["segment_id"]),
             offset_s=start / fs,
             duration_s=n / fs,
             samplerate_hz=samplerate_hz if resample else None,
+            channels=subset,
         )

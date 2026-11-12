@@ -81,7 +81,12 @@ class SourceRecording:
     labels_path : pathlib.Path or None
         audian hand labels (the locked real test set), if any.
     geometry_known : bool
-        Whether the electrode positions of the configuration are real.
+        Whether the configuration's layout (rows, columns, channel order) is
+        the real one.
+    spacing_known : bool
+        Whether its electrode spacing is measured. False for the
+        competitions: ``fishgrid.cfg`` says 0.5 m, which conflicts with the
+        tank size in the paper, so positions are nominal.
     dark_phase_s : float or None
         Duration of the initial dark phase, if known.
     note : str
@@ -96,6 +101,7 @@ class SourceRecording:
     detections_path: Path | None = None
     labels_path: Path | None = None
     geometry_known: bool = True
+    spacing_known: bool = False
     dark_phase_s: float | None = DARK_PHASE_S
     note: str = ""
 

@@ -12,14 +12,24 @@ How a hybrid scene uses it
 1. Draw the background first; it fixes the grid::
 
        lib = BackgroundLibrary.load()  # /mnt/data1/chirp_v2/background/v1
-       pool = lib.select(geometry_known=True)  # for spatial (assignment) training
-       segment = pool.sample(rng, duration_s)
+       segment = lib.sample(rng, duration_s, n_electrodes=n_electrodes,
+                            samplerate_hz=20_000.0, resample=True)
 
-   The scene then uses ``segment.geometry`` (electrode positions in the
-   source's channel order), ``segment.samplerate_hz`` and
-   ``segment.n_samples``. Do not choose a layout or electrode subset
-   independently: v1 picked random electrode subsets, which scrambled the
-   geometry (audit G7). Give simulated fish zero gain on
+   The excerpt holds ``n_electrodes`` channels: the whole grid of a
+   segment with exactly that many, or a contiguous run in channel order of
+   a larger one (``channels="random"`` for random subsets; dead and noisy
+   channels are avoided unless ``avoid_bad_channels=False``), so a
+   single-electrode scene can use any segment. The scene then uses
+   ``segment.geometry`` (the chosen electrodes' positions),
+   ``segment.samplerate_hz`` and ``segment.n_samples``, and never assigns
+   the channels to positions of its own: v1 put random electrode subsets
+   on a fixed simulated grid, which scrambled the geometry (audit G7).
+   Positions are nominal for the competition grids
+   (``segment.positions_nominal``: their ``fishgrid.cfg`` spacing is
+   disputed, the true one unknown) and exact for the field grids with a
+   layout file. ``segment.channels`` lists the chosen source channels,
+   ``segment.tracks`` carries ``sign_v`` columns for exactly them. With
+   ``avoid_bad_channels=False``, give simulated fish zero gain on
    ``segment.dead_channels`` (no fish signal there in the source).
 2. Simulate the fish on that grid and compute their signal level from the
    noise-free fundamental amplitudes on every electrode (amplitude x

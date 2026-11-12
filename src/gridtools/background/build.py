@@ -456,6 +456,21 @@ def _measure(
     }
 
 
+def _noisy_channels(
+    floors_db: np.ndarray, dead: Sequence[int], excess_db: float = 6.0
+) -> list[int]:
+    """Live channels whose floor exceeds the live channels' median by ``excess_db``.
+
+    The calibration's definition of a noisy electrode (6 dB).
+    """
+    floors = np.asarray(floors_db, dtype=float)
+    live = np.setdiff1d(np.arange(floors.size), np.asarray(dead, dtype=int))
+    if live.size == 0:
+        return []
+    ref = float(np.median(floors[live]))
+    return [int(c) for c in live if floors[c] > ref + excess_db]
+
+
 def _level_columns(m: dict[str, Any], duration_s: float) -> dict[str, Any]:
     """Manifest columns of the level, hum and click measurements."""
     level = m["level"]
@@ -496,6 +511,10 @@ class _FieldMeasure:
 
     def __call__(self, x: np.ndarray, samplerate_hz: float) -> dict[str, Any]:
         m = _measure(x, samplerate_hz, None, self.config)
+        floors = np.asarray(m["floors_db"], dtype=float)
+        # no fish to tell dead from live: a floor 10 dB below the median is a
+        # disconnected or shorted input
+        dead = [int(c) for c in np.flatnonzero(floors < np.median(floors) - 10.0)]
         return {
             "columns": {
                 "n_v1_detections_margin": None,
@@ -506,6 +525,8 @@ class _FieldMeasure:
                 "track_power_nfft": None,
                 "real_snr_max_db": math.nan,
                 "real_level_diff_db": math.nan,
+                "dead_channels": dead,
+                "noisy_channels": _noisy_channels(floors, dead),
                 **_level_columns(m, x.shape[0] / samplerate_hz),
             },
             "details": _level_details(m),
@@ -694,6 +715,12 @@ def _process(
         else []
     )
     info["dead_channels"] = dead
+    noisy = (
+        _noisy_channels(np.median([m["floors_db"] for *_, m in measured], axis=0), dead)
+        if measured
+        else []
+    )
+    info["noisy_channels"] = noisy
 
     rows = []
     geometry = rec.geometry
@@ -762,6 +789,7 @@ def _process(
             "row_spacing_m": None if cfg is None else float(cfg.row_spacing_m),
             "column_spacing_m": None if cfg is None else float(cfg.column_spacing_m),
             "geometry_known": bool(source.geometry_known),
+            "spacing_known": bool(source.spacing_known),
             "electrode_positions_m": None
             if geometry is None
             else geometry.positions_m.tolist(),
@@ -787,6 +815,7 @@ def _process(
             "untracked_peaks_hz": m["untracked"],
             "tracks_complete": bool(complete),
             "dead_channels": dead,
+            "noisy_channels": noisy,
             **_level_columns(m, n / fs),
             "accept": sid not in vetoed,
         }
@@ -808,6 +837,7 @@ def _process(
             **_level_details(m),
             "fish": fish,
             "dead_channels": dead,
+            "noisy_channels": noisy,
         }
         (seg_dir / "segment.json").write_text(
             json.dumps(details, indent=1, default=_json_default) + "\n"

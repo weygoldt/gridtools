@@ -532,6 +532,7 @@ def scan_folder(
             "row_spacing_m": pitch,
             "column_spacing_m": pitch,
             "geometry_known": known,
+            "spacing_known": known,
             "electrode_positions_m": positions.tolist(),
             "units": FIELD_UNITS,
             "tracks_available": False,
@@ -544,7 +545,6 @@ def scan_folder(
             "fish_snr_db": [],
             "untracked_peaks_hz": [],
             "tracks_complete": True,
-            "dead_channels": [],
             **m["columns"],
         }
         out_rows.append(row)

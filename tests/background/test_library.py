@@ -10,9 +10,11 @@ import pandas as pd
 import pytest
 
 from gridtools.background.build import BackgroundConfig, build_background_library
+from gridtools.background.levels import REFERENCE_BANDWIDTH_HZ
 from gridtools.background.library import (
     BackgroundLibrary,
     add_background,
+    choose_channels,
     clip_tracks,
     merge_tracks,
 )
@@ -33,7 +35,10 @@ CONFIG = BackgroundConfig(
 
 @pytest.fixture
 def library(make_trial: Callable[..., Trial], tmp_path: Path) -> BackgroundLibrary:
-    trials = [make_trial("trial-a", seed=1), make_trial("trial-b", seed=2)]
+    trials = [
+        make_trial("trial-a", seed=1),
+        make_trial("trial-b", seed=2, noisy_channel=2),
+    ]
     build_background_library([t.source for t in trials], tmp_path / "lib", CONFIG)
     return BackgroundLibrary.load(tmp_path / "lib")
 
@@ -68,7 +73,7 @@ def test_sample_is_seeded_and_keeps_the_geometry(library: BackgroundLibrary) -> 
         assert a.tracks.times_s.min() >= 0
         assert a.tracks.times_s.max() < 4.0
     with pytest.raises(ValueError, match="no background segment"):
-        library.sample(np.random.default_rng(0), 4.0, n_electrodes=3)
+        library.sample(np.random.default_rng(0), 4.0, n_electrodes=ROWS * COLUMNS + 1)
     with pytest.raises(ValueError, match="no background segment"):
         library.sample(np.random.default_rng(0), 100.0)
 
@@ -210,3 +215,92 @@ def test_incremental_build_keeps_other_recordings(
     pd.testing.assert_frame_equal(
         both.drop(columns=["accept"]), only_b.drop(columns=["accept"])
     )
+
+
+def test_noisy_channel_is_recorded(library: BackgroundLibrary) -> None:
+    m = library.manifest
+    for recording, noisy in zip(m["recording"], m["noisy_channels"], strict=True):
+        assert noisy == ([2] if recording == "trial-b" else [])
+
+
+def test_choose_channels() -> None:
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        run = choose_channels(rng, 9, 3, bad=[4])
+        assert run is not None
+        assert 4 not in run
+        assert list(run) == list(range(run[0], run[0] + 3))
+        pick = choose_channels(rng, 9, 4, bad=[0, 8], mode="random")
+        assert pick is not None
+        assert sorted(set(pick)) == list(pick)
+        assert not {0, 8} & set(pick)
+    assert choose_channels(rng, 9, 9, bad=[8]) is None
+    assert choose_channels(rng, 5, 3, bad=[2]) is None  # no run of 3 avoids 2
+    assert choose_channels(rng, 5, 2, bad=[2], mode="random") is not None
+    assert choose_channels(rng, 3, 4) is None
+    with pytest.raises(ValueError, match="mode"):
+        choose_channels(rng, 3, 1, mode="corners")
+
+
+@pytest.mark.parametrize("mode", ["contiguous", "random"])
+@pytest.mark.parametrize("k", [1, 3])
+def test_channel_subsets(library: BackgroundLibrary, k: int, mode: str) -> None:
+    for seed in range(8):
+        seg = library.sample(
+            np.random.default_rng(seed), 4.0, n_electrodes=k, channels=mode
+        )
+        assert seg.n_electrodes == k
+        assert len(seg.channels) == k
+        if mode == "contiguous":
+            assert list(seg.channels) == list(
+                range(seg.channels[0], seg.channels[0] + k)
+            )
+        if seg.info["recording"] == "trial-b":
+            assert 2 not in seg.channels  # noisy channel avoided
+        full = library.segment(
+            seg.segment_id, offset_s=seg.offset_s, duration_s=seg.duration_s
+        )
+        np.testing.assert_array_equal(seg.read(), full.read()[:, list(seg.channels)])
+        np.testing.assert_allclose(
+            seg.geometry.positions_m, full.geometry.positions_m[list(seg.channels)]
+        )
+        assert seg.positions_nominal
+        assert seg.info["source_channels"] == list(seg.channels)
+        floors = full.info["noise_psd"]
+        assert seg.level == pytest.approx(
+            seg.info["noise_psd"] * REFERENCE_BANDWIDTH_HZ
+        )
+        assert seg.level > 0.0
+        assert floors > 0.0
+        if seg.tracks is not None and full.tracks is not None:
+            assert seg.tracks.powers_db is not None
+            assert full.tracks.powers_db is not None
+            assert seg.tracks.powers_db.shape[1] == k
+            np.testing.assert_array_equal(
+                seg.tracks.powers_db, full.tracks.powers_db[:, list(seg.channels)]
+            )
+
+
+def test_single_channel_level_is_that_channels_floor(
+    library: BackgroundLibrary,
+) -> None:
+    seg = library.sample(np.random.default_rng(1), 4.0, n_electrodes=1)
+    full = library.segment(seg.segment_id)
+    details = (library.segment_dir(seg.segment_id) / "segment.json").read_text()
+    floors = __import__("json").loads(details)["noise_psd_per_electrode"]
+    assert seg.info["noise_psd"] == pytest.approx(floors[seg.channels[0]])
+    assert full.n_electrodes == ROWS * COLUMNS
+
+
+def test_bad_channels_can_be_allowed(library: BackgroundLibrary) -> None:
+    b = library.select(include_groups=["synthetic/trial-b"])
+    with pytest.raises(ValueError, match="no background segment"):
+        b.sample(np.random.default_rng(0), 4.0, n_electrodes=ROWS * COLUMNS)
+    seg = b.sample(
+        np.random.default_rng(0),
+        4.0,
+        n_electrodes=ROWS * COLUMNS,
+        avoid_bad_channels=False,
+    )
+    assert seg.noisy_channels == [2]
+    assert seg.channels == tuple(range(ROWS * COLUMNS))
