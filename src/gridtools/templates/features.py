@@ -53,7 +53,9 @@ class Crossing:
         return 0.5 * (self.onset + self.offset)
 
 
-def level_crossings(delta: FloatArray, peak_index: int, level: float) -> Crossing:
+def level_crossings(
+    delta: FloatArray, peak_index: int, level: float, max_gap: int = 0
+) -> Crossing:
     """Find where ``delta`` crosses ``level * delta[peak_index]`` around the peak.
 
     Parameters
@@ -64,6 +66,11 @@ def level_crossings(delta: FloatArray, peak_index: int, level: float) -> Crossin
         Index of the excursion peak; ``delta[peak_index]`` must be positive.
     level
         Fraction of the peak value, in (0, 1).
+    max_gap
+        Dips below the level that last fewer than ``max_gap`` samples and are
+        bounded by samples above the level on both sides are bridged, so a
+        long chirp with brief internal dips (phase slips on a plateau) is
+        measured as one event.
 
     Returns
     -------
@@ -75,7 +82,12 @@ def level_crossings(delta: FloatArray, peak_index: int, level: float) -> Crossin
         msg = "delta[peak_index] must be positive"
         raise ValueError(msg)
     threshold = level * peak_value
-    below = delta <= threshold
+    above = delta > threshold
+    if max_gap > 0:
+        for start, stop in mask_segments(~above):
+            if start > 0 and stop < delta.size and stop - start < max_gap:
+                above[start:stop] = True
+    below = ~above
 
     left_below = np.flatnonzero(below[:peak_index])
     if left_below.size == 0:
@@ -93,6 +105,38 @@ def level_crossings(delta: FloatArray, peak_index: int, level: float) -> Crossin
         offset = (i1 - 1) + _fraction(delta[i1 - 1], delta[i1], threshold)
         offset_clipped = False
     return Crossing(onset, offset, onset_clipped, offset_clipped)
+
+
+def chirp_crossings(
+    delta: FloatArray, peak_index: int, max_gap: int = 0
+) -> tuple[Crossing, Crossing]:
+    """Crossings of 10% and 50% of the excursion around the peak.
+
+    The 50% crossings bridge dips shorter than ``max_gap`` samples (the core
+    of a long chirp with brief internal dips). The 10% crossings are then
+    found by walking outward from that core without bridging, so baseline
+    ripple that pokes above 10% next to a chirp is never merged into it.
+
+    Parameters
+    ----------
+    delta
+        1-D trace with its baseline at 0.
+    peak_index
+        Index of the excursion peak.
+    max_gap
+        Longest dip (samples) bridged at the 50% level.
+
+    Returns
+    -------
+    crossing_10, crossing_50 : Crossing
+    """
+    c50 = level_crossings(delta, peak_index, 0.5, max_gap)
+    core = np.array(delta, dtype=np.float64, copy=True)
+    lo = max(int(np.ceil(c50.onset)), 0)
+    hi = min(int(np.floor(c50.offset)), core.size - 1)
+    core[lo : hi + 1] = np.maximum(core[lo : hi + 1], delta[peak_index])
+    c10 = level_crossings(core, peak_index, 0.1)
+    return c10, c50
 
 
 def _fraction(a: float, b: float, threshold: float) -> float:
@@ -167,6 +211,7 @@ def measure_template(
     undershoot_window_s: float = 0.05,
     prominence_rel: float = 0.3,
     prominence_hz: float = 10.0,
+    bridge_samples: int = 0,
 ) -> TemplateMetrics:
     """Compute shape descriptors of one template.
 
@@ -183,6 +228,8 @@ def measure_template(
         Window after the 10% offset for the undershoot.
     prominence_rel, prominence_hz
         Peak-counting thresholds (see :class:`TemplateMetrics`).
+    bridge_samples
+        Passed to :func:`level_crossings` as ``max_gap``.
 
     Returns
     -------
@@ -199,8 +246,7 @@ def measure_template(
             excursion, nan, nan, nan, nan, nan, nan, nan, nan,
             float(1.0 - np.min(amp)), float(np.max(amp) - 1.0), nan, 0, 0, True,
         )  # fmt: skip
-    c10 = level_crossings(delta, peak, 0.1)
-    c50 = level_crossings(delta, peak, 0.5)
+    c10, c50 = chirp_crossings(delta, peak, bridge_samples)
 
     def to_s(position: float) -> float:
         return (position - centre) / samplerate_hz
@@ -605,6 +651,7 @@ def analyse_snippet(
     min_baseline_s: float,
     knot_threshold: float,
     knot_mad_max_hz: float,
+    bridge_samples: int = 0,
 ) -> SnippetAnalysis:
     """Locate the chirp in a contiguous snippet and measure its context.
 
@@ -621,9 +668,13 @@ def analyse_snippet(
     exclusion_pre_s, exclusion_post_s, support_pad_pre_s, support_pad_post_s
         See :class:`gridtools.templates.config.BuildConfig`.
     min_baseline_s
-        Below this, the whole-snippet median is used as baseline.
+        Baseline samples wanted; the exclusion margins shrink (to 50, 25, 10
+        and 0%) until at least this much baseline remains.
     knot_threshold, knot_mad_max_hz
         Knot detection threshold and acceptance limit for the EODf.
+    bridge_samples
+        Brief internal dips shorter than this are bridged when finding the
+        level crossings (see :func:`level_crossings`).
 
     Returns
     -------
@@ -638,8 +689,10 @@ def analyse_snippet(
     amp = _fill_nan(amp)
     orig_freq = _fill_nan(orig_freq)
 
-    # pass 1: whole-snippet median as provisional baseline
-    baseline = float(np.median(freq))
+    # pass 1: provisional baseline by the thesis rule, the median of the samples
+    # within [min, |min|] of the trace relative to its first sample (the window
+    # start); unlike the whole-window median it is not pulled up by long chirps
+    baseline = provisional_baseline(freq)
     delta = freq - baseline
     peak = int(np.argmax(delta))
     nan = float("nan")
@@ -650,19 +703,26 @@ def analyse_snippet(
             nan, nan, 0.0, nan, nan, nan, nan, 0.0, 0.0,
             KnotEodf(nan, nan, 0, nan), nan, has_nan,
         )  # fmt: skip
-    c10 = level_crossings(delta, peak, 0.1)
+    c10, _ = chirp_crossings(delta, peak, bridge_samples)
 
-    # pass 2: baseline from samples well away from the chirp
-    mask = _baseline_mask(n, c10, exclusion_pre_s * fs, exclusion_post_s * fs)
-    baseline_s = mask.sum() / fs
-    if baseline_s >= min_baseline_s:
+    # pass 2 (twice): baseline from samples away from the chirp; the exclusion
+    # margins shrink when a long chirp leaves too little baseline
+    mask = np.zeros(n, dtype=bool)
+    for _ in range(2):
+        mask = _shrinking_baseline_mask(
+            n, c10, exclusion_pre_s * fs, exclusion_post_s * fs, min_baseline_s * fs
+        )
+        if not mask.any():
+            break
         baseline = float(np.median(freq[mask]))
         delta = freq - baseline
         peak = int(np.argmax(delta))
-        c10 = level_crossings(delta, peak, 0.1)
-        mask = _baseline_mask(n, c10, exclusion_pre_s * fs, exclusion_post_s * fs)
-        baseline_s = mask.sum() / fs
-    if baseline_s >= min_baseline_s:
+        c10, _ = chirp_crossings(delta, peak, bridge_samples)
+    mask = _shrinking_baseline_mask(
+        n, c10, exclusion_pre_s * fs, exclusion_post_s * fs, min_baseline_s * fs
+    )
+    baseline_s = mask.sum() / fs
+    if mask.any():
         baseline = float(np.median(freq[mask]))
         baseline_amp = float(np.median(amp[mask]))
     else:
@@ -670,8 +730,7 @@ def analyse_snippet(
     delta = freq - baseline
     peak = int(np.argmax(delta))
     excursion = float(delta[peak])
-    c10 = level_crossings(delta, peak, 0.1)
-    c50 = level_crossings(delta, peak, 0.5)
+    c10, c50 = chirp_crossings(delta, peak, bridge_samples)
     align = round(c50.midpoint)
 
     min_segment = round(0.02 * fs)
@@ -722,6 +781,33 @@ def analyse_snippet(
         baseline_eodf_hz=float(baseline_eodf),
         has_nan=has_nan,
     )
+
+
+def provisional_baseline(trace: FloatArray) -> float:
+    """Median of the samples within ``[min, |min|]`` relative to the first sample.
+
+    The extraction made every trace relative to the first sample of its window,
+    which lies on the baseline. Samples close to that value (bounded by the
+    deepest dip) are baseline, however long the chirp is (thesis rule).
+    """
+    relative = trace - trace[0]
+    low = float(np.min(relative))
+    band = relative[(relative >= low) & (relative <= abs(low))]
+    if band.size == 0:
+        return float(np.median(trace))
+    return float(np.median(band) + trace[0])
+
+
+def _shrinking_baseline_mask(
+    n: int, crossing: Crossing, pre: float, post: float, min_samples: float
+) -> BoolArray:
+    """Baseline mask whose exclusion margins shrink until enough samples remain."""
+    mask = np.zeros(n, dtype=bool)
+    for factor in (1.0, 0.5, 0.25, 0.1, 0.0):
+        mask = _baseline_mask(n, crossing, factor * pre, factor * post)
+        if mask.sum() >= min_samples:
+            return mask
+    return mask
 
 
 def _baseline_mask(

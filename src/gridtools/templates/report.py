@@ -214,14 +214,18 @@ def _fig_distributions(lib: TemplateLibrary, path: Path) -> None:
     _hist(
         axes[0, 1],
         {f: 1e3 * d["duration_10_s"].to_numpy() for f, d in fam.items()},
-        bins=np.linspace(0, 80, 81),
+        bins=np.geomspace(1, 400, 70),
     )
+    axes[0, 1].set_xscale("log")
+    axes[0, 1].set_yscale("log")
     axes[0, 1].set_xlabel("full width at 10% (ms)")
     _hist(
         axes[0, 2],
         {f: 1e3 * d["duration_50_s"].to_numpy() for f, d in fam.items()},
-        bins=np.linspace(0, 60, 61),
+        bins=np.geomspace(1, 400, 70),
     )
+    axes[0, 2].set_xscale("log")
+    axes[0, 2].set_yscale("log")
     axes[0, 2].set_xlabel("full width at 50% (ms)")
     _hist(
         axes[1, 0],
@@ -276,8 +280,17 @@ def _fig_examples(
         axes[i, 0].set_title(f"{name}: ids {ids}", fontsize=8, loc="left")
         axes[i, 0].set_ylabel("Δf (Hz)")
         axes[i, 1].set_ylabel("amp_rel")
+        rows = lib.rows_of(groups[name])
+        lo = min(
+            -60.0,
+            1e3 * float(lib.metadata["support_start_s"].to_numpy()[rows].min()) - 20,
+        )
+        hi = max(
+            80.0,
+            1e3 * float(lib.metadata["support_stop_s"].to_numpy()[rows].max()) + 20,
+        )
         for ax in axes[i]:
-            ax.set_xlim(-60, 80)
+            ax.set_xlim(lo, hi)
     axes[-1, 0].set_xlabel("time from alignment point (ms)")
     axes[-1, 1].set_xlabel("time from alignment point (ms)")
     fig.suptitle(title)
@@ -341,9 +354,11 @@ def _fig_v1_comparison(meta: Frame, default: Frame, path: Path) -> None:
     )
     axes[0].set_xscale("log")
     axes[0].set_xlabel("excursion (Hz)")
-    bins_d = np.linspace(0, 60, 61)
+    bins_d = np.geomspace(1, 400, 70)
     axes[1].hist(1e3 * default["duration_10_s"], bins=bins_d, histtype="step", lw=1.4)
     axes[1].hist(1e3 * v1["duration_10_s"], bins=bins_d, histtype="step", lw=1.4)
+    axes[1].set_xscale("log")
+    axes[1].set_yscale("log")
     axes[1].set_xlabel("full width at 10% (ms)")
     usable = default[default["amp_usable"]]
     bins_a = np.linspace(0, 1, 51)
@@ -464,12 +479,187 @@ def _pick(
     return np.sort(rng.choice(ids, size=min(n, ids.size), replace=False))
 
 
+def crossfade_comparison(
+    h5_path: Path, lib: TemplateLibrary, ramp_s: float, max_rows: int | None = None
+) -> pd.DataFrame:
+    """Compare the library taper with the thesis support detection per source row.
+
+    For each valid row, the thesis heuristic (:func:`thesis_support`) finds
+    chirp start and stop on the unrolled ``smooth_freq``; the library's taper
+    weights are rebuilt in source coordinates. ``lost_hz`` is the largest
+    part of the chirp-relative trace inside the thesis support that the
+    taper attenuates.
+
+    Parameters
+    ----------
+    h5_path
+        Source file.
+    lib
+        Library built from it (full, unselected).
+    ramp_s
+        Taper ramp length of the build.
+    max_rows
+        Only compare the first rows (for tests).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per library row: ``thesis_ok``, ``extend_left_ms``,
+        ``extend_right_ms``, ``lost_hz``, ``excursion_hz``.
+    """
+    import h5py
+
+    from gridtools.templates.source import find_wrap_index, unroll_rows
+    from gridtools.templates.taper import taper_window
+    from gridtools.templates.thesis import thesis_support
+
+    meta: Frame = lib.metadata
+    fs = lib.samplerate_hz
+    centre = lib.n_samples // 2
+    n_rows = len(meta) if max_rows is None else min(max_rows, len(meta))
+    out = np.full((n_rows, 4), np.nan)
+    ok = np.zeros(n_rows, dtype=bool)
+    with h5py.File(h5_path, "r") as f:
+        dataset = f["smooth_freq"]
+        assert isinstance(dataset, h5py.Dataset)
+        for start in range(0, n_rows, 1024):
+            block = dataset[start : min(start + 1024, n_rows)].astype(np.float64)
+            for k in range(block.shape[0]):
+                i = start + k
+                if not bool(meta["valid"].iloc[i]):
+                    continue
+                trace = unroll_rows(block[k], find_wrap_index(block[k]))
+                align = int(meta["source_align_index"].iloc[i])
+                baseline = trace[align] - float(lib.delta_f_hz[i, centre])
+                support = thesis_support(trace)
+                if support is None:
+                    continue
+                ok[i] = True
+                lo = align + float(meta["support_start_s"].iloc[i]) * fs
+                hi = align + float(meta["support_stop_s"].iloc[i]) * fs
+                weights = taper_window(trace.size, lo, hi, ramp_s * fs).weights
+                delta = trace - baseline
+                seg = slice(support.start, support.stop + 1)
+                out[i] = (
+                    (lo - support.start) / fs * 1e3,
+                    (support.stop - hi) / fs * 1e3,
+                    float(np.max(np.abs((1.0 - weights[seg]) * delta[seg]))),
+                    float(meta["excursion_hz"].iloc[i]),
+                )
+    frame = pd.DataFrame(
+        out, columns=["extend_left_ms", "extend_right_ms", "lost_hz", "excursion_hz"]
+    )
+    frame.insert(0, "thesis_ok", ok)
+    return frame
+
+
+def _fig_equalization(
+    lib: TemplateLibrary, rng: np.random.Generator, path: Path
+) -> None:
+    import matplotlib.pyplot as plt
+
+    n = 100_000
+    meta: Frame = lib.metadata
+    natural = lib.rows_of(lib.cycler(rng, equalize=False).draw(n))
+    equal = lib.rows_of(lib.cycler(rng, equalize=True).draw(n))
+    eq = lib.equalization_bins()
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.2), constrained_layout=True)
+    exc = meta["excursion_hz"].to_numpy()
+    dur = 1e3 * meta["duration_10_s"].to_numpy()
+    for rows, label in ((natural, "natural"), (equal, "equalized 10 x 10")):
+        axes[0].hist(
+            exc[rows], bins=eq.excursion_edges_hz, histtype="step", lw=1.5, label=label
+        )
+        axes[1].hist(
+            dur[rows],
+            bins=1e3 * eq.duration_edges_s,
+            histtype="step",
+            lw=1.5,
+            label=label,
+        )
+    for ax in axes[:2]:
+        ax.set_yscale("log")
+        ax.set_ylabel(f"draws per {n:,}")
+        ax.legend(fontsize=8, frameon=False)
+    axes[0].set_xlabel("excursion (Hz)")
+    axes[1].set_xlabel("full width at 10% (ms)")
+    image = axes[2].imshow(
+        np.log10(np.where(eq.counts > 0, eq.counts, np.nan)),
+        origin="lower",
+        aspect="auto",
+        cmap="viridis",
+    )
+    axes[2].set_xlabel("duration bin")
+    axes[2].set_ylabel("excursion bin")
+    axes[2].set_title("templates per bin (log10; empty bins blank)")
+    fig.colorbar(image, ax=axes[2])
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def _fig_crossfade(
+    h5_path: Path,
+    lib: TemplateLibrary,
+    ids: npt.NDArray[np.int64],
+    ramp_s: float,
+    path: Path,
+) -> None:
+    import h5py
+    import matplotlib.pyplot as plt
+
+    from gridtools.templates.source import find_wrap_index, unroll_rows
+    from gridtools.templates.thesis import thesis_crossfade, thesis_support
+
+    meta: Frame = lib.metadata
+    fs = lib.samplerate_hz
+    centre = lib.n_samples // 2
+    fig, axes = plt.subplots(len(ids), 1, figsize=(12, 2.2 * len(ids)), squeeze=False)
+    with h5py.File(h5_path, "r") as f:
+        dataset = f["smooth_freq"]
+        assert isinstance(dataset, h5py.Dataset)
+        for ax, template_id in zip(axes[:, 0], ids, strict=True):
+            i = int(lib.rows_of([int(template_id)])[0])
+            raw = dataset[i].astype(np.float64)
+            trace = unroll_rows(raw, find_wrap_index(raw))
+            align = int(meta["source_align_index"].iloc[i])
+            baseline = trace[align] - float(lib.delta_f_hz[i, centre])
+            t_ms = (np.arange(trace.size) - align) / fs * 1e3
+            ax.plot(t_ms, trace - baseline, color="0.6", lw=0.8, label="source")
+            thesis = thesis_crossfade(trace)
+            support = thesis_support(trace)
+            if thesis is not None and support is not None:
+                ax.plot(
+                    t_ms,
+                    thesis - (baseline - support.baseline),
+                    lw=1,
+                    label="thesis cross-fade",
+                )
+            ax.plot(
+                (np.arange(lib.n_samples) - centre) / fs * 1e3,
+                lib.delta_f_hz[i],
+                lw=1,
+                label="v2 taper",
+            )
+            lo = 1e3 * float(meta["support_start_s"].iloc[i]) - 60
+            hi = 1e3 * float(meta["support_stop_s"].iloc[i]) + 60
+            ax.set_xlim(lo, hi)
+            ax.set_title(f"template {template_id}", fontsize=8, loc="left")
+            ax.set_ylabel("Δf (Hz)")
+    axes[0, 0].legend(fontsize=8, frameon=False)
+    axes[-1, 0].set_xlabel("time from alignment point (ms)")
+    fig.tight_layout()
+    fig.savefig(path, dpi=100)
+    plt.close(fig)
+
+
 def write_report(
     library_dir: Path | str,
     *,
     h5_path: Path | str | None = None,
+    compare_with: Path | str | None = None,
     seed: int = 0,
     n_evidence_rows: int = 600,
+    max_crossfade_rows: int | None = None,
 ) -> Path:
     """Write ``report.md`` and figures for a built library.
 
@@ -480,10 +670,15 @@ def write_report(
     h5_path
         Source file, for checks on raw rows; defaults to the path in the
         manifest. Skipped if missing.
+    compare_with
+        Directory of an earlier library version (its ``templates.parquet``)
+        to compare the selections with.
     seed
-        Seed of the random examples and row sample.
+        Seed of the random examples, row sample and sampling demonstration.
     n_evidence_rows
-        Source rows re-examined for the evidence section.
+        Source rows re-examined for the amplitude evidence.
+    max_crossfade_rows
+        Limit the taper/thesis comparison to the first rows (tests).
 
     Returns
     -------
@@ -497,322 +692,260 @@ def write_report(
     lib = load_library(library_dir, mmap=True)
     meta: Frame = lib.metadata
     manifest = lib.manifest
-    counts = manifest["counts"]
     default = lib.select()
     dmeta: Frame = default.metadata
+    ramp_s = float(manifest["config"]["taper_ramp_s"])
     source = Path(h5_path if h5_path is not None else manifest["source"]["h5"]["path"])
+    have_source = source.exists()
     evidence = (
-        source_evidence(source, meta, rng, n_evidence_rows) if source.exists() else None
+        source_evidence(source, meta, rng, n_evidence_rows) if have_source else None
     )
+    crossfade: Frame = (
+        crossfade_comparison(source, lib, ramp_s, max_crossfade_rows)
+        if have_source
+        else None
+    )
+    previous: Frame = None
+    if compare_with is not None:
+        previous_path = Path(compare_with) / "templates.parquet"
+        if previous_path.exists():
+            previous = pd.read_parquet(previous_path)
 
     _fig_distributions(default, fig_dir / "distributions.png")
     _fig_family_overlay(default, rng, fig_dir / "families.png")
+    long_mask = (dmeta["duration_10_s"] >= 0.05).to_numpy()
     flag_groups = {
-        "clean small": _pick(dmeta, (dmeta["family"] == "small").to_numpy(), rng),
-        "clean big": _pick(dmeta, (dmeta["family"] == "big").to_numpy(), rng),
-        "truncated": _pick(meta, meta["truncated"].to_numpy(), rng),
-        "step artefact": _pick(meta, meta["step_flag"].to_numpy(), rng),
-        "multi_peak": _pick(meta, meta["multi_peak"].to_numpy(), rng),
-        "outlier": _pick(meta, meta["outlier"].to_numpy(), rng),
-        "eodf_atypical": _pick(meta, meta["eodf_atypical"].to_numpy(), rng),
-        "ripple_flag": _pick(meta, meta["ripple_flag"].to_numpy(), rng),
-        "amp_ripple_flag only": _pick(
-            meta,
-            (meta["amp_ripple_flag"] & ~meta["ripple_flag"] & meta["valid"]).to_numpy(),
-            rng,
-        ),
+        "small (default)": _pick(dmeta, (dmeta["family"] == "small").to_numpy(), rng),
+        "big (default)": _pick(dmeta, (dmeta["family"] == "big").to_numpy(), rng),
+        "long, width at 10% >= 50 ms (default)": _pick(dmeta, long_mask, rng),
+        "truncated (excluded)": _pick(meta, meta["truncated"].to_numpy(), rng),
+        "step artefact (excluded)": _pick(meta, meta["step_flag"].to_numpy(), rng),
+        "eodf_atypical (excluded)": _pick(meta, meta["eodf_atypical"].to_numpy(), rng),
+        "multi_peak (kept)": _pick(meta, meta["multi_peak"].to_numpy(), rng),
+        "ripple_flag (kept)": _pick(meta, meta["ripple_flag"].to_numpy(), rng),
     }
-    _fig_examples(lib, flag_groups, fig_dir / "flags.png", "Examples per quality flag")
+    _fig_examples(lib, flag_groups, fig_dir / "flags.png", "Examples per category")
+    _fig_equalization(default, rng, fig_dir / "equalization.png")
     _fig_v1_comparison(meta, dmeta, fig_dir / "v1_comparison.png")
     _fig_eodf(meta, fig_dir / "eodf.png")
     _fig_amplitude_evidence(meta, fig_dir / "amplitude_evidence.png")
+    crossfade_ids = np.empty(0, dtype=np.int64)
+    if crossfade is not None and have_source:
+        big_loss = crossfade.index[
+            crossfade["thesis_ok"]
+            & (crossfade["lost_hz"] > 5)
+            & ~meta["step_flag"].to_numpy()
+        ].to_numpy()
+        typical = crossfade.index[
+            crossfade["thesis_ok"] & (crossfade["lost_hz"] < 1)
+        ].to_numpy()
+        picks = [
+            rng.choice(a, size=min(2, a.size), replace=False)
+            for a in (typical, big_loss)
+            if a.size
+        ]
+        crossfade_ids = (
+            meta["template_id"].to_numpy()[np.concatenate(picks)]
+            if picks
+            else crossfade_ids
+        )
+        if crossfade_ids.size:
+            _fig_crossfade(
+                source, lib, crossfade_ids, ramp_s, fig_dir / "crossfade.png"
+            )
 
-    text = _report_text(lib, default, counts, evidence)
+    text = _report_text(lib, default, evidence, crossfade, previous, rng)
     path = library_dir / "report.md"
     path.write_text(text)
     log.info("report written to %s", path)
     return path
 
 
+def _markdown_table(frame: pd.DataFrame) -> list[str]:
+    header = "| | " + " | ".join(str(c) for c in frame.columns) + " |"
+    rule = "|---|" + "---:|" * len(frame.columns)
+    rows = [
+        f"| {index} | " + " | ".join(str(v) if v else "·" for v in row) + " |"
+        for index, row in zip(frame.index, frame.to_numpy().tolist(), strict=True)
+    ]
+    return [header, rule, *rows]
+
+
 def _report_text(
     lib: TemplateLibrary,
     default: TemplateLibrary,
-    counts: dict[str, Any],
     evidence: SourceEvidence | None,
+    crossfade: Frame,
+    previous: Frame,
+    rng: np.random.Generator,
 ) -> str:
+    from gridtools.templates.amplitude import DEFAULT_DIP_RANGE
+    from gridtools.templates.build import _code_version
+
     meta: Frame = lib.metadata
     dmeta: Frame = default.metadata
     manifest = lib.manifest
+    counts = manifest["counts"]
     cfg = manifest["config"]
+    report_code = _code_version()
     n = len(meta)
+    fs = lib.samplerate_hz
     small = dmeta[dmeta["family"] == "small"]
     big = dmeta[dmeta["family"] == "big"]
-    usable = dmeta[dmeta["amp_usable"]]
-    v1 = meta[meta["in_v1_clustered"]]
-    wrap = v1["source_wrap_index"]
-    crop_start = (8000 - 4838) // 2  # v1 crop of the 8000-sample rows
-    v1_wrapped = int(((wrap >= crop_start) & (wrap < crop_start + 4838)).sum())
-    eodf = meta["baseline_hz"]
-    atyp = meta[meta["eodf_atypical"]]
-    typical = meta[~meta["eodf_atypical"] & meta["baseline_hz"].notna()]
-    groups = meta["inferred_group"].value_counts()
-    beat_rows = (meta["ripple_amp"] > 0.03) & (meta["beat_freq_hz"] > 20)
-    beat_ratio = (
-        meta.loc[beat_rows, "ripple_freq_hz"] / meta.loc[beat_rows, "ripple_amp"]
-    ) / (meta.loc[beat_rows, "beat_freq_hz"])
-    beat_corr = _corr(
-        np.log(
-            meta.loc[beat_rows, "ripple_freq_hz"] / meta.loc[beat_rows, "ripple_amp"]
-        ),
-        np.log(meta.loc[beat_rows, "beat_freq_hz"]),
-    )
-    small_all = meta[(meta["family"] == "small") & meta["valid"]]
-    dip_ripple_corr = _corr(small_all["amp_dip"], small_all["ripple_amp"])
-    from gridtools.templates.build import _code_version
-
-    report_code = _code_version()
+    eq = default.equalization_bins((10, 10))
+    expected = eq.expected_draws(100_000)
     lines: list[str] = []
     add = lines.append
 
-    add("# Chirp template library v1: build report\n")
+    add("# Chirp template library v2: build report\n")
     add(
         f"Generated {datetime.datetime.now(tz=datetime.UTC):%Y-%m-%d %H:%M} UTC from "
-        f"`{manifest['source']['h5']['path']}` "
-        f"(sha256 `{manifest['source']['h5'].get('sha256', 'n/a')[:16]}…`), "
-        f"gridtools {manifest['code']['gridtools_version']} at "
+        f"`{manifest['source']['h5']['path']}` (sha256 "
+        f"`{manifest['source']['h5'].get('sha256', 'n/a')[:16]}…`); library built by gridtools "
+        f"{manifest['code']['gridtools_version']} at "
         f"`{(manifest['code'].get('git_sha') or 'unknown')[:10]}`"
-        f"{' (dirty)' if manifest['code'].get('git_dirty') else ''}; report written by "
+        f"{' (dirty)' if manifest['code'].get('git_dirty') else ''}, report by "
         f"`{(report_code.get('git_sha') or 'unknown')[:10]}`"
         f"{' (dirty)' if report_code.get('git_dirty') else ''}. "
-        f"Library: {n} templates × {manifest['n_samples']} samples at "
-        f"{manifest['samplerate_hz']:.0f} Hz "
-        f"({1e3 * manifest['n_samples'] / manifest['samplerate_hz']:.0f} ms), "
-        f"alignment point at sample {manifest['centre_index']}. "
-        "Per-chirp source recordings are lost; species, sex and temperature are not recorded "
-        "per chirp.\n"
+        f"{n} templates × {lib.n_samples} samples at {fs:.0f} Hz "
+        f"({1e3 * lib.n_samples / fs:.0f} ms, the full source window), alignment point "
+        f"(midpoint of the 50% crossings) at sample {lib.n_samples // 2}. The v1 library "
+        "and its report stay in `../v1` for comparison.\n"
     )
 
-    add("## 1. What the source arrays contain\n")
-    sigma_line = ""
-    if evidence is not None:
-        exact = np.mean(evidence.sigma_residual_hz < 1e-3)
-        sigma_line = (
-            f" On {evidence.n_rows} random rows, `smooth_freq` equals "
-            f"`gaussian_filter1d(orig_freq, σ)` with best σ = "
-            f"{np.median(evidence.sigma_best):.0f} samples (1 ms) and zero residual in "
-            f"{100 * exact:.0f}% of rows, confirming the thesis code version."
+    add("## What changed since v1\n")
+    add(
+        "- **No length crop.** Templates are 0.4 s, the length of the source windows, so no "
+        f"chirp is shortened by the template (`template_cut` in the default selection: "
+        f"{int((dmeta['template_cut']).sum())}). `truncated` now means only that the chirp's "
+        "support runs into the edge of its source window.\n"
+        "- **Excursion and duration are no longer exclusion criteria.** v1's robust-z "
+        "`outlier` flag is gone; the default selection drops only demonstrable artefacts "
+        "(invalid, NaN, exact duplicates, truncated, step artefacts) plus the atypical-EODf "
+        "group.\n"
+        "- **Long chirps are measured as one event.** The 50% crossings bridge dips shorter "
+        f"than {1e3 * cfg['crossing_bridge_s']:.0f} ms (phase slips on a plateau), and the "
+        "10% crossings walk outward from that core without bridging, so baseline ripple is "
+        "never merged into a chirp. The provisional baseline uses the thesis rule (median of "
+        "samples within [min, |min|] of the window-start-relative trace), so it is not pulled "
+        "up by chirps that fill most of the window; exclusion margins shrink when a long "
+        "chirp leaves too little baseline.\n"
+        "- **Histogram equalization** as sampling weights: `TemplateLibrary.sample(rng, n, "
+        "equalize=True, bins=(10, 10))` (section 5).\n"
+        "- **Amplitude** defaults to the thesis model: `amplitude_from_frequency(delta_f_hz, "
+        f"dip)` with `dip ~ U{DEFAULT_DIP_RANGE}`; the measured `amp_rel` stays optional "
+        "(section 6).\n"
+        "- `baseline_hz` is metadata only; nothing in the library conditions on it.\n"
+    )
+
+    add("## 1. Consistency with the thesis\n")
+    v1_rows = meta["in_v1_clustered"].to_numpy(dtype=bool)
+    atyp_v1 = int((meta["eodf_atypical"] & meta["in_v1_clustered"]).sum())
+    brief_kept = int((dmeta["duration_10_s"] < 0.009).sum())
+    high_kept = int((dmeta["excursion_hz"] >= 550).sum())
+    add(
+        "| thesis | v2 library |\n|---|---|\n"
+        "| Chirps made relative to the emitter's baseline so they fit fish of any EODf | "
+        "`delta_f_hz` is baseline-relative (0 at baseline); `baseline_hz` is recovered and "
+        "stored as metadata only |\n"
+        "| Real chirps from the chirp-chamber extraction (9,082 after filtering and "
+        "clustering) | the same extraction (`extracted_chirps.h5` is the exact source of "
+        f"all {int(v1_rows.sum())} clustered chirps), all 13,015 rows considered |\n"
+        "| Smooth baseline around each chirp by a cross-fade (Gaussian σ = 60 samples, "
+        "120-sample linear blend) | raised-cosine taper to exactly 0 outside the support "
+        "(compared below) |\n"
+        "| Long and high chirps kept on purpose | no excursion or duration exclusion; "
+        f"longest kept chirp {1e3 * counts['longest_chirp']['duration_10_s']:.0f} ms "
+        f"(width at 10%), highest {counts['max_excursion_hz_default']:.0f} Hz |\n"
+        "| Histogram equalization of heights and widths by duplicating chirps (121,380 rows) "
+        "| sampling weights over a 10 × 10 grid of excursion × width at 10%, no duplicated "
+        "rows |\n"
+        "| Chirp AM: inverted frequency modulation, scaled so the EOD drops to 100–20% | "
+        f"`amplitude_from_frequency`, dip ~ U{DEFAULT_DIP_RANGE} (simulator default) |\n"
+    )
+    add(
+        "Differences that remain: (1) the thesis clustering step dropped chirps narrower "
+        "than 9 ms (its width) and higher than 550 Hz; v2 keeps them "
+        f"({brief_kept} templates of the default selection are narrower than 9 ms at 10%, "
+        f"{high_kept} reach 550 Hz or more). (2) The thesis cross-fade blends the first and "
+        "last 6 ms of the chirp itself with a smoothed copy; v2 leaves the chirp untouched "
+        "and ramps outside it. (3) The atypical-EODf group is excluded by default "
+        f"({atyp_v1} of its rows were in the thesis set). (4) Exact duplicates "
+        f"({counts['flagged']['exact_duplicate']}) are dropped; equalization replaces them "
+        "as the balancing mechanism.\n"
+    )
+    if crossfade is not None:
+        cf = crossfade[crossfade["thesis_ok"]]
+        lost = cf["lost_hz"]
+        rel = lost / cf["excursion_hz"]
+        step = meta["step_flag"].to_numpy(dtype=bool)
+        big_loss = cf.index[cf["lost_hz"] > 5]
+        add(
+            "**Taper vs thesis cross-fade.** The thesis support detection (descend both "
+            "flanks of the smoothed trace; on the right until the slope has changed sign "
+            "twice, past the undershoot) was ported (`gridtools.templates.thesis`) and run "
+            f"on every valid row. It fails on {int((~crossfade['thesis_ok'] & meta['valid'].to_numpy()).sum())} "
+            "rows (more than two half-height crossings; the thesis discarded those). Where it "
+            f"works, it starts {_q(cf['extend_left_ms'])} ms before and ends "
+            f"{_q(cf['extend_right_ms'])} ms after the v2 support (median, 5–95%; negative = "
+            "inside). The part of the chirp-relative trace inside the thesis support that the "
+            f"v2 taper attenuates is {_q(lost)} Hz ({_q(100 * rel)}% of the excursion). "
+            f"{len(big_loss)} rows lose more than 5 Hz; {int(step[big_loss].sum())} of them "
+            "carry step artefacts. Inspection of these rows (`figures/crossfade.png`, last "
+            "rows) shows the attenuated part is baseline ripple or a later bump that the slope "
+            "descent runs into, not chirp structure; the v2 support (10% onset − "
+            f"{1e3 * cfg['support_pad_pre_s']:.0f} ms to 10% offset + "
+            f"{1e3 * cfg['support_pad_post_s']:.0f} ms, which contains the undershoot) "
+            "therefore stays. In typical rows both give the same chirp and differ only in "
+            "how much neighbouring baseline they keep: v2 starts a few ms earlier, the thesis "
+            "often ends later; both baselines carry the source's ripple there "
+            "(`figures/crossfade.png`, first rows). The two also estimate the baseline "
+            "differently (median outside the chirp vs median within [min, |min|]), which "
+            "can shift the whole trace by a few Hz.\n"
         )
+
+    add("## 2. Source arrays (summary; details in the v1 report)\n")
     add(
-        "- **Layout.** `extracted_chirps.h5` holds 13,015 rows × 8,000 samples (0.4 s at "
-        "20 kHz) of four traces written by `extract_chirpchamber_and_livios_chirps.py`: "
-        "`orig_freq` (instantaneous EOD frequency from linearly interpolated ascending zero "
-        "crossings, one value per EOD cycle, cubic-spline interpolated to 20 kHz), "
-        "`smooth_freq` (the same after a Gaussian with σ = 20 samples = 1 ms, applied before "
-        "cutting), `orig_amp`/`smooth_amp` (per-cycle peak of the band-passed signal, "
-        "divided by the window maximum, so the maximum is exactly 1 and the baseline is "
-        "below 1). According to that script the recordings came from three sets "
-        "(fishkurs2024, livio_jansubset, gp2024_chirps), all lost." + sigma_line
-    )
-    add(
-        "- **Reference.** Both frequency traces are relative: the extraction subtracted the "
-        "value at the first sample of the 0.4 s window (a single noisy sample, not a "
-        "baseline). Every row contains exactly one sample that is exactly 0.0 in both "
-        "frequency traces: that first sample."
-    )
-    add(
-        "- **Alignment.** After cutting, chirps were centred with `np.roll` (a circular "
-        "shift) on the midpoint of the region above 20 Hz. Rows are therefore not "
-        "contiguous in time: the original window start sits at the exact-zero sample "
-        f"(found in {int((meta['source_wrap_index'] >= 0).sum())} of {n} rows), with a "
-        "jump to the window's end value right before it. The builder undoes the roll "
-        "(`unroll_rows`) before measuring anything. In the unrolled windows the 1–99% range "
-        f"of the chirp position is sample {np.quantile(meta['source_align_index'], 0.01):.0f}–"
-        f"{np.quantile(meta['source_align_index'], 0.99):.0f}; a few chirps sit at the window "
-        "edge (truncated)."
-    )
-    add(
-        f"- **Units.** Relative frequency is in Hz. Check: every knot interval satisfies "
-        f"1/Δt_k = c + x(t_k) with one constant c per row; the per-knot deviation is "
-        f"{_q(meta['baseline_hz_mad'])} Hz (median, 5–95%) on the baseline and "
-        f"{_q(meta['knot_check_chirp_mad_hz'])} Hz inside chirps (the large upper tail "
-        "comes from missed knots where float32 precision at large Δf hides the knot "
-        "signature in low-jitter recordings, not from a unit problem)."
-    )
-    add(
-        f"- **Absolute baseline EODf is recoverable** ({counts['baseline_hz_recovered']} "
-        f"of {n} rows). The cubic spline has a knot at every zero crossing, visible as "
-        "isolated spikes in the fourth difference (~10³ above the floor); the knot "
-        "spacing gives the absolute period. Stored as `baseline_hz` (median "
-        f"{eodf.median():.0f} Hz, 5–95% {eodf.quantile(0.05):.0f}–{eodf.quantile(0.95):.0f} "
-        "Hz). See `figures/eodf.png`. Temperature is unknown, so this is not "
-        "temperature-corrected."
-    )
-    add(
-        f"- **Two EODf populations.** {len(typical)} rows lie at 540–940 Hz (sharp peaks, "
-        f"i.e. individual fish); {len(atyp)} rows lie at 320–440 Hz, separated by an empty "
-        "gap at 440–540 Hz (`eodf_atypical`). Their chirps differ: FWHM "
-        f"{_q(1e3 * atyp['duration_50_s'])} ms vs {_q(1e3 * typical['duration_50_s'])} ms, "
-        f"excursion {_q(atyp['excursion_hz'])} Hz vs {_q(typical['excursion_hz'])} Hz, and "
-        "almost no beat ripple. A wrong sampling rate (the thesis code hard-codes 40 kHz for "
-        ".nix files) would scale EODf, excursion and 1/duration together; here EODf is lower "
-        "while excursion is higher and duration shorter, so a rate error does not explain "
-        "them. They may be another species or setup."
-    )
-    add(
-        f"- **Few sources dominate.** Rows were appended file by file, so runs of rows with "
-        f"continuous EODf approximate recordings (`inferred_group`, new group at a jump > "
-        f"{cfg['group_eodf_jump_hz']:.0f} Hz): {groups.size} groups, the 10 largest hold "
-        f"{100 * groups.iloc[:10].sum() / n:.0f}% of all rows, the largest "
-        f"{groups.iloc[0]} rows."
-    )
-    add(
-        "- **NaNs and truncation.** "
-        f"{int(meta['has_nan'].sum())} rows contain NaN. {int(meta['truncated'].sum())} "
-        "templates are truncated (support plus ramps does not fit into the source window)."
-    )
-    add(
-        f"- **Step artefacts.** {int(meta['step_flag'].sum())} rows contain single-sample "
-        "jumps in a smoothed trace, impossible after a 1 ms Gaussian. They come from the "
-        "extraction's own in-place bug: `oc -= oc[0]` and `oa /= max(oa)` act on views of "
-        "the full-recording arrays, so a window that overlaps earlier windows inherits their "
-        "offsets/scalings piecewise (additive steps in frequency, multiplicative in "
-        "amplitude) while still passing the thesis filters. Strong beat phase slips trigger "
-        "the same detector. Flagged (`step_flag`)."
-    )
-    add(
-        f"- **Duplicates.** {counts['flagged']['exact_duplicate']} rows are bit-identical to "
-        "an earlier row (short runs of consecutive rows repeated a few to ~2,500 rows later, "
-        "suggesting overlapping source files). No further re-extractions exist: the "
-        "cycle-to-cycle jitter outside the chirp never correlates above "
-        f"{np.nanmax(meta['max_fingerprint_corr']):.3f} between non-identical rows (threshold "
-        f"{cfg['duplicate_fingerprint_corr_min']}). Aligned shape correlation alone reaches "
-        f"≥ {cfg['duplicate_corr_min']} for {int((meta['max_shape_corr'] >= cfg['duplicate_corr_min']).sum())} "
-        "rows; these are distinct, stereotyped chirps (independent jitter), so they are not "
-        "flagged; `max_shape_corr` and its partner are stored."
-    )
-    add(
-        f"- **Relation to the v1 set.** All 9,082 rows of `clustered_chirps.npy` equal "
-        "`smooth_freq[j, 1581:6419]` of an h5 row (exact float32 match; 9,009 unique), and "
-        "`clustered_orig_chirps.npy` equals the same crops of `orig_freq`. The h5 is "
-        f"therefore the source of the v1 templates ({int(meta['in_v1_clustered'].sum())} "
-        "rows marked `in_v1_clustered`, with `v1_cluster_label`), not a later, unrelated "
-        f"extraction. {v1_wrapped} v1 rows contain the circular-shift jump inside their "
-        "crop, and all v1 rows are relative to a single window sample rather than to a "
-        "baseline.\n"
+        "13,015 rows of 0.4 s at 20 kHz written by the thesis extraction script. Frequencies "
+        "are relative to the first sample of each window; rows were centred with a circular "
+        "shift, which the builder undoes. `smooth_freq` = `orig_freq` smoothed with a 1 ms "
+        "Gaussian (verified bit-exactly). The absolute baseline EODf is recovered from the "
+        f"spline knots of `orig_freq` for {counts['baseline_hz_recovered']} rows (median "
+        f"{meta['baseline_hz'].median():.0f} Hz). {int(meta['eodf_atypical'].sum())} rows "
+        "form a separate 320–440 Hz group. Rows were appended per file; the 10 largest "
+        "inferred groups hold "
+        f"{100 * meta['inferred_group'].value_counts().iloc[:10].sum() / n:.0f}% of rows.\n"
     )
 
-    add("## 2. Template construction\n")
+    add("## 3. Template length and the longest chirps\n")
+    longest = dmeta.sort_values("duration_10_s", ascending=False).head(5)
     add(
-        f"1. Unroll; choose `{cfg['freq_source']}_freq` and `{cfg['amp_source']}_amp`.\n"
-        "2. Baseline = median of samples outside [onset₁₀ − "
-        f"{1e3 * cfg['baseline_exclusion_pre_s']:.0f} ms, offset₁₀ + "
-        f"{1e3 * cfg['baseline_exclusion_post_s']:.0f} ms] (two passes); the 1 ms Gaussian "
-        "shifts nothing in time.\n"
-        "3. Alignment point = midpoint of the 50% crossings (FWHM centre), rounded to a "
-        "sample. 50% crossings sit on the steep flanks, so they are less sensitive to "
-        "baseline ripple than 10% crossings (10% of a 50 Hz chirp is 5 Hz, the size of "
-        "typical ripple) and less sensitive than the peak to noisy plateaus of big chirps.\n"
-        f"4. Crop {1e3 * cfg['template_duration_s']:.0f} ms centred on it.\n"
-        f"5. Taper: weight 1 on [onset₁₀ − {1e3 * cfg['support_pad_pre_s']:.0f} ms, "
-        f"offset₁₀ + {1e3 * cfg['support_pad_post_s']:.0f} ms] (includes the undershoot, "
-        f"which recovers within ~20 ms), raised-cosine ramps of "
-        f"{1e3 * cfg['taper_ramp_s']:.0f} ms, exactly 0 outside. `delta_f_hz = w·(f − "
-        "baseline)` is exactly 0 and `amp_rel = 1 + w·(a/a₀/g − 1)` exactly 1 at both ends; "
-        "outside the support the source's beat ripple is removed. New arrays only.\n"
-        "6. Measure the final template (`measure_template`): excursion, widths at 10% and 50%, "
-        "undershoot (largest dip below 0 within 50 ms after offset₁₀), amplitude dip "
-        "(1 − min amp_rel), asymmetry ((fall − rise)/(fall + rise) with rise = peak − "
-        "onset₁₀, fall = offset₁₀ − peak), `n_peaks` (prominent maxima inside the 10% "
-        "crossings, structure of the chirp) and `n_extra_events` (outside them).\n"
-        f"7. Family: `big` if excursion ≥ {cfg['big_chirp_threshold_hz']:.0f} Hz, at the "
-        "trough of the excursion density (few templates between 160 and 250 Hz), otherwise "
-        "`small`. Descriptive only; type 1/2 chirp classes would need more than excursion.\n"
-    )
-    add(
-        "**Frequency trace: `smooth_freq`.** Inside chirps, `orig_freq` has cycle-level "
-        "spikes"
-        + (
-            f": its jitter RMS is {np.median(evidence.jitter_ratio):.1f}× (median) the "
-            f"baseline jitter, and its peak is {np.median(evidence.orig_peak_ratio):.2f}× "
-            "(median) the smoothed peak"
-            if evidence is not None
-            else ""
-        )
-        + ". The spikes coincide with the amplitude drop, where the contaminating signal "
-        "dominates the zero crossings, so they are measurement artefacts rather than "
-        "pacemaker output. The cost of the 1 ms Gaussian: a Gaussian chirp with FWHM w is "
-        "lowered by σ_c/√(σ_c² + σ²), i.e. 3% at 9 ms and 9% at 5 ms (the median FWHM is "
-        f"{1e3 * dmeta['duration_50_s'].median():.1f} ms). `freq_source='orig'` is available.\n"
-    )
-
-    add("## 3. Amplitude traces: decision and evidence\n")
-    add(
-        f"**Decision:** use `smooth_amp`, correct it for the extraction filter, do **not** "
-        f"low-pass it further, and mark only clean traces as usable (`amp_usable`: "
-        f"baseline ripple RMS ≤ {cfg['amp_ripple_max']}, dip ≥ "
-        f"{cfg['amp_dip_to_ripple_min']:.0f}× ripple, no step artefact, EODf known). "
-        f"{int(meta['amp_usable'].sum())} of {n} templates "
-        f"({100 * meta['amp_usable'].mean():.0f}%) qualify, {len(usable)} in the default "
-        "selection.\n"
-    )
-    add(
-        f"1. **The baseline ripple is a beat with a second EOD.** For two sinusoids with "
-        "amplitude ratio m and frequency difference ΔF, the envelope ripples with depth m "
-        "and the instantaneous frequency with amplitude m·ΔF, so freq ripple / amp ripple "
-        f"≈ ΔF. In {int(beat_rows.sum())} rows with amp ripple > 0.03 and ripple frequency "
-        f"> 20 Hz the ratio divided by the measured ripple frequency is "
-        f"{beat_ratio.median():.2f} (median; log–log r = {beat_corr:.2f}); "
-        "`figures/amplitude_evidence.png`, panel 1."
-    )
-    add(
-        f"2. **It is common.** Amplitude ripple RMS: {_q(meta['ripple_amp'])}; frequency "
-        f"ripple RMS {_q(meta['ripple_freq_hz'])} Hz. The measured dip of small chirps "
-        f"correlates with the ripple (r = {dip_ripple_corr:.2f}), so raw dips are inflated "
-        "by beat troughs."
-    )
-    beats = meta.loc[meta["ripple_amp"] > 0.03, "beat_freq_hz"]
-    add(
-        f"3. **Low-pass filtering cannot separate it.** The dominant ripple frequency "
-        f"(ripple_amp > 0.03) is {_q(beats)} Hz, i.e. at or below the chirp's own AM band "
-        "(10–20 ms dips need ~50–100 Hz)."
-        + (
-            " Zero-phase 2nd-order low-pass on source rows (median ratio filtered/raw): "
-            + "; ".join(
-                f"{fc:.0f} Hz: clean dips ×{v[0]:.2f}, contaminated ripple ×{v[1]:.2f}"
-                for fc, v in evidence.lowpass.items()
+        f"Longest chirp in the default selection: template "
+        f"{counts['longest_chirp']['template_id']}, "
+        f"{1e3 * counts['longest_chirp']['duration_10_s']:.0f} ms at 10% with "
+        f"{counts['longest_chirp']['excursion_hz']:.0f} Hz excursion. The five longest: "
+        + ", ".join(
+            f"{1e3 * d:.0f} ms / {e:.0f} Hz"
+            for d, e in zip(
+                longest["duration_10_s"], longest["excursion_hz"], strict=True
             )
-            + ". Any cutoff that removes a useful part of the ripple also shrinks genuine "
-            "dips."
-            if evidence is not None
-            else ""
         )
-    )
-    add(
-        f"4. **The extraction filter fakes AM.** The thesis band-pass (2nd-order "
-        "Butterworth, EODf − 100 Hz to 1.9·EODf, `sosfiltfilt`, gain |H|²) has its lower "
-        "edge just below the baseline, so the measured amplitude rises with frequency: +7.5% "
-        "for a 30 Hz and +12.5% for a 60 Hz chirp at 800 Hz, comparable to the true dips of "
-        "small chirps. Each template is divided by the quasi-static gain ratio "
-        "G(f₀ + Δf(t))/G(f₀) with f₀ = `baseline_hz` (largest correction per template "
-        f"`amp_filter_gain_max`: {_q(meta['amp_filter_gain_max'])}). Dip before → after "
-        f"correction: {_q(meta['amp_dip_uncorrected'])} → {_q(meta['amp_dip'])}. The "
-        "correction covers the fundamental only. The 2nd harmonic passes at ~0.44 relative "
-        "gain and falls as frequency rises, so for EODs with a strong in-phase 2nd harmonic "
-        "the correction is an upper bound (up to about twice the true effect). Uncorrected "
-        "dips are kept as `amp_dip_uncorrected`."
-    )
-    add(
-        f"5. **Result vs v1.** Clean (amp_usable) dips: small {_q(usable.loc[usable['family'] == 'small', 'amp_dip'])}, "
-        f"big {_q(usable.loc[usable['family'] == 'big', 'amp_dip'])}. The v1 simulator drew "
-        "U(0.3, 0.8) for every chirp, several times deeper than real small chirps "
-        "(`figures/v1_comparison.png`, right).\n"
+        + ". Widths at 10% of the default selection: median "
+        f"{1e3 * dmeta['duration_10_s'].median():.1f} ms, 99th percentile "
+        f"{1e3 * dmeta['duration_10_s'].quantile(0.99):.1f} ms, maximum "
+        f"{1e3 * dmeta['duration_10_s'].max():.1f} "
+        "ms. No chirp in the source reaches 500 ms: the source windows are "
+        "400 ms and the extraction discarded chirps whose >20 Hz region touched a window "
+        "edge. Longer apparent widths (up to "
+        f"{1e3 * counts['max_duration_10_s_all']:.0f} ms) occur only in excluded rows "
+        "(truncated or step artefacts, where the trace never returns to baseline). Longest "
+        f"support including undershoot: {1e3 * counts['max_support_s_all']:.0f} ms. "
+        "`figures/flags.png` shows long chirps of the default selection.\n"
     )
 
-    add("## 4. Quality control counts\n")
+    add("## 4. Exclusions\n")
     add(
-        "Flags are kept in `templates.parquet`; `TemplateLibrary.select()` drops the flags "
-        "in `DEFAULT_EXCLUDE`. 'Flagged' counts each criterion alone; 'left' applies them "
-        "in table order.\n"
+        "Flags stay in `templates.parquet`; `TemplateLibrary.select()` drops these by default:\n"
     )
     add("| criterion | flagged | left |")
     add("|---|---:|---:|")
@@ -820,29 +953,131 @@ def _report_text(
     for name, flagged in counts["flagged"].items():
         add(f"| {name} | {flagged} | {counts['cumulative'][f'after_{name}']} |")
     add(
-        f"\nDefault selection: {default.n_templates} templates "
+        f"\nDefault selection: **{default.n_templates}** templates "
         f"({counts['default_selection_per_family']['small']} small, "
-        f"{counts['default_selection_per_family']['big']} big); "
-        f"{counts['amp_usable_in_default_selection']} of them with usable amplitude. "
-        f"Not in the default exclusion: `amp_ripple_flag` ({int(meta['amp_ripple_flag'].sum())} "
-        "flagged; use `require_amp=True`).\n"
+        f"{counts['default_selection_per_family']['big']} big; family = excursion ≥ "
+        f"{cfg['big_chirp_threshold_hz']:.0f} Hz, descriptive only). "
+        "Why each is excluded: `truncated`, the chirp's support runs into the source window "
+        "edge, so part of it is missing; `step_artefact`, single-sample jumps impossible "
+        "after a 1 ms Gaussian, left by the extraction's in-place offsets on overlapping "
+        "windows (the trace is broken); exact duplicates add nothing; the atypical-EODf "
+        "group is an open question.\n"
     )
+    info = counts["informational_flags"]
     add(
-        "Criteria: `invalid` (no positive excursion or no wrap marker); `has_nan`; "
-        "`exact_duplicate` (identical raw bytes in all four traces); `near_duplicate` "
-        f"(shape r ≥ {cfg['duplicate_corr_min']} and jitter r ≥ "
-        f"{cfg['duplicate_fingerprint_corr_min']}); `truncated`; `step_artefact` "
-        f"(single-sample jump > {cfg['step_score_max']:.0f}× local slope); `multi_peak` "
-        "(another maximum ≥ max(0.3·excursion, 10 Hz) inside the template but outside the "
-        "chirp's 10% crossings); `outlier` (log width at 10% or 50% more than 5 robust SD "
-        "from the family median, or undershoot deeper than the excursion); "
-        f"`eodf_atypical` (baseline < {cfg['eodf_atypical_below_hz']:.0f} Hz); `ripple_flag` "
-        f"(frequency ripple RMS > {cfg['ripple_score_max']} × excursion; below that the "
-        "chirp shape dominates visibly, `figures/flags.png`).\n"
+        "Flagged but kept: "
+        + "; ".join(
+            f"`{k}` {v['all']} ({v['in_default_selection']} in the default selection)"
+            for k, v in info.items()
+        )
+        + ". `multi_peak` marks a second maximum outside the chirp but inside the "
+        "template, `ripple_flag` a frequency ripple RMS above "
+        f"{cfg['ripple_score_max']} × excursion (beats with another EOD); both are real "
+        "chirps with contamination, not broken traces. Use `select(exclude=(..., "
+        "'ripple_flag'))` for stricter sets.\n"
+    )
+    if previous is not None and "outlier" in previous.columns:
+        old = previous["outlier"].to_numpy(dtype=bool)
+        now_in = old & np.isin(
+            meta["template_id"].to_numpy(), dmeta["template_id"].to_numpy()
+        )
+        reasons = {
+            "eodf_atypical": int(
+                (old & meta["eodf_atypical"].to_numpy(dtype=bool)).sum()
+            ),
+            "step_artefact": int((old & meta["step_flag"].to_numpy(dtype=bool)).sum()),
+            "truncated": int((old & meta["truncated"].to_numpy(dtype=bool)).sum()),
+            "duplicate": int((old & (meta["duplicate_of"].to_numpy() >= 0)).sum()),
+        }
+        old_long_big = (
+            old
+            & (previous["family"].to_numpy() == "big")
+            & (previous["duration_50_s"].to_numpy() > 0.04)
+        )
+        add(
+            f"**v1 outliers re-examined.** All {int(old.sum())} v1 outliers were inspected "
+            "on their source traces. They were: the atypical-EODf group, long big chirps "
+            "(300–450 Hz plateaus of 55–135 ms with the matching amplitude drop), small chirps "
+            "with long low shoulders (30–40 ms at 10%), and brief events (FWHM 2–4 ms). None "
+            f"is excluded for its size or length any more: {int(now_in.sum())} are in the v2 "
+            "default selection (including "
+            f"{int((old_long_big & now_in).sum())} of the {int(old_long_big.sum())} long big "
+            "chirps); the others carry an artefact flag or the atypical-EODf flag "
+            "(overlapping counts: "
+            + ", ".join(f"{k} {v}" for k, v in reasons.items())
+            + ").\n"
+        )
+    brief = dmeta[dmeta["duration_50_s"] < 0.003]
+    add(
+        f"**Brief events kept.** {len(brief)} templates of the default selection have a "
+        "smoothed FWHM below 3 ms, barely wider than the 1 ms Gaussian itself (FWHM 2.35 "
+        "ms), so they span one or two EOD cycles. Some coincide with beat troughs (phase "
+        "slips), others look clean; a single-cycle event cannot be told from a zero-crossing "
+        "error, so they are kept and listed as an open question.\n"
     )
 
-    add("## 5. Distributions\n")
-    add("Default selection (`figures/distributions.png`, `figures/families.png`):\n")
+    add("## 5. Histogram equalization\n")
+    add(
+        f"`sample(rng, n, equalize=True, bins=(10, 10))` bins the sampling pool (default "
+        f"selection, one template per duplicate group: {eq.template_ids.size}) into 10 "
+        "equal-width bins of excursion × 10 equal-width bins of **full width at 10% of the "
+        "excursion** (`duration_10_s`). That is the thesis width (crossings descended from "
+        "half height to 10% of the peak) and covers the whole chirp, while the width at 50% "
+        "under-measures chirps with slow onsets or shoulders. Every non-empty bin is equally "
+        "likely (bins in successive random permutations), and within a bin templates come "
+        "in successive random permutations, so repeats are spread evenly and a cycler keeps "
+        f"its balance across calls. {eq.n_nonempty} of 100 bins are occupied (rows: "
+        "excursion, columns: width at 10%):\n"
+    )
+    lines.extend(_markdown_table(eq.table()))
+    singles = int((eq.counts == 1).sum())
+    add(
+        f"\nPer 100,000 draws a template is drawn {np.median(expected):.2f} times "
+        f"(median; min {expected.min():.2f}, max {expected.max():,.0f}). "
+        "The rarest templates (alone in their bin, "
+        f"{singles} bins) are drawn {expected.max():,.0f} times each; templates in the most "
+        f"crowded bin ({int(eq.counts.max())} members) {expected.min():.2f} times; "
+        f"{int((expected > 100).sum())} templates exceed 100 draws. With "
+        "`equalize=False` every template is drawn 100,000 / "
+        f"{eq.template_ids.size} = {1e5 / eq.template_ids.size:.1f} times. "
+        "`figures/equalization.png` compares natural and equalized draws. Repeating a rare "
+        "chirp often is what equalization means; the thesis accepted it (the same chirp "
+        "appears against different backgrounds and fish).\n"
+    )
+
+    add("## 6. Amplitude\n")
+    add(
+        "**Default (thesis model):** `amplitude_from_frequency(delta_f_hz, dip)` = "
+        "1 − dip · clip(Δf, 0, ∞) / max(Δf), with `dip ~ U(0, 0.8)` per chirp "
+        "(`random_dips`): the EOD drops to between 100% and 20% at the excursion peak. The "
+        "undershoot is clipped so the amplitude never exceeds 1 (a frequency undershoot does "
+        "not imply a louder EOD). Templates are exactly 0 at both ends, so the envelope is "
+        "exactly 1 there.\n"
+    )
+    usable = dmeta[dmeta["amp_usable"]]
+    add(
+        "**Optional (measured):** `amp_rel` with `amp_usable` "
+        f"({int(meta['amp_usable'].sum())} templates; {len(usable)} in the default "
+        "selection). The v1 evidence still holds: the baseline amplitude ripple is a beat "
+        "with a second EOD (frequency ripple / amplitude ripple ≈ beat frequency), it is "
+        "slow (median ≈ 13 Hz) so a low-pass cannot remove it without shrinking real dips, "
+        "and the extraction band-pass fakes +7.5% to +12.5% amplitude for 30–60 Hz chirps, "
+        "which `amp_rel` corrects (fundamental only, an upper bound). Clean measured dips: "
+        f"small {_q(usable.loc[usable['family'] == 'small', 'amp_dip'])}, big "
+        f"{_q(usable.loc[usable['family'] == 'big', 'amp_dip'])}; the default model's dips "
+        "are uniform on 0–0.8 for every chirp. `figures/amplitude_evidence.png`.\n"
+    )
+    if evidence is not None:
+        add(
+            "Low-pass test on source rows (median ratio filtered/raw): "
+            + "; ".join(
+                f"{fc:.0f} Hz: clean dips ×{v[0]:.2f}, contaminated ripple ×{v[1]:.2f}"
+                for fc, v in evidence.lowpass.items()
+            )
+            + ".\n"
+        )
+
+    add("## 7. Distributions of the default selection\n")
     add("| | small | big |")
     add("|---|---|---|")
     add(f"| n | {len(small)} | {len(big)} |")
@@ -852,78 +1087,33 @@ def _report_text(
         ("full width at 50% (ms)", "duration_50_s", 1e3),
         ("undershoot (Hz)", "undershoot_hz", 1.0),
         ("asymmetry", "asymmetry", 1.0),
-        ("baseline EODf (Hz)", "baseline_hz", 1.0),
     ]:
         add(f"| {label} | {_q(scale * small[col])} | {_q(scale * big[col])} |")
     add(
-        f"| amp dip (amp_usable) | {_q(usable.loc[usable['family'] == 'small', 'amp_dip'])} "
-        f"| {_q(usable.loc[usable['family'] == 'big', 'amp_dip'])} |"
-    )
-    add("\nValues: median (5–95%).\n")
-    add(
-        f"Against the v1 clustered rows (same measurement code, `figures/v1_comparison.png`): "
-        f"excursion {_q(v1['excursion_hz'])} Hz vs {_q(dmeta['excursion_hz'])} Hz; width at "
-        f"10% {_q(1e3 * v1['duration_10_s'])} ms vs {_q(1e3 * dmeta['duration_10_s'])} ms. "
-        f"The v1 filter (width > 9 ms at the thesis definition, height < 550 Hz) removed "
-        f"{n - int(meta['in_v1_clustered'].sum())} rows, mostly brief chirps; "
-        f"{int((dmeta['in_v1_clustered'] == False).sum())} templates of the default "  # noqa: E712
-        "selection were not in v1.\n"
+        "\nMedian (5–95%). `figures/distributions.png` (log-scaled widths), "
+        "`figures/families.png`, `figures/v1_comparison.png`.\n"
     )
 
-    add("## 6. Decisions for the author\n")
+    add("## 8. Open questions for the author\n")
     add(
-        "1. **Atypical-EODf group** (320–440 Hz, brief large chirps): excluded by default. "
-        "Keep out of an _A. leptorhynchus_ simulator, or include? Can you identify these "
-        "recordings (species, setup)?"
+        "1. Atypical-EODf group (320–440 Hz, 3–5 ms chirps of 60–220 Hz): still excluded by "
+        "default. Which recordings are these?\n"
+        f"2. Brief events ({len(brief)} templates with FWHM < 3 ms, one or two EOD "
+        "cycles): kept. Exclude them, or the subset at beat troughs?\n"
+        "3. Ripple-flagged chirps (beat contamination of the frequency trace) are kept by "
+        "default; exclude them for cleaner templates?\n"
+        "4. Equalization on width at 10% (thesis width) or at 50%? The bins are linear, so "
+        "the long and high tails get few, heavily repeated templates; log-spaced bins would "
+        "repeat them less.\n"
     )
-    long_big = meta[
-        meta["outlier"] & (meta["family"] == "big") & (meta["duration_50_s"] > 0.04)
-    ]
-    add(
-        f"2. **Long big chirps.** {len(long_big)} big chirps with FWHM "
-        f"{_q(1e3 * long_big['duration_50_s'])} ms are flagged `outlier` (log-width z > 5). "
-        "They are the end of a continuous tail of big-chirp durations (main mode 5–20 ms) "
-        "spread over many inferred groups, not obvious artefacts. Keep them excluded?"
-    )
-    add(
-        "3. **Source balance.** The 10 largest inferred groups hold most templates. Sample "
-        "uniformly over templates (current) or first over groups? Groups are only inferred "
-        "from EODf continuity."
-    )
-    add(
-        "4. **Amplitude for templates without usable AM** (most of them): no AM, AM borrowed "
-        "from a usable template of the same family (decoupled from its FM), or a measured "
-        "per-family dip distribution? The library leaves this to the simulator."
-    )
-    add(
-        "5. **Filter-gain correction** of the amplitude: keep (default, fundamental-only "
-        "upper bound) or turn off (`amp_filter_correction=False`)? The truth lies between, "
-        "depending on harmonic content, which is not recoverable."
-    )
-    add(
-        "6. **Frequency trace**: `smooth_freq` (default; 3–9% lower peaks for brief chirps) "
-        "or `orig_freq` (sharper but with beat-driven cycle spikes)."
-    )
-    add(
-        f"7. **Family threshold** {cfg['big_chirp_threshold_hz']:.0f} Hz and **ripple "
-        f"threshold** {cfg['ripple_score_max']} were set from the data; adjust if the "
-        "simulator needs stricter templates."
-    )
-    add(
-        "8. **Temperature and sex** are unknown per chirp; `baseline_hz` is the only "
-        "conditioning variable. Conditioning on EODf assumes all recordings were made at "
-        "similar temperatures.\n"
-    )
-
     add("## Files\n")
     add(
-        "- `delta_f_hz.npy`, `amp_rel.npy`: float32 (n, samples); row i ↔ `template_id` i "
-        "↔ h5 row `source_row` i.\n"
-        "- `templates.parquet`: metadata and flags; `near_duplicate_pairs.parquet`: scored "
-        "candidate pairs.\n"
-        "- `manifest.json`: config, source file size/mtime/sha256, code version, output "
-        "hashes, counts.\n"
-        "- `figures/`: distributions, families, flags, v1_comparison, eodf, "
-        "amplitude_evidence.\n"
+        "- `delta_f_hz.npy`, `amp_rel.npy`: float32 (n, 8000); row i ↔ `template_id` i ↔ "
+        "h5 row `source_row` i.\n"
+        "- `templates.parquet` (metadata, flags), `near_duplicate_pairs.parquet`, "
+        "`manifest.json` (config, source size/mtime/sha256, code version, hashes, counts).\n"
+        "- `figures/`: distributions, families, flags, equalization, crossfade, "
+        "v1_comparison, eodf, amplitude_evidence.\n"
     )
+    del rng
     return "\n".join(lines) + "\n"

@@ -24,20 +24,24 @@ def test_write_report(
     h5_path, _ = synthetic_h5
     out = tmp_path / "library"
     build_library(h5_path, out, BuildConfig())
-    path = write_report(out, h5_path=h5_path, n_evidence_rows=5)
+    path = write_report(
+        out, h5_path=h5_path, compare_with=tmp_path / "missing", n_evidence_rows=5
+    )
     text = path.read_text()
     assert path == out / "report.md"
     for heading in (
-        "## 1.",
-        "## 3. Amplitude",
-        "## 4. Quality control",
-        "## 6. Decisions",
+        "## 1. Consistency with the thesis",
+        "## 4. Exclusions",
+        "## 5. Histogram equalization",
+        "## 6. Amplitude",
+        "## 8. Open questions",
     ):
         assert heading in text
     for name in (
         "distributions",
         "families",
         "flags",
+        "equalization",
         "v1_comparison",
         "eodf",
         "amplitude_evidence",

@@ -78,3 +78,32 @@ def test_process_snippet_flags_truncated(source_row: Callable[..., SourceRow]) -
     assert out.delta_f_hz[-1] == 0.0
     assert out.amp_rel[0] == 1.0
     assert out.amp_rel[-1] == 1.0
+
+
+@pytest.mark.parametrize(("duration_s", "centre"), [(0.15, 4000.0), (0.25, 3600.0)])
+def test_long_chirps_are_kept_whole(
+    source_row: Callable[..., SourceRow], duration_s: float, centre: float
+) -> None:
+    row = source_row(
+        seed=6,
+        excursion_hz=400.0,
+        plateau_s=duration_s,
+        chirp_centre=centre,
+        amp_dip=0.5,
+    )
+    traces = {k: v.astype(np.float64) for k, v in row.traces.items()}
+    config = BuildConfig()
+    out = process_snippet(traces, FS, config)
+    assert config.n_samples(FS) == N_SOURCE
+    assert not out.truncated
+    assert not out.template_cut
+    assert out.metrics.excursion_hz == pytest.approx(400.0, rel=0.02)
+    assert out.metrics.duration_50_s == pytest.approx(duration_s, rel=0.02)
+    assert out.analysis.baseline_eodf_hz == pytest.approx(800.0, abs=0.5)
+    assert out.delta_f_hz[0] == 0.0
+    assert out.delta_f_hz[-1] == 0.0
+    assert out.amp_rel[0] == 1.0
+    assert out.amp_rel[-1] == 1.0
+    # the whole plateau is in the template, untouched by the taper
+    inside = np.abs(np.arange(N_SOURCE) - N_SOURCE // 2) < (duration_s / 2 - 0.005) * FS
+    assert np.all(out.delta_f_hz[inside] > 0.9 * 400.0)

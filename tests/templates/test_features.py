@@ -172,3 +172,38 @@ def test_step_score_detects_jump_not_smooth_chirp() -> None:
     stepped = smooth.copy()
     stepped[6000:] *= 0.9
     assert step_score(stepped, min_step=0.005) > 20.0
+
+
+def test_crossings_bridge_brief_internal_dips() -> None:
+    # a 60 ms plateau with a 1 ms dip to zero in the middle (a phase slip)
+    delta = np.zeros(N)
+    delta[CENTRE - 600 : CENTRE + 600] = 300.0
+    delta[CENTRE + 100 : CENTRE + 120] = 0.0
+    peak = CENTRE - 300
+    unbridged = level_crossings(delta, peak, 0.5)
+    bridged = level_crossings(delta, peak, 0.5, max_gap=100)
+    assert unbridged.offset < CENTRE + 101
+    assert bridged.offset == pytest.approx(CENTRE + 599.5, abs=1.0)
+    # gaps longer than max_gap still split events
+    delta[CENTRE + 100 : CENTRE + 300] = 0.0
+    assert level_crossings(delta, peak, 0.5, max_gap=100).offset < CENTRE + 101
+
+
+def test_bridging_does_not_merge_baseline_ripple() -> None:
+    from gridtools.templates.features import chirp_crossings
+
+    t = np.arange(N) / FS
+    chirp = gaussian_chirp(N, CENTRE, 60.0, 0.008)
+    ripple = 12.0 * np.sin(2 * np.pi * 120.0 * t)  # above 10% of 60 Hz, gaps < 5 ms
+    delta = chirp + ripple
+    peak = int(np.argmax(delta))
+    c10, c50 = chirp_crossings(delta, peak, max_gap=100)
+    assert c10.width / FS < 0.03
+    assert c50.width / FS == pytest.approx(0.008, abs=0.003)
+    # a plateau with a brief dip below 10% stays one event
+    plateau = np.zeros(N)
+    plateau[CENTRE - 600 : CENTRE + 600] = 300.0
+    plateau[CENTRE + 100 : CENTRE + 120] = 0.0
+    c10, c50 = chirp_crossings(plateau, CENTRE - 300, max_gap=100)
+    assert c50.width == pytest.approx(1199, abs=2)
+    assert c10.width == pytest.approx(1199, abs=2)

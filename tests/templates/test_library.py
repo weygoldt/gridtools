@@ -112,7 +112,12 @@ def test_select_by_flags_and_family(built: Path) -> None:
         lib.select(exclude=("no_such_flag",))
 
 
-def make_library(n: int, duplicate_of: list[int] | None = None) -> TemplateLibrary:
+def make_library(
+    n: int,
+    duplicate_of: list[int] | None = None,
+    excursion_hz: list[float] | None = None,
+    duration_s: list[float] | None = None,
+) -> TemplateLibrary:
     """Tiny in-memory library whose template i has value i everywhere."""
     values = np.arange(n, dtype=np.float32)[:, None] * np.ones((1, 8), dtype=np.float32)
     meta = pd.DataFrame(
@@ -120,6 +125,8 @@ def make_library(n: int, duplicate_of: list[int] | None = None) -> TemplateLibra
             "template_id": np.arange(n),
             "duplicate_of": duplicate_of if duplicate_of is not None else [-1] * n,
             "family": ["small"] * n,
+            "excursion_hz": excursion_hz if excursion_hz is not None else [60.0] * n,
+            "duration_10_s": duration_s if duration_s is not None else [0.015] * n,
         }
     )
     return TemplateLibrary(values, np.ones_like(values), meta, FS)
@@ -129,7 +136,7 @@ def test_sample_without_duplicate_inflation() -> None:
     # templates 3 and 4 duplicate template 0: the pool has 5 distinct chirps, not 7
     lib = make_library(7, duplicate_of=[-1, -1, -1, 0, 0, -1, -1])
     np.testing.assert_array_equal(lib.unique_ids(), [0, 1, 2, 5, 6])
-    draw = lib.sample(np.random.default_rng(0), 23)
+    draw = lib.sample(np.random.default_rng(0), 23, equalize=False)
     counts = np.bincount(draw.template_ids, minlength=7)
     assert counts[3] == 0
     assert counts[4] == 0
@@ -143,24 +150,84 @@ def test_sample_without_duplicate_inflation() -> None:
 
 def test_sample_no_repeats_when_pool_suffices() -> None:
     lib = make_library(50)
-    ids = lib.sample(np.random.default_rng(3), 50).template_ids
+    ids = lib.sample(np.random.default_rng(3), 50, equalize=False).template_ids
     assert len(set(ids.tolist())) == 50
 
 
-def test_sample_is_deterministic_under_seed() -> None:
-    lib = make_library(20)
-    a = lib.sample(np.random.default_rng(123), 45).template_ids
-    b = lib.sample(np.random.default_rng(123), 45).template_ids
-    c = lib.sample(np.random.default_rng(124), 45).template_ids
+@pytest.mark.parametrize("equalize", [False, True])
+def test_sample_is_deterministic_under_seed(equalize: bool) -> None:
+    lib = skewed_library()
+    a = lib.sample(np.random.default_rng(123), 45, equalize=equalize).template_ids
+    b = lib.sample(np.random.default_rng(123), 45, equalize=equalize).template_ids
+    c = lib.sample(np.random.default_rng(124), 45, equalize=equalize).template_ids
     np.testing.assert_array_equal(a, b)
     assert not np.array_equal(a, c)
 
 
 def test_cycler_balances_across_calls() -> None:
     lib = make_library(6)
-    cycler = lib.cycler(np.random.default_rng(5))
+    cycler = lib.cycler(np.random.default_rng(5), equalize=False)
     ids = np.concatenate([cycler.draw(1) for _ in range(18)])
     np.testing.assert_array_equal(np.bincount(ids, minlength=6), [3] * 6)
+
+
+def skewed_library() -> TemplateLibrary:
+    """100 short small chirps, 5 mid-sized, 1 long big chirp, 1 exact duplicate."""
+    excursion = [50.0 + 0.1 * i for i in range(100)] + [250.0] * 5 + [500.0, 500.0]
+    duration = [0.012 + 1e-5 * i for i in range(100)] + [0.03] * 5 + [0.2, 0.2]
+    duplicate_of = [-1] * 106 + [105]
+    return make_library(107, duplicate_of, excursion, duration)
+
+
+def test_equalization_bins_equal_width() -> None:
+    lib = skewed_library()
+    eq = lib.equalization_bins((10, 10))
+    assert eq.template_ids.size == 106  # the duplicate is not in the pool
+    np.testing.assert_allclose(np.diff(eq.excursion_edges_hz), (500.0 - 50.0) / 10)
+    np.testing.assert_allclose(np.diff(eq.duration_edges_s), (0.2 - 0.012) / 10)
+    assert eq.counts.sum() == 106
+    assert eq.n_nonempty == 3
+    # the largest and longest template falls into the last bin
+    assert eq.counts[-1, -1] == 1
+    table = eq.table()
+    assert table.shape == (10, 10)
+    assert int(table.to_numpy().sum()) == 106
+
+
+def test_equalized_sampling_balances_bins_and_members() -> None:
+    lib = skewed_library()
+    n = 3000
+    ids = lib.sample(np.random.default_rng(0), n, equalize=True).template_ids
+    counts = np.bincount(ids, minlength=107)
+    assert counts[106] == 0  # duplicate never drawn
+    # each of the 3 non-empty bins gets n / 3 draws
+    assert counts[:100].sum() == n // 3
+    assert counts[100:105].sum() == n // 3
+    assert counts[105] == n // 3
+    # within a bin, members are used evenly (successive permutations)
+    assert counts[:100].max() - counts[:100].min() <= 1
+    assert counts[100:105].max() - counts[100:105].min() <= 1
+    eq = lib.equalization_bins()
+    expected = dict(
+        zip(eq.template_ids.tolist(), eq.expected_draws(n).tolist(), strict=True)
+    )
+    assert expected[105] == pytest.approx(1000.0)
+    assert expected[0] == pytest.approx(10.0)
+
+
+def test_equalized_cycler_balances_across_calls() -> None:
+    lib = skewed_library()
+    cycler = lib.cycler(np.random.default_rng(9), equalize=True)
+    assert cycler.n_groups == 3
+    ids = np.concatenate([cycler.draw(1) for _ in range(30)])
+    bins = np.where(ids < 100, 0, np.where(ids < 105, 1, 2))
+    np.testing.assert_array_equal(np.bincount(bins), [10, 10, 10])
+
+
+def test_natural_sampling_follows_the_pool() -> None:
+    lib = skewed_library()
+    ids = lib.sample(np.random.default_rng(1), 106, equalize=False).template_ids
+    assert sorted(ids.tolist()) == list(range(106))
 
 
 def test_get_and_rows_of() -> None:
