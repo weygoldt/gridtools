@@ -21,7 +21,12 @@ class BuildConfig:
     ----------
     template_duration_s
         Length of every template. The alignment point sits at sample
-        ``n_samples // 2``.
+        ``n_samples // 2``. The default equals the source window (0.4 s), so
+        no chirp is cut by the template: a support of up to 0.2 s on either
+        side of the alignment point fits (the build reports any that do not).
+    crossing_bridge_s
+        Dips below a crossing level shorter than this are bridged, so long
+        chirps with brief internal dips count as one event.
     freq_source
         Frequency trace used for ``delta_f_hz``: ``"smooth"`` (Gaussian,
         sigma = 1 ms, applied by the extraction code) or ``"orig"``
@@ -66,6 +71,8 @@ class BuildConfig:
     step_score_max
         ``step_flag`` is set when a single-sample jump in a smoothed trace
         exceeds this multiple of the local slope scale.
+    duplicate_window_s
+        Length of the aligned traces compared for duplicate detection.
     duplicate_corr_min
         Minimum correlation of the aligned, untapered frequency traces of a
         near-duplicate pair.
@@ -87,12 +94,14 @@ class BuildConfig:
         The baseline EODf is reported only when the per-knot estimates agree
         to within this median absolute deviation.
     min_baseline_s
-        Minimum duration of baseline samples needed for a valid baseline.
+        Baseline duration wanted; for long chirps the exclusion margins
+        shrink until at least this much baseline remains.
     chunk_rows
         Rows read from the HDF5 file at a time.
     """
 
-    template_duration_s: float = 0.2
+    template_duration_s: float = 0.4
+    crossing_bridge_s: float = 0.005
     freq_source: TraceKind = "smooth"
     amp_source: TraceKind = "smooth"
     amp_filter_correction: bool = True
@@ -110,6 +119,7 @@ class BuildConfig:
     amp_ripple_max: float = 0.02
     amp_dip_to_ripple_min: float = 3.0
     step_score_max: float = 20.0
+    duplicate_window_s: float = 0.2
     duplicate_corr_min: float = 0.999
     duplicate_fingerprint_corr_min: float = 0.99
     duplicate_candidate_corr_min: float = 0.9

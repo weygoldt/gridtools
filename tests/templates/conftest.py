@@ -36,6 +36,17 @@ def gaussian_chirp(
     return excursion_hz * np.exp(-0.5 * ((t - centre) / sigma) ** 2)
 
 
+def plateau_chirp(
+    n: int, centre: float, excursion_hz: float, duration_s: float, fs: float = FS
+) -> npt.NDArray[np.float64]:
+    """Long chirp: a plateau of ``duration_s`` (at half height) with 1 ms edges."""
+    t = (np.arange(n, dtype=np.float64) - centre) / fs
+    edge = 0.001
+    rise = 1.0 / (1.0 + np.exp(-(t + duration_s / 2) / edge))
+    fall = 1.0 / (1.0 + np.exp((t - duration_s / 2) / edge))
+    return excursion_hz * rise * fall
+
+
 @dataclass(frozen=True)
 class SourceRow:
     """One synthetic source row plus its ground truth."""
@@ -60,12 +71,20 @@ def make_source_row(
     jitter_s: float = 2e-6,
     ripple_hz: float = 0.0,
     ripple_freq_hz: float = 30.0,
+    plateau_s: float = 0.0,
 ) -> SourceRow:
-    """Synthesise one stored row the way the thesis extraction produced it."""
+    """Synthesise one stored row the way the thesis extraction produced it.
+
+    With ``plateau_s > 0`` the chirp is a plateau of that length (1 ms
+    logistic edges) instead of a Gaussian, and ``fwhm_s`` is ignored.
+    """
     n = N_SOURCE
     t = np.arange(n) / FS
     # absolute instantaneous frequency on a fine grid, integrate to get zero crossings
-    excursion = gaussian_chirp(n, chirp_centre, excursion_hz, fwhm_s)
+    if plateau_s > 0:
+        excursion = plateau_chirp(n, chirp_centre, excursion_hz, plateau_s)
+    else:
+        excursion = gaussian_chirp(n, chirp_centre, excursion_hz, fwhm_s)
     ripple = ripple_hz * np.sin(
         2 * np.pi * ripple_freq_hz * t + rng.uniform(0, 2 * np.pi)
     )

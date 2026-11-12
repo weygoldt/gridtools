@@ -24,7 +24,7 @@ from gridtools.templates.features import (
     extraction_filter_gain,
     measure_template,
 )
-from gridtools.templates.qc import exact_duplicates, near_duplicates, robust_z
+from gridtools.templates.qc import exact_duplicates, near_duplicates
 from gridtools.templates.source import (
     describe_source_file,
     find_wrap_index,
@@ -70,13 +70,16 @@ class ProcessedSnippet:
         Largest gain change of the extraction filter within the support
         (1 if no correction was applied).
     untapered_delta_hz
-        Aligned, baseline-subtracted frequency trace before tapering, used
-        for near-duplicate detection (shape).
+        Aligned, baseline-subtracted frequency trace before tapering
+        (``duplicate_window_s`` long), used for near-duplicate detection.
     fingerprint_hz
         Aligned ``orig_freq - smooth_freq``: cycle-to-cycle jitter of the
         recording, used for near-duplicate detection.
     truncated
-        The chirp support did not fit into the source window or template.
+        The chirp support plus ramps runs into the edge of the source window.
+    template_cut
+        The template length cut source-backed support (never expected with
+        the default length; counted in the manifest).
     support_start_s, support_stop_s
         Untapered support in template time (seconds from the centre).
     metrics
@@ -92,6 +95,7 @@ class ProcessedSnippet:
     untapered_delta_hz: FloatArray
     fingerprint_hz: FloatArray
     truncated: bool
+    template_cut: bool
     support_start_s: float
     support_stop_s: float
     metrics: TemplateMetrics
@@ -138,8 +142,10 @@ def process_snippet(
         min_baseline_s=config.min_baseline_s,
         knot_threshold=config.knot_threshold,
         knot_mad_max_hz=config.knot_mad_max_hz,
+        bridge_samples=round(config.crossing_bridge_s * fs),
     )
     centre = analysis.align_index
+    n_dup = round(config.duplicate_window_s * fs)
     freq_crop, valid_start, valid_stop = crop_centred(
         np.nan_to_num(freq, nan=analysis.baseline_freq),
         centre,
@@ -153,6 +159,12 @@ def process_snippet(
         analysis.baseline_amp,
     )
     delta = freq_crop - analysis.baseline_freq
+    shape, _, _ = crop_centred(
+        np.nan_to_num(freq, nan=analysis.baseline_freq) - analysis.baseline_freq,
+        centre,
+        n_dup,
+        0.0,
+    )
     # cycle-to-cycle jitter outside the chirp (inside it, orig - smooth follows
     # the chirp's curvature, which is shared by similar chirps)
     jitter = np.nan_to_num(unrolled["orig_freq"] - unrolled["smooth_freq"])
@@ -164,7 +176,7 @@ def process_snippet(
         int(analysis.crossing_10.offset + config.baseline_exclusion_post_s * fs) + 1
     )
     jitter[exclude_start:exclude_stop] = 0.0
-    fingerprint, _, _ = crop_centred(jitter, centre, n_out, 0.0)
+    fingerprint, _, _ = crop_centred(jitter, centre, n_dup, 0.0)
     ratio = (
         amp_crop / analysis.baseline_amp
         if analysis.baseline_amp > 0
@@ -188,10 +200,21 @@ def process_snippet(
             eodf, eodf
         )
     amp_rel = apply_taper_ratio(ratio / gain, window.weights)
+    # truncated: the support plus ramps runs into the edge of the source window
+    ramp = config.taper_ramp_s * fs
+    wanted_start = analysis.support_start - ramp
+    wanted_stop = analysis.support_stop + ramp
+    n_source = freq.size
     truncated = (
-        window.truncated
+        wanted_start < 0
+        or wanted_stop > n_source - 1
         or analysis.crossing_10.onset_clipped
         or analysis.crossing_10.offset_clipped
+    )
+    # the template length cuts source-backed support (should never happen)
+    template_cut = (
+        max(wanted_start, 0.0) < first
+        or min(wanted_stop, n_source - 1.0) > first + n_out - 1
     )
     metrics = measure_template(
         delta_f,
@@ -200,6 +223,7 @@ def process_snippet(
         undershoot_window_s=config.undershoot_window_s,
         prominence_rel=config.multi_peak_prominence_rel,
         prominence_hz=config.multi_peak_prominence_hz,
+        bridge_samples=round(config.crossing_bridge_s * fs),
     )
     in_support = window.weights > 0
     half = n_out // 2
@@ -210,9 +234,10 @@ def process_snippet(
         amp_rel=amp_rel,
         amp_dip_uncorrected=float(1.0 - np.min(amp_rel_uncorrected)),
         filter_gain_max=float(np.max(gain[in_support])) if in_support.any() else 1.0,
-        untapered_delta_hz=delta,
+        untapered_delta_hz=shape,
         fingerprint_hz=fingerprint,
         truncated=bool(truncated),
+        template_cut=bool(template_cut),
         support_start_s=(window.support_start - half) / fs,
         support_stop_s=(window.support_stop - half) / fs,
         metrics=metrics,
@@ -261,6 +286,7 @@ def _snippet_record(
         "valid": a.valid and snippet.wrap_index >= 0,
         "has_nan": a.has_nan,
         "truncated": snippet.truncated,
+        "template_cut": snippet.template_cut,
         "clipped": m.clipped,
     }
 
@@ -312,8 +338,9 @@ def process_source(h5_path: Path | str, config: BuildConfig) -> ProcessedSource:
     n_out = config.n_samples(fs)
     delta_all = np.zeros((n_rows, n_out), dtype=np.float32)
     amp_all = np.ones((n_rows, n_out), dtype=np.float32)
-    shape = np.zeros((n_rows, n_out), dtype=np.float32)
-    fingerprint = np.zeros((n_rows, n_out), dtype=np.float32)
+    n_dup = round(config.duplicate_window_s * fs)
+    shape = np.zeros((n_rows, n_dup), dtype=np.float32)
+    fingerprint = np.zeros((n_rows, n_dup), dtype=np.float32)
     hashes: list[bytes] = []
     records: list[dict[str, Any]] = []
     for chunk in iter_source_chunks(h5_path, config.chunk_rows):
@@ -455,9 +482,6 @@ def _quality_control(
     meta["max_shape_corr_partner"] = near.shape_partner
     meta["max_fingerprint_corr"] = near.max_fingerprint_corr
 
-    outlier, reason = _outliers(meta)
-    meta["outlier"] = outlier
-    meta["outlier_reason"] = reason
     amp_usable = ~meta["amp_ripple_flag"] & ~meta["step_flag"] & meta["valid"]
     if config.amp_filter_correction:
         amp_usable &= meta["baseline_hz"].notna()
@@ -505,31 +529,6 @@ def inferred_groups(
     jump = np.abs(np.diff(baseline_hz))
     breaks = ~(jump <= jump_hz)  # NaN starts a new group
     return np.concatenate([[0], np.cumsum(breaks)]).astype(np.int64)
-
-
-def _outliers(meta: pd.DataFrame) -> tuple[npt.NDArray[np.bool_], list[str]]:
-    """Flag templates whose frequency shape is far outside the bulk of their family.
-
-    Criteria: log full width at 10% or 50% more than 5 robust standard
-    deviations from the family median, or an undershoot deeper than the
-    excursion. Amplitude anomalies are covered by ``amp_ripple_flag``.
-    """
-    reasons: list[list[str]] = [[] for _ in range(len(meta))]
-    for family in ("small", "big"):
-        sel = (meta["family"] == family).to_numpy() & meta["valid"].to_numpy()
-        for column in ("duration_10_s", "duration_50_s"):
-            z = robust_z(np.log(meta.loc[sel, column].to_numpy()))
-            for i, zi in zip(np.flatnonzero(sel), z, strict=True):
-                if np.isfinite(zi) and abs(zi) > 5:
-                    reasons[i].append(f"{column}_z={zi:.1f}")
-    valid = meta["valid"].to_numpy(dtype=bool)
-    deep = (meta["undershoot_hz"] > meta["excursion_hz"]).to_numpy(dtype=bool)
-    for i in np.flatnonzero(~valid):
-        reasons[i].append("invalid")
-    for i in np.flatnonzero(deep):
-        reasons[i].append("undershoot>excursion")
-    flags = np.array([bool(r) for r in reasons], dtype=bool)
-    return flags, [";".join(r) for r in reasons]
 
 
 def _add_v1_membership(
@@ -596,6 +595,7 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         return meta[name].to_numpy(dtype=bool)
 
     kind = meta["duplicate_kind"].to_numpy()
+    # the default exclusions of TemplateLibrary.select, in this order
     criteria: list[tuple[str, npt.NDArray[np.bool_]]] = [
         ("invalid", ~col("valid")),
         ("has_nan", col("has_nan")),
@@ -603,10 +603,7 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         ("near_duplicate", kind == "near"),
         ("truncated", col("truncated")),
         ("step_artefact", col("step_flag")),
-        ("multi_peak", col("multi_peak")),
-        ("outlier", col("outlier")),
         ("eodf_atypical", col("eodf_atypical")),
-        ("ripple_flag", col("ripple_flag")),
     ]
     flagged = {name: int(mask.sum()) for name, mask in criteria}
     keep = np.ones(len(meta), dtype=bool)
@@ -618,14 +615,35 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
     per_family = {
         str(family): int(np.sum(families == family)) for family in ("small", "big")
     }
+    informational = {
+        name: {
+            "all": int(col(name).sum()),
+            "in_default_selection": int((keep & col(name)).sum()),
+        }
+        for name in ("multi_peak", "ripple_flag", "amp_ripple_flag")
+    }
+    duration = meta["duration_10_s"].to_numpy(dtype=float)
+    excursion = meta["excursion_hz"].to_numpy(dtype=float)
+    support = (meta["support_stop_s"] - meta["support_start_s"]).to_numpy(dtype=float)
+    longest = int(np.nanargmax(np.where(keep, duration, np.nan)))
     return {
         "flagged": flagged,
         "cumulative": cumulative,
         "default_selection_per_family": per_family,
+        "informational_flags": informational,
         "amp_usable_in_default_selection": int((keep & col("amp_usable")).sum()),
         "baseline_hz_recovered": int(
             np.isfinite(meta["baseline_hz"].to_numpy(dtype=float)).sum()
         ),
+        "template_cut": int(col("template_cut").sum()),
+        "longest_chirp": {
+            "template_id": int(meta["template_id"].to_numpy()[longest]),
+            "duration_10_s": float(duration[longest]),
+            "excursion_hz": float(excursion[longest]),
+        },
+        "max_duration_10_s_all": float(np.nanmax(duration)),
+        "max_support_s_all": float(np.nanmax(support)),
+        "max_excursion_hz_default": float(np.nanmax(np.where(keep, excursion, np.nan))),
     }
 
 

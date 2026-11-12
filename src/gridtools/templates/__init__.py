@@ -14,6 +14,8 @@ from gridtools.templates.build import build_library
 from gridtools.templates.config import BuildConfig
 from gridtools.templates.library import (
     DEFAULT_EXCLUDE,
+    EQUALIZE_DURATION_COLUMN,
+    EqualizationBins,
     TemplateCycler,
     TemplateLibrary,
     TemplateSample,
@@ -24,7 +26,9 @@ from gridtools.templates.report import write_report
 __all__ = [
     "DEFAULT_DIP_RANGE",
     "DEFAULT_EXCLUDE",
+    "EQUALIZE_DURATION_COLUMN",
     "BuildConfig",
+    "EqualizationBins",
     "TemplateCycler",
     "TemplateLibrary",
     "TemplateSample",
