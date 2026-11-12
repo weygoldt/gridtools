@@ -939,6 +939,8 @@ def build_background_library(
             results = [f.result() for f in futures]
     rows = [row for r, _ in results for row in r]
     manifest = pd.DataFrame(rows, columns=list(MANIFEST_COLUMNS))
+    # keep this build's rows even if the merge below fails
+    manifest.to_pickle(out / "manifest.this_build.pkl")
     processed = set(keys)
     old_path = out / "manifest.parquet"
     if old_path.exists():
@@ -947,6 +949,9 @@ def build_background_library(
         old = pd.DataFrame(old.loc[keep.to_numpy()])
         if "accept" not in old.columns:
             old["accept"] = True
+        for column in MANIFEST_COLUMNS:  # columns added since the old build
+            if column not in old.columns:
+                old[column] = None
         old = pd.DataFrame(old[list(MANIFEST_COLUMNS)])
         manifest = (
             pd.concat([old, manifest], ignore_index=True) if len(old) else manifest

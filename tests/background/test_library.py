@@ -304,3 +304,18 @@ def test_bad_channels_can_be_allowed(library: BackgroundLibrary) -> None:
     )
     assert seg.noisy_channels == [2]
     assert seg.channels == tuple(range(ROWS * COLUMNS))
+
+
+def test_incremental_build_upgrades_an_old_manifest(
+    make_trial: Callable[..., Trial], tmp_path: Path
+) -> None:
+    a, b = make_trial("trial-a", seed=1), make_trial("trial-b", seed=2)
+    root = tmp_path / "lib"
+    build_background_library([a.source, b.source], root, CONFIG)
+    old = pd.read_parquet(root / "manifest.parquet").drop(
+        columns=["noisy_channels", "spacing_known", "accept"]
+    )
+    old.to_parquet(root / "manifest.parquet", index=False)
+    merged = build_background_library([b.source], root, CONFIG)
+    assert set(merged["recording"]) == {"trial-a", "trial-b"}
+    assert merged.loc[merged["recording"] == "trial-b", "noisy_channels"].notna().all()
