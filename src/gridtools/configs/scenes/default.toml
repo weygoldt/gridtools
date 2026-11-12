@@ -63,13 +63,13 @@ amplitude_log_sd = 0.2
 phase_sd_rad = 0.2
 
 [chirps]
-library = "/mnt/data1/chirp_v2/templates/v3"
+library = "/mnt/data1/chirp_v2/templates/v4"
 families = ["small", "big"]
 exclude = ["invalid", "has_nan", "duplicate", "truncated", "step_flag",
            "too_short"]                # the library's default exclusions
 equalize = true
 equalize_bins = [10, 10]             # excursion x width at 10 %
-# Library sampling options; omitted = the library's defaults (v3: "log", 0.6):
+# Library sampling options; omitted = the library's defaults (v4: "log", 0.6, "individual"):
 # equalize_spacing = "log"           # or "linear"
 # equalize_alpha = 0.6               # bin weight count**(1 - alpha); 1 = flat
 # equalize_balance = "individual"    # library v4

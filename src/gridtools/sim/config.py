@@ -51,7 +51,7 @@ IntRange = tuple[int, int]
 #: demonstrable artefacts and events shorter than 5 ms).
 DEFAULT_TEMPLATE_EXCLUDE: tuple[str, ...] = tuple(_LIBRARY_EXCLUDE)
 
-DEFAULT_LIBRARY = "/mnt/data1/chirp_v2/templates/v3"
+DEFAULT_LIBRARY = "/mnt/data1/chirp_v2/templates/v4"
 
 
 def _check_range(
@@ -410,7 +410,7 @@ class ChirpConfig:
     Attributes
     ----------
     library : str
-        Path of the template library (default ``/mnt/data1/chirp_v2/templates/v3``).
+        Path of the template library (default ``/mnt/data1/chirp_v2/templates/v4``).
     families : tuple of str
         Template families to draw from (``"small"``, ``"big"``; default both).
     exclude : tuple of str
