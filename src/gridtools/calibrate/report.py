@@ -88,6 +88,7 @@ def _style(ax: Axes) -> None:
 
 
 def _save(fig: Figure, path: Path) -> str:
+    fig.set_layout_engine("constrained")
     fig.savefig(path, dpi=130, bbox_inches="tight", facecolor="#fcfcfb")
     import matplotlib.pyplot as plt
 
@@ -440,21 +441,22 @@ def _fig_movement(cal: Calibration, path: Path) -> str:
             ax.plot([0, 1], [d_value, l_value], color=GRAY, linewidth=0.5)
         ax.scatter(np.zeros(dark.size), dark, s=12, color=BLUE, zorder=3)
         ax.scatter(np.ones(light.size), light, s=12, color=BLUE, zorder=3)
-        for k, (name, s) in enumerate(sims.items()):
+        for k, sim in enumerate(sims.values()):
             ax.scatter(
-                [1.6 + 0.12 * k], [s[key]], s=24, marker="D", color=ORANGE, zorder=3
+                [1.6 + 0.12 * k], [sim[key]], s=24, marker="D", color=ORANGE, zorder=3
             )
             ax.annotate(
-                name,
-                (1.6 + 0.12 * k, s[key]),
-                fontsize=6,
+                str(k + 1),
+                (1.6 + 0.12 * k, sim[key]),
+                fontsize=7,
                 color=INK_2,
-                rotation=60,
-                xytext=(2, 3),
+                xytext=(0, 5),
                 textcoords="offset points",
+                ha="center",
             )
         ax.set_xticks(
-            [0, 1, 1.6 + 0.06 * len(sims)], ["dark (real)", "light (real)", "simulated"]
+            [0, 1, 1.6 + 0.06 * (len(sims) - 1)],
+            ["dark (real)", "light (real)", "simulated\n(variants 1-n)"],
         )
         ax.set_ylabel(label)
         _style(ax)
@@ -520,6 +522,8 @@ def _fmt(value: Any, digits: int = 3) -> str:
             return "–"
         if v != 0 and (abs(v) < 1e-2 or abs(v) >= 1e5):
             return f"{v:.{digits - 1}e}"
+        if abs(v) >= 10**digits:
+            return f"{v:.0f}"
         return f"{v:.{digits}g}"
     if isinstance(value, list | tuple):
         return "[" + ", ".join(_fmt(v, digits) for v in value) + "]"
@@ -540,7 +544,9 @@ def _param_table(cal: Calibration) -> list[str]:
     ]
     for name, p in cal.parameters.items():
         unc = p.get("uncertainty")
-        if isinstance(unc, Mapping):
+        if isinstance(unc, Mapping) and "q50" in unc:
+            unc_text = _qtext(unc)
+        elif isinstance(unc, Mapping):
             parts = []
             for k, v in unc.items():
                 if isinstance(v, Mapping) and "q50" in v:
@@ -725,10 +731,12 @@ def _report_text(
         "distance do. Resolve before relying on metre values (e.g. from a setup photo or the 2022 SLEAP videos)."
     )
     w(
-        "- **Clicks are mostly recording artefacts**: high-band transients come in pairs 30 ms apart "
-        f"({_fmt(100 * (n['click_interval_fractions']['near_0.03s'] or 0))}% of intervals within a segment), in 2019 at "
-        "10.24-s intervals (a buffer period), and in several 2020 trials as onset/offset pairs 0.1 s apart about once per "
-        "second (consistent with the 100-ms LED sync pulses). Their rate varies by orders of magnitude between trials."
+        "- **Clicks look like recording artefacts, not random events**: "
+        f"{_fmt(100 * (n['click_interval_fractions']['near_0.03s'] or 0))}% of the intervals between clicks within a "
+        f"segment are 30 ± 5 ms (pairs) and {_fmt(100 * (n['click_interval_fractions']['near_0.1s'] or 0))}% are "
+        "0.1 ± 0.01 s. In 60-s spot checks, clicks recurred every 10.24 s in 2019-11-25 (a buffer period?) and came as "
+        "onset/offset pairs 0.1 s apart about once per second in 2020-03-16 (consistent with the 100-ms LED sync "
+        "pulses). Their rate varies by orders of magnitude between trials."
     )
     w("")
     w("## 1. Baseline EODf")
@@ -824,7 +832,8 @@ def _report_text(
     )
     w(
         f"- Apparent Q10 from regressing log EODf on temperature: {_qtext(d['q10_per_fish'], 3)} per fish, higher than "
-        "the 1.37 of Raab et al. 2021 because the decline also contains the dark-to-light transition (activity), which "
+        "the 1.37 of Raab et al. 2021, possibly because the decline also contains the dark-to-light transition "
+        "(activity), which "
         "coincides with cooling."
     )
     w(
@@ -985,10 +994,10 @@ def _report_text(
         )
     w(f"- Dwell times (all): {_qtext(m['dwell_times_3db_s'], 3)} s.")
     w(
-        f"- Simulated ({m['simulated_layout']}): "
+        f"- Simulated ({m['simulated_layout']}; numbers as in the figure): "
         + "; ".join(
-            f"{k}: {v['switches_per_min_3db']:.1f}/min, still {v['still_fraction_3db']:.2f}"
-            for k, v in m["simulated"].items()
+            f"({i}) {k}: {v['switches_per_min_3db']:.1f}/min, still {v['still_fraction_3db']:.2f}"
+            for i, (k, v) in enumerate(m["simulated"].items(), start=1)
         )
     )
     for phase, regime in regimes.items():
@@ -1043,6 +1052,14 @@ def _report_text(
         "- Next-chirp latency to the other fish, observed / null: "
         + ", ".join(f"{k}: {_fmt(v, 2)}" for k, v in lr.items())
         + f". Over 0–1 s: {_fmt(c.get('latency_excess_0_1s'), 2)}; 1–3 s: {_fmt(c.get('latency_excess_1_3s'), 2)}."
+        + (
+            " The other fish's next chirp follows more often than expected from the local chirp rates at "
+            f"latencies of {_fmt(c['latency_ratio_above_1.5_s'][0], 2)}–{_fmt(c['latency_ratio_above_1.5_s'][1], 2)} s "
+            "(3-bin smoothed ratio > 1.5): responses, or co-bursting on time-scales below the 5-s minimum shift. "
+            "A simulator chirp model with a response kernel in this range would reproduce it."
+            if c.get("latency_ratio_above_1.5_s")
+            else ""
+        )
     )
     w("")
     w("## What could not be measured")

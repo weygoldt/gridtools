@@ -74,7 +74,7 @@ class AggregateConfig:
 
     spacing_m: float = 0.5
     missing_2019: tuple[int, ...] = (8,)
-    exponents: tuple[float, ...] = tuple(np.round(np.arange(1.0, 4.01, 0.25), 2))
+    exponents: tuple[float, ...] = tuple(float(v) for v in np.arange(1.0, 4.01, 0.25))
     regularisers_rel: tuple[float, ...] = (
         0.02,
         0.05,
@@ -523,6 +523,15 @@ def _chirp_summary(trials: Sequence[TrialStats]) -> tuple[Json, Json]:
         summary["latency_excess_1_3s"] = float(
             obs[10:30].sum() / max(null[10:30].sum(), 1e-12)
         )
+        # Latency range where the 3-bin smoothed ratio exceeds 1.5.
+        kernel = np.ones(3)
+        smooth = np.convolve(obs, kernel, "same") / np.maximum(
+            np.convolve(null, kernel, "same"), 1e-12
+        )
+        above = centres[smooth > 1.5]
+        summary["latency_ratio_above_1.5_s"] = (
+            [float(above.min()), float(above.max())] if above.size else None
+        )
     else:
         centres = ratio = np.zeros(0)
     extra = {
@@ -941,6 +950,9 @@ def aggregate(
         current=_default(ElectrodeFaultParams, "dead_prob"),
         method="electrodes whose fish fundamental never exceeds the floor by 10 dB in any segment",
         n=noise_summary["electrodes"],
+        note="faults are per recording setup, not independent per electrode: the same channel is dead in "
+        "consecutive trials (see report); per scene, 'one dead electrode' with this probability times the "
+        "electrode count is closer to the data",
     )
     params["gridtools.sim.noise.ElectrodeFaultParams.noisy_prob"] = _param(
         round(
@@ -951,6 +963,7 @@ def aggregate(
         current=_default(ElectrodeFaultParams, "noisy_prob"),
         method="live electrodes with a floor > 6 dB above the trial median",
         n=noise_summary["electrodes"],
+        note="like dead electrodes, noisy ones recur on the same channel in consecutive trials",
     )
     if noise_summary["noisy_factor"]["n"]:
         params["gridtools.sim.noise.ElectrodeFaultParams.noisy_factor"] = _param(
