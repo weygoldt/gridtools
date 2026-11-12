@@ -59,6 +59,10 @@ class BuildConfig:
     eodf_atypical_below_hz
         ``eodf_atypical`` is set for baseline EODf below this value (the
         recovered EODf distribution has an empty gap at 440--540 Hz).
+        Descriptive only since library v3 (the group is kept).
+    min_duration_10_s
+        ``too_short`` is set for templates whose full width at 10% of the
+        excursion is below this value (excluded by default).
     ripple_score_max
         ``ripple_flag`` is set when the RMS of the detrended frequency
         baseline exceeds this fraction of the excursion.
@@ -115,6 +119,7 @@ class BuildConfig:
     multi_peak_prominence_rel: float = 0.3
     multi_peak_prominence_hz: float = 10.0
     eodf_atypical_below_hz: float = 500.0
+    min_duration_10_s: float = 0.005
     ripple_score_max: float = 0.08
     amp_ripple_max: float = 0.02
     amp_dip_to_ripple_min: float = 3.0

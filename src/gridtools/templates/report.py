@@ -566,7 +566,10 @@ def _fig_equalization(
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.2), constrained_layout=True)
     exc = meta["excursion_hz"].to_numpy()
     dur = 1e3 * meta["duration_10_s"].to_numpy()
-    for rows, label in ((natural, "natural"), (equal, "equalized 10 x 10")):
+    for rows, label in (
+        (natural, "natural"),
+        (equal, f"equalized ({eq.spacing} bins)"),
+    ):
         axes[0].hist(
             exc[rows], bins=eq.excursion_edges_hz, histtype="step", lw=1.5, label=label
         )
@@ -720,7 +723,7 @@ def write_report(
         "long, width at 10% >= 50 ms (default)": _pick(dmeta, long_mask, rng),
         "truncated (excluded)": _pick(meta, meta["truncated"].to_numpy(), rng),
         "step artefact (excluded)": _pick(meta, meta["step_flag"].to_numpy(), rng),
-        "eodf_atypical (excluded)": _pick(meta, meta["eodf_atypical"].to_numpy(), rng),
+        "eodf_atypical (kept)": _pick(meta, meta["eodf_atypical"].to_numpy(), rng),
         "multi_peak (kept)": _pick(meta, meta["multi_peak"].to_numpy(), rng),
         "ripple_flag (kept)": _pick(meta, meta["ripple_flag"].to_numpy(), rng),
     }

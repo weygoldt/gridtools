@@ -181,7 +181,7 @@ def skewed_library() -> TemplateLibrary:
 
 def test_equalization_bins_equal_width() -> None:
     lib = skewed_library()
-    eq = lib.equalization_bins((10, 10))
+    eq = lib.equalization_bins((10, 10), spacing="linear")
     assert eq.template_ids.size == 106  # the duplicate is not in the pool
     np.testing.assert_allclose(np.diff(eq.excursion_edges_hz), (500.0 - 50.0) / 10)
     np.testing.assert_allclose(np.diff(eq.duration_edges_s), (0.2 - 0.012) / 10)
@@ -195,9 +195,12 @@ def test_equalization_bins_equal_width() -> None:
 
 
 def test_equalized_sampling_balances_bins_and_members() -> None:
+    # the library v2 scheme: equal-width bins, every non-empty bin equally likely
     lib = skewed_library()
     n = 3000
-    ids = lib.sample(np.random.default_rng(0), n, equalize=True).template_ids
+    ids = lib.sample(
+        np.random.default_rng(0), n, equalize=True, spacing="linear", alpha=1.0
+    ).template_ids
     counts = np.bincount(ids, minlength=107)
     assert counts[106] == 0  # duplicate never drawn
     # each of the 3 non-empty bins gets n / 3 draws
@@ -207,7 +210,7 @@ def test_equalized_sampling_balances_bins_and_members() -> None:
     # within a bin, members are used evenly (successive permutations)
     assert counts[:100].max() - counts[:100].min() <= 1
     assert counts[100:105].max() - counts[100:105].min() <= 1
-    eq = lib.equalization_bins()
+    eq = lib.equalization_bins(spacing="linear")
     expected = dict(
         zip(eq.template_ids.tolist(), eq.expected_draws(n).tolist(), strict=True)
     )
@@ -217,7 +220,9 @@ def test_equalized_sampling_balances_bins_and_members() -> None:
 
 def test_equalized_cycler_balances_across_calls() -> None:
     lib = skewed_library()
-    cycler = lib.cycler(np.random.default_rng(9), equalize=True)
+    cycler = lib.cycler(
+        np.random.default_rng(9), equalize=True, spacing="linear", alpha=1.0
+    )
     assert cycler.n_groups == 3
     ids = np.concatenate([cycler.draw(1) for _ in range(30)])
     bins = np.where(ids < 100, 0, np.where(ids < 105, 1, 2))
@@ -245,3 +250,109 @@ def test_library_validates_shapes() -> None:
         TemplateLibrary(
             np.zeros((3, 4), np.float32), np.ones((3, 4), np.float32), meta, FS
         )
+
+
+def test_default_exclusions_follow_author_decisions() -> None:
+    from gridtools.templates import DEFAULT_EXCLUDE
+
+    assert "eodf_atypical" not in DEFAULT_EXCLUDE  # kept (possibly Eigenmannia)
+    assert "too_short" in DEFAULT_EXCLUDE
+
+
+def test_too_short_flag_falls_back_to_duration() -> None:
+    # libraries built before the flag existed get it from the width at 10%
+    lib = make_library(4, duration_s=[0.003, 0.0049, 0.005, 0.2])
+    np.testing.assert_array_equal(
+        lib.flag_mask("too_short"), [True, True, False, False]
+    )
+    kept = lib.select(exclude=("too_short",))
+    np.testing.assert_array_equal(kept.template_ids, [2, 3])
+
+
+def test_log_bins_are_geometric() -> None:
+    lib = skewed_library()
+    eq = lib.equalization_bins((10, 10), spacing="log")
+    assert eq.spacing == "log"
+    np.testing.assert_allclose(eq.excursion_edges_hz[[0, -1]], [50.0, 500.0])
+    ratios = eq.excursion_edges_hz[1:] / eq.excursion_edges_hz[:-1]
+    np.testing.assert_allclose(ratios, 10**0.1)
+    np.testing.assert_allclose(eq.duration_edges_s[[0, -1]], [0.012, 0.2])
+    assert eq.counts.sum() == 106
+    with pytest.raises(ValueError, match="spacing"):
+        lib.equalization_bins(spacing="cubic")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("alpha", [0.0, 0.3, 0.6, 1.0])
+def test_tempered_bin_probabilities(alpha: float) -> None:
+    lib = skewed_library()
+    eq = lib.equalization_bins((10, 10), spacing="linear")
+    p = eq.bin_probabilities(alpha)
+    counts = eq.counts.ravel().astype(float)
+    assert p.sum() == pytest.approx(1.0)
+    assert np.all(p[counts == 0] == 0)
+    expected = np.where(counts > 0, counts ** (1 - alpha), 0.0)
+    np.testing.assert_allclose(p, expected / expected.sum())
+    per_template = eq.template_probabilities(alpha)
+    assert per_template.sum() == pytest.approx(1.0)
+    # templates of one bin share its probability equally
+    first = eq.bin_of == eq.bin_of[0]
+    np.testing.assert_allclose(per_template[first], per_template[first][0])
+    np.testing.assert_allclose(eq.expected_draws(1000, alpha), 1000 * per_template)
+    with pytest.raises(ValueError, match="alpha"):
+        eq.bin_probabilities(1.5)
+
+
+def test_tempered_sampling_matches_probabilities_and_cycles_members() -> None:
+    lib = skewed_library()
+    n = 20_000
+    alpha = 0.5
+    ids = lib.sample(
+        np.random.default_rng(2), n, spacing="linear", alpha=alpha
+    ).template_ids
+    counts = np.bincount(ids, minlength=107)
+    assert counts[106] == 0
+    eq = lib.equalization_bins((10, 10), spacing="linear")
+    p = eq.bin_probabilities(alpha)
+    per_bin = np.array(
+        [counts[:100].sum(), counts[100:105].sum(), counts[105]], dtype=float
+    )
+    expected = n * p[p > 0]
+    # systematic blocks of 1024 draws: each bin is within one draw of its
+    # expectation per block, far tighter than independent draws (sd ~ 60 here)
+    n_blocks = int(np.ceil(n / 1024))
+    assert np.all(np.abs(per_bin - expected) <= n_blocks)
+    # members of a bin are used evenly (successive permutations)
+    assert counts[:100].max() - counts[:100].min() <= 1
+    assert counts[100:105].max() - counts[100:105].min() <= 1
+
+
+def test_tempered_cycler_balances_across_calls() -> None:
+    lib = skewed_library()
+    cycler = lib.cycler(np.random.default_rng(4), spacing="linear", alpha=0.5)
+    ids = np.concatenate([cycler.draw(1) for _ in range(1024)])
+    bins = np.where(ids < 100, 0, np.where(ids < 105, 1, 2))
+    p = lib.equalization_bins(spacing="linear").bin_probabilities(0.5)
+    # one full systematic block, drawn one at a time
+    assert np.all(np.abs(np.bincount(bins, minlength=3) - 1024 * p[p > 0]) <= 1)
+
+
+def test_alpha_zero_gives_natural_bin_shares() -> None:
+    lib = skewed_library()
+    n = 10_600
+    ids = lib.sample(np.random.default_rng(6), n, spacing="linear", alpha=0.0)
+    counts = np.bincount(ids.template_ids, minlength=107)
+    # natural: every distinct template about equally often
+    assert abs(counts[:106].mean() - 100) < 1e-9
+    assert counts[:106].max() - counts[:106].min() <= 6
+
+
+def test_cycler_validates_weights() -> None:
+    from gridtools.templates import TemplateCycler
+
+    groups = [np.array([0, 1]), np.array([2])]
+    with pytest.raises(ValueError, match="one weight per group"):
+        TemplateCycler(groups, np.random.default_rng(0), weights=[1.0])
+    with pytest.raises(ValueError, match="non-negative"):
+        TemplateCycler(groups, np.random.default_rng(0), weights=[1.0, -1.0])
+    only_first = TemplateCycler(groups, np.random.default_rng(0), weights=[1.0, 0.0])
+    assert set(only_first.draw(10).tolist()) == {0, 1}

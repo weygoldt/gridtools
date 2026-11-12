@@ -24,6 +24,7 @@ from gridtools.templates.features import (
     extraction_filter_gain,
     measure_template,
 )
+from gridtools.templates.library import MIN_DURATION_S
 from gridtools.templates.qc import exact_duplicates, near_duplicates
 from gridtools.templates.source import (
     describe_source_file,
@@ -453,6 +454,7 @@ def _quality_control(
         meta["baseline_hz"].to_numpy(dtype=float), config.group_eodf_jump_hz
     )
     meta["eodf_atypical"] = meta["baseline_hz"] < config.eodf_atypical_below_hz
+    meta["too_short"] = meta["duration_10_s"] < config.min_duration_10_s
     meta["ripple_score"] = meta["ripple_freq_hz"] / meta["excursion_hz"]
     meta["ripple_flag"] = ~(meta["ripple_score"] <= config.ripple_score_max)
     meta["amp_ripple_flag"] = ~(meta["ripple_amp"] <= config.amp_ripple_max) | ~(
@@ -595,6 +597,10 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         return meta[name].to_numpy(dtype=bool)
 
     kind = meta["duplicate_kind"].to_numpy()
+    duration = meta["duration_10_s"].to_numpy(dtype=float)
+    too_short = (
+        col("too_short") if "too_short" in meta.columns else duration < MIN_DURATION_S
+    )
     # the default exclusions of TemplateLibrary.select, in this order
     criteria: list[tuple[str, npt.NDArray[np.bool_]]] = [
         ("invalid", ~col("valid")),
@@ -603,7 +609,7 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
         ("near_duplicate", kind == "near"),
         ("truncated", col("truncated")),
         ("step_artefact", col("step_flag")),
-        ("eodf_atypical", col("eodf_atypical")),
+        ("too_short", too_short),
     ]
     flagged = {name: int(mask.sum()) for name, mask in criteria}
     keep = np.ones(len(meta), dtype=bool)
@@ -620,9 +626,8 @@ def qc_counts(meta: pd.DataFrame) -> dict[str, Any]:
             "all": int(col(name).sum()),
             "in_default_selection": int((keep & col(name)).sum()),
         }
-        for name in ("multi_peak", "ripple_flag", "amp_ripple_flag")
+        for name in ("eodf_atypical", "multi_peak", "ripple_flag", "amp_ripple_flag")
     }
-    duration = meta["duration_10_s"].to_numpy(dtype=float)
     excursion = meta["excursion_hz"].to_numpy(dtype=float)
     support = (meta["support_stop_s"] - meta["support_start_s"]).to_numpy(dtype=float)
     longest = int(np.nanargmax(np.where(keep, duration, np.nan)))
