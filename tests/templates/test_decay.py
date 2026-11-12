@@ -96,3 +96,27 @@ def test_short_chirps_keep_the_v2_support() -> None:
     assert on.analysis.support_start == v2.analysis.support_start
     assert on.metrics.duration_10_s == v2.metrics.duration_10_s
     assert on.metrics.excursion_hz == v2.metrics.excursion_hz
+
+
+def test_support_stops_before_a_following_chirp() -> None:
+    # the decay falls below 10% (45 Hz) at ~0.75 s but the next chirp starts at
+    # 0.78 s, before the decay reaches 2%: the support must not reach into it
+    t = np.arange(round(1.4 * FS)) / FS
+    first = plateau_decay_chirp(t, 0.5, 450.0, 0.15, 0.04)
+    second = plateau_decay_chirp(t, 0.78, 300.0, 0.05, 0.01)
+    delta = np.maximum(first, second)
+    config = BuildConfig(template_duration_s=1.2, decay_level_rel=0.02)
+    snippet = template_from_traces(
+        _traces(delta), FS, config, absolute_freq=True, peak_range=(0, round(0.7 * FS))
+    )
+    a = snippet.analysis
+    assert a.decay is not None
+    assert a.decay.interrupted
+    assert a.crossing_10.offset / FS < 0.78
+    # no 30 ms pad into the next chirp: the support ends at the trough
+    assert a.support_stop == a.chirp_end
+    assert a.support_stop / FS < 0.78
+    # the template ends near the trough, not on the next chirp
+    first_sample = a.align_index - snippet.delta_f_hz.size // 2
+    tail = snippet.delta_f_hz[int(a.chirp_end) - first_sample :]
+    assert tail.max() <= delta[int(a.chirp_end)] + 1.0

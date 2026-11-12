@@ -208,6 +208,7 @@ def template_from_traces(
         peak_range=peak_range,
         absolute_freq=absolute_freq,
         baseline_band=baseline_band,
+        next_event_guard_s=config.taper_ramp_s,
     )
     centre = analysis.align_index
     n_dup = round(config.duplicate_window_s * fs)

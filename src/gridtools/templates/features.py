@@ -206,6 +206,24 @@ def decay_end(
     return DecayEnd(float(trace.size - 1), False, True)
 
 
+def following_rise(
+    delta: FloatArray, start: float, rise_hz: float, smooth_samples: float = 0.0
+) -> float | None:
+    """Start of the next rise after ``start``: the trough before the trace
+    climbs ``rise_hz`` above its running minimum (None if it never does)."""
+    trace = np.asarray(delta, dtype=np.float64)
+    if smooth_samples > 0:
+        trace = gaussian_filter1d(trace, smooth_samples, mode="nearest")
+    i0 = int(np.ceil(start))
+    if i0 >= trace.size:
+        return None
+    segment = trace[i0:]
+    rises = np.flatnonzero(segment - np.minimum.accumulate(segment) > rise_hz)
+    if rises.size == 0:
+        return None
+    return float(i0 + int(np.argmin(segment[: rises[0] + 1])))
+
+
 def _fraction(a: float, b: float, threshold: float) -> float:
     """Position of ``threshold`` between samples with values ``a`` and ``b``."""
     if a == b:
@@ -736,6 +754,7 @@ def analyse_snippet(
     peak_range: tuple[int, int] | None = None,
     absolute_freq: bool = False,
     baseline_band: tuple[float, float] | None = None,
+    next_event_guard_s: float = 0.0,
 ) -> SnippetAnalysis:
     """Locate the chirp in a contiguous snippet and measure its context.
 
@@ -764,8 +783,9 @@ def analyse_snippet(
         offset over a slow decay until the trace (smoothed with sigma
         ``decay_smooth_s``) falls to ``max(decay_level_rel * excursion,
         decay_level_hz)`` (:func:`decay_end`). The baseline exclusion and the
-        support then start from that point. None (default) is the library
-        v1/v2 behaviour.
+        support then start from that point, and the support pad stops
+        ``next_event_guard_s`` before a following chirp. None (default) is
+        the library v1/v2 behaviour.
     peak_range
         Sample range ``[start, stop)`` searched for the excursion peak (the
         chirp of interest when the snippet holds several); None: all.
@@ -875,6 +895,20 @@ def analyse_snippet(
     c10, c50 = chirp_crossings(delta, peak, bridge_samples)
     _, decay = chirp_extent(delta, peak)
     chirp_end = extended(c10, decay).offset
+    support_stop = chirp_end + support_pad_post_s * fs
+    if decay is not None:
+        # never pad into a following chirp: stop ``next_event_guard_s`` before
+        # the trace starts rising by 10% of this excursion again
+        next_onset = following_rise(
+            delta,
+            chirp_end,
+            max(0.1 * excursion, decay_level_hz),
+            decay_smooth_s * fs,
+        )
+        if next_onset is not None:
+            support_stop = max(
+                chirp_end, min(support_stop, next_onset - next_event_guard_s * fs)
+            )
     align = round(c50.midpoint)
 
     min_segment = round(0.02 * fs)
@@ -917,7 +951,7 @@ def analyse_snippet(
         crossing_50=c50,
         align_index=align,
         support_start=c10.onset - support_pad_pre_s * fs,
-        support_stop=chirp_end + support_pad_post_s * fs,
+        support_stop=support_stop,
         baseline_s=float(baseline_s),
         ripple_freq_hz=ripple_freq,
         ripple_amp=ripple_amp,
