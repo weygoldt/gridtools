@@ -138,7 +138,7 @@ def template_from_traces(
     samplerate_hz: float,
     config: BuildConfig,
     *,
-    wrap_index: int = -1,
+    wrap_index: int = 0,
     absolute_freq: bool = False,
     peak_range: tuple[int, int] | None = None,
     baseline_band: tuple[float, float] | None = None,
@@ -162,7 +162,9 @@ def template_from_traces(
     config
         Build configuration.
     wrap_index
-        Recorded as ``ProcessedSnippet.wrap_index`` (source rows only).
+        Position of the window start in the stored row, recorded as
+        ``ProcessedSnippet.wrap_index``: 0 for contiguous traces, -1 if a
+        source row could not be unrolled (the template is then invalid).
     absolute_freq
         The frequency traces are absolute (Hz), not relative to the window
         start; the baseline is then the absolute EODf.
