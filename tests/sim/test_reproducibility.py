@@ -90,9 +90,11 @@ def test_sources_never_use_global_or_internal_seeding() -> None:
         r"np\.random\.(?!Generator\b)|numpy\.random\.(?!Generator\b)"
         r"|default_rng|SeedSequence|^\s*import random|^\s*from random "
     )
+    # seeding.py is the one module that turns a scene seed into generators
     offenders = [
         f"{path.name}:{lineno}: {line.strip()}"
         for path in sorted(package_dir.glob("*.py"))
+        if path.name != "seeding.py"
         for lineno, line in enumerate(path.read_text().splitlines(), start=1)
         if forbidden.search(line)
     ]

@@ -1,0 +1,125 @@
+# Default scene config for `gridtools sim run`.
+#
+# Every key is listed with its default; delete keys to fall back to the
+# defaults, or change them. Ranges are [low, high]; one value is drawn
+# uniformly per scene or per fish (log-uniformly where noted). Units are in
+# the key names. Unknown keys are an error. Documentation of every field:
+# the dataclasses in gridtools.sim.config.
+#
+#   gridtools sim run default --seeds 0:10        # this file
+#   gridtools sim run my.toml --seeds 0:10 --out /mnt/data1/chirp_v2/scenes/my
+
+name = "default"
+duration_s = 120.0
+samplerate_hz = 20000.0
+
+[grid]
+layouts = [[3, 3], [3, 5], [5, 3]]   # (rows, columns), one drawn per scene
+spacing_m = 0.5
+arena_margin_m = 0.25                # tank beyond the outer electrodes
+
+[population]
+n_fish = [1, 5]                      # inclusive
+baseline_hz = [600.0, 1100.0]
+close_pair_prob = 0.5                # fish placed 0-20 Hz from an earlier fish
+close_pair_df_hz = [0.0, 20.0]       # no minimum dF
+crossing_prob = 0.5                  # close pair: ramp across the partner
+ramp_overshoot_hz = [2.0, 10.0]
+ramp_prob = 0.1                      # extra random ramp per fish
+ramp_df_hz = [5.0, 30.0]
+ramp_duration_s = [10.0, 60.0]
+
+[population.drift]                   # individual baseline drift
+sd_hz = 0.5
+timescale_s = 30.0
+control_rate_hz = 1.0
+
+[population.shared_drift]            # relative drift common to all fish
+sd_rel = 0.001
+timescale_s = 300.0
+control_rate_hz = 0.1
+
+[population.harmonics]               # per-fish EOD waveform variation
+amplitude_log_sd = 0.2
+phase_sd_rad = 0.2
+
+[chirps]
+library = "/mnt/data1/chirp_v2/templates/v2"
+families = ["small", "big"]
+exclude = ["invalid", "has_nan", "duplicate", "truncated", "step_flag",
+           "eodf_atypical"]
+equalize = true                      # every non-empty bin equally likely
+equalize_bins = [10, 10]             # equal-width bins: excursion x width at 10 %
+rate_hz = [0.05, 0.5]                # spontaneous chirps/s per fish
+max_rate_hz = 1.0                    # at most duration * this per fish
+min_interval_s = 0.2                 # silence between supports, one fish
+burst_size_mean = 2.0
+burst_gap_s = [0.2, 0.5]             # silence between chirps of a burst
+response_prob = 0.3                  # another fish answers a chirp ...
+response_delay_s = [0.0, 0.5]        # ... this much later
+amplitude_mode = "frequency"         # or "measured" (amp_usable templates)
+dip = [0.0, 0.8]                     # EOD amplitude 100-20 % at the chirp peak
+
+[movement]                           # gridtools.sim.movement.MovementParams
+rate_hz = 30.0
+mean_rest_s = 10.0
+mean_move_s = 20.0
+speed_mean_m_s = 0.1
+speed_shape = 4.0
+speed_max_m_s = 0.5
+speed_fluct_log_sd = 0.3
+speed_fluct_timescale_s = 1.0
+speed_response_s = 0.3
+backward_prob = 0.1
+turn_rate_sd_rad_s = 0.8
+turn_rate_timescale_s = 0.5
+turn_rate_max_rad_s = 6.0
+rest_turn_factor = 0.2
+wall_margin_m = 0.15
+wall_turn_rate_rad_s = 6.0
+
+[field]
+amplitude = [0.5, 2.0]               # log-uniform; sets the recording unit
+fish_depth_m = [0.05, 0.15]
+electrode_depth_m = 0.15
+min_distance_m = 0.1
+distance_exponent = 2.0
+reference_distance_m = 0.1
+
+[noise]
+snr_db = [-15.0, 20.0]               # median fish at 0.5 m vs noise SD
+exponent = [0.5, 1.5]                # 0 white, 1 pink
+f_min_hz = 1.0
+hum_db = [-20.0, 20.0]               # hum fundamental re median fish at 0.5 m
+hum_line_freq_hz = 50.0
+hum_n_harmonics = 5
+gain_mismatch_log_sd = 0.1
+dead_prob = 0.05
+noisy_prob = 0.05
+dead_gain = 0.001
+noisy_factor = 5.0
+# clip_limit = 20.0                  # omit for no clipping
+
+[clicks]
+rate_hz = [0.0, 0.1]
+duration_s = [0.0001, 0.005]         # log-uniform
+amplitude_rel = [10.0, 10000.0]      # x noise SD, log-uniform
+electrodes_mean = 1.5
+spread = [0.1, 1.0]
+burst_prob = 0.5
+
+[tracks]
+step_s = 0.1229                      # frame grid of the 2020 production tracks
+power_nfft = 16384                   # sign_v density reference
+
+[plot]
+enabled = true
+f_min_hz = 500.0
+f_max_hz = 1500.0
+nfft = 4096
+hop = 512
+n_zooms = 6
+zoom_s = 5.0
+zoom_nfft = 512
+zoom_hop = 32
+dpi = 110
