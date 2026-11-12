@@ -138,9 +138,12 @@ class HarvestConfig:
         median power spectrum within this distance of its track frequency
         (the track median can lag a fish that raised its EODf).
     hint_window_s
-        v1's track is a suspect if it has detections within this distance,
-        even when it has none within ``track_window_s`` (the tracker can
-        lose a fish during intense chirping).
+        Wider window used when ``track_window_s`` finds fewer than two
+        tracks or misses v1's track (the tracker can lose a fish during
+        intense chirping).
+    same_fish_hz
+        Suspects whose refined EODf lie closer than this are fragments of
+        one fish's track and are merged.
     probe_gap_s
         Gap between the baseline probe (the context before the box) and the
         box start.
@@ -226,6 +229,7 @@ class HarvestConfig:
     context_s: float = 0.6
     track_window_s: float = 10.0
     hint_window_s: float = 120.0
+    same_fish_hz: float = 5.0
     min_track_detections: int = 3
     refine_hz: float = 40.0
     probe_gap_s: float = 0.02
@@ -388,25 +392,32 @@ def suspects(
     config: HarvestConfig,
     hint: int | None = None,
 ) -> dict[int, float]:
-    """Median EODf of every track alive within ``track_window_s`` of the box.
+    """EODf of every track that may be the emitter.
 
-    The ``hint`` track (v1's assignment) also counts if it has detections
-    within ``hint_window_s``.
+    Tracks with detections within ``track_window_s`` of the box count; if
+    the ``hint`` track (v1's assignment) is not among them, or no other track
+    is, tracks with detections within ``hint_window_s`` count too: the
+    tracker can lose a fish for minutes during intense chirping. The
+    frequency is the median of the 50 detections nearest to the box.
     """
-    out: dict[int, float] = {}
-    for track in tracks:
-        window = config.track_window_s
-        if hint is not None and track.ident == hint:
-            window = max(window, config.hint_window_s)
+
+    def collect(window: float) -> dict[int, float]:
+        out: dict[int, float] = {}
         lo, hi = t0 - window, t1 + window
-        if track.stop_s < lo or track.start_s > hi:
-            continue
-        sel = (track.times_s >= lo) & (track.times_s <= hi)
-        if np.count_nonzero(sel) >= config.min_track_detections:
-            # the nearest detections in time describe the fish at the chirp
-            nearest = np.argsort(np.abs(track.times_s[sel] - t0))[:50]
-            out[track.ident] = float(np.median(track.freqs_hz[sel][nearest]))
-    return out
+        for track in tracks:
+            if track.stop_s < lo or track.start_s > hi:
+                continue
+            sel = (track.times_s >= lo) & (track.times_s <= hi)
+            if np.count_nonzero(sel) >= config.min_track_detections:
+                nearest = np.argsort(np.abs(track.times_s[sel] - t0))[:50]
+                out[track.ident] = float(np.median(track.freqs_hz[sel][nearest]))
+        return out
+
+    near = collect(config.track_window_s)
+    if len(near) >= 2 and (hint is None or hint in near):
+        return near
+    wide = collect(config.hint_window_s)
+    return {**wide, **near}
 
 
 # --------------------------------------------------------------------------
@@ -867,6 +878,19 @@ def harvest_candidate(
         channel_db[ident] = 10 * np.log10(psd[lo:hi].max(axis=0) + 1e-30)
     if not refined:
         return reject("no_track")
+    # fragments of one fish's track refine to the same line: keep one (the
+    # hint, else the lowest id), so a fish is never its own contaminant
+    hint_id = None if _missing(hint) else int(hint)
+    for ident in sorted(refined, key=lambda i: (i != hint_id, i)):
+        if ident not in refined:
+            continue
+        for other in list(refined):
+            if other != ident and abs(refined[other] - refined[ident]) < (
+                config.same_fish_hz
+            ):
+                del refined[other]
+                del channel_db[other]
+    record["n_suspects"] = len(refined)
 
     # emitter: the suspect whose baseline band loses most power during the chirp
     width = t1 - t0

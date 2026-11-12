@@ -283,3 +283,38 @@ def test_analytic_helpers_accept_hilbert_output() -> None:
     x = np.sin(2 * np.pi * 850.0 * np.arange(4000) / FS)
     f = pulse_pair_frequency(np.asarray(hilbert(x)), FS, 20.0)
     assert np.median(f) == pytest.approx(850.0, abs=0.1)
+
+
+def test_harvest_survives_lost_tracks_and_fragments(
+    synthetic_grid: Callable[..., SyntheticGrid],
+) -> None:
+    # the tracker lost the emitter near the chirp (track 1 only 40-60 s away)
+    # and a fragment (track 3) sits on the emitter's frequency
+    from gridtools.io import Tracks
+
+    grid = synthetic_grid(seed=8)
+    far = np.arange(40.0, 60.0, 0.1)
+    near = np.arange(0.0, 3.0, 0.1)
+    times = np.concatenate([near, far])
+    k_near, k_far = near.size, far.size
+    tracks = Tracks(
+        times_s=times,
+        freqs_hz=np.concatenate(
+            [
+                np.full(k_far, grid.emitter_hz),
+                np.full(k_near, grid.other_hz),
+                np.full(k_near, grid.emitter_hz + 1.0),
+            ]
+        ),
+        idents=np.concatenate(
+            [np.ones(k_far), np.full(k_near, 2.0), np.full(k_near, 3.0)]
+        ),
+        time_indices=np.concatenate(
+            [np.arange(k_near, k_near + k_far), np.arange(k_near), np.arange(k_near)]
+        ),
+    )
+    recording = Recording(Path("synthetic"), grid.samplerate_hz, grid.data)
+    result = harvest_candidate(recording, tracks, grid.box, HarvestConfig())
+    assert result.record["status"] == "harvested", result.record["reason"]
+    assert result.record["emitter_track_id"] == 1  # the hint wins over the fragment
+    assert result.record["n_suspects"] == 2
