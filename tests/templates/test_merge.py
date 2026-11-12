@@ -159,3 +159,47 @@ def test_merge_is_deterministic(
     for name in ("delta_f_hz.npy", "amp_rel.npy"):
         np.testing.assert_array_equal(np.load(a / name), np.load(b / name))
     pd.testing.assert_frame_equal(load_library(a).metadata, load_library(b).metadata)
+
+
+def test_merged_report(
+    harvested: tuple[Path, list[Path]],
+    synthetic_h5: tuple[Path, list[SourceRow]],
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from gridtools.templates.report_merged import (
+        DURATION_CLASSES_MS,
+        Scheme,
+        sampling_summary,
+        write_merged_report,
+    )
+
+    out, _ = harvested
+    h5_path, _ = synthetic_h5
+    base = tmp_path / "base"
+    build_library(h5_path, base, BuildConfig())
+    merged = tmp_path / "merged"
+    build_merged_library(base, out / "harvest", merged)
+    path = write_merged_report(merged, out)
+    text = path.read_text()
+    for heading in (
+        "## 1. Long chirps from competition recordings",
+        "## 2. Template length",
+        "## 3. Minimum duration",
+        "## 5. Histogram equalization",
+    ):
+        assert heading in text
+    assert (merged / "figures" / "long_chirps.png").stat().st_size > 0
+    assert (merged / "figures" / "sampling.png").stat().st_size > 0
+    lib = load_library(merged).select()
+    natural = sampling_summary(lib, Scheme("natural", False))
+    assert natural["distinct"] <= lib.n_templates
+    shares = [natural[label] for label, _, _ in DURATION_CLASSES_MS]
+    assert sum(shares) == pytest.approx(1.0)
+    assert natural["big"] + natural["small"] == pytest.approx(1.0)
+    tempered = sampling_summary(lib, Scheme("log", True, "log", 0.6))
+    assert tempered["big"] + tempered["small"] == pytest.approx(1.0)
+    assert tempered["max_repeats"] >= natural["max_repeats"]
