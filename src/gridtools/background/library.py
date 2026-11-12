@@ -145,9 +145,21 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
     "n_clicks",
     "click_rate_per_s",
     "max_abs",
+    "window_rule",
+    "window_start_s",
+    "window_stop_s",
+    "gate_screen",
+    "gate_threshold",
+    "gate_max_rate_per_h",
+    "gate_rate_per_h",
     "accept",
 )
-"""Columns of ``manifest.parquet``, in order (documented in the report)."""
+"""Columns of ``manifest.parquet``, in order (documented in the report).
+
+Builds with chirp screens add ``screen_<name>_*`` columns (detector, weights
+sha256, store threshold, threshold, margin, boxes near the segment at the
+threshold, highest stored score near it) before ``accept``.
+"""
 
 #: Manifest columns holding lists, stored as JSON text in parquet and CSV.
 JSON_COLUMNS: tuple[str, ...] = (
