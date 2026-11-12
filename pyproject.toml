@@ -20,7 +20,11 @@ dependencies = [
     "pandas>=3.1",
     "pyarrow>=26",
     "scipy>=1.18",
+    "typer>=0.29.1",
 ]
+
+[project.scripts]
+gridtools = "gridtools.cli:app"
 
 [project.urls]
 Repository = "https://github.com/weygoldt/gridtools"
