@@ -203,3 +203,35 @@ def test_merged_report(
     tempered = sampling_summary(lib, Scheme("log", True, "log", 0.6))
     assert tempered["big"] + tempered["small"] == pytest.approx(1.0)
     assert tempered["max_repeats"] >= natural["max_repeats"]
+
+
+def test_merged_flags_and_v4_report(
+    harvested: tuple[Path, list[Path]],
+    synthetic_h5: tuple[Path, list[SourceRow]],
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("matplotlib")
+    from gridtools.templates.library import DEFAULT_EXCLUDE
+    from gridtools.templates.report_merged import write_v4_report
+
+    out, _ = harvested
+    h5_path, _ = synthetic_h5
+    base = tmp_path / "base"
+    build_library(h5_path, base, BuildConfig())
+    merged = tmp_path / "merged"
+    build_merged_library(base, out / "harvest", merged)
+    lib = load_library(merged)
+    meta = lib.metadata
+    # every default flag is a complete bool column, also on chirp-chamber rows
+    for flag in DEFAULT_EXCLUDE:
+        if flag in ("invalid", "duplicate"):
+            continue
+        assert meta[flag].dtype == bool, flag
+    assert not meta.loc[meta["source"] == "chirp_chamber", "line_in_span"].any()
+    # every template has an individual label
+    labels = lib.individuals()
+    assert all(label.startswith(("chirp_chamber/", "rec")) for label in labels)
+    path = write_v4_report(merged)
+    text = path.read_text()
+    for heading in ("## 1. Exclusions", "## 2. Fish-first sampling", "## 3. Sampling"):
+        assert heading in text
