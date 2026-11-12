@@ -97,3 +97,12 @@ def test_sources_never_use_global_or_internal_seeding() -> None:
         if forbidden.search(line)
     ]
     assert offenders == []
+
+
+def test_public_api_is_exported_without_shadowing_submodules() -> None:
+    import gridtools.sim.mix as mix_module
+
+    for name in gridtools.sim.__all__:
+        assert hasattr(gridtools.sim, name), name
+    assert callable(mix_module.mix)
+    assert mix_module.__name__ == "gridtools.sim.mix"
