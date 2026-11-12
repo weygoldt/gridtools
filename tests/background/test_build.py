@@ -180,3 +180,27 @@ def test_partial_trailing_frame_is_dropped(
     assert rec.n_samples == trial.samples.shape[0]
     with pytest.raises(ValueError, match="whole number"):
         open_recording(trial.source.recording_path)
+
+
+def test_refine_untracked_drops_recurring_lines() -> None:
+    from gridtools.background.build import refine_untracked
+
+    rows = []
+    for k in range(20):
+        lines = [585.9, 1955.6] if k % 3 else [585.9]
+        if k == 0:
+            lines = [*lines, 733.0]  # a line only once: maybe a fish
+        rows.append(
+            {
+                "dataset": "d",
+                "segment_class": "fish",
+                "untracked_peaks_hz": lines,
+                "fish_coverage": [1.0, 0.95],
+                "tracks_complete": False,
+            }
+        )
+    out = refine_untracked(pd.DataFrame(rows))
+    assert out.loc[0, "untracked_peaks_hz"] == [733.0]
+    assert not out.loc[0, "tracks_complete"]
+    assert all(out.loc[1:, "untracked_peaks_hz"].map(len) == 0)
+    assert bool(out.loc[1:, "tracks_complete"].all())

@@ -194,3 +194,17 @@ def test_tracked_line_power_drops_crowded_frames() -> None:
     assert np.all(np.isfinite(power[early]))
     assert np.all(np.isnan(power[times > 5.3]))
     assert np.median(power[early]) == pytest.approx(0.01**2 / 2, rel=0.02)
+
+
+def test_snr_distribution_truncation() -> None:
+    dist = SnrDistribution(hard_db=(0.0, 30.0), typical_db=(30.0, 80.0))
+    rng = np.random.default_rng(9)
+    draws = np.asarray(dist.sample(rng, 20_000, min_db=25.0))
+    assert draws.min() >= 25.0
+    assert draws.max() <= 80.0
+    # mass left: hard 0.4 * 5/30, typical 0.6 -> P(< 30) = 0.0667 / 0.6667
+    assert np.mean(draws < 30.0) == pytest.approx(0.1, abs=0.01)
+    assert np.all(np.asarray(dist.sample(rng, 5, min_db=90.0)) == 90.0)
+    plain = np.asarray(dist.sample(np.random.default_rng(1), 100))
+    same = np.asarray(dist.sample(np.random.default_rng(1), 100, min_db=-10.0))
+    np.testing.assert_allclose(plain, same)

@@ -82,7 +82,12 @@ from gridtools.io import (
     save_tracks,
 )
 
-__all__ = ["BackgroundConfig", "build_background_library", "segment_id"]
+__all__ = [
+    "BackgroundConfig",
+    "build_background_library",
+    "refine_untracked",
+    "segment_id",
+]
 
 log = logging.getLogger(__name__)
 
@@ -885,6 +890,44 @@ def _git_commit() -> str | None:
         return None
 
 
+def refine_untracked(
+    manifest: pd.DataFrame, min_fraction: float = 0.1, bin_hz: float = 2.5
+) -> pd.DataFrame:
+    """Drop interference lines from ``untracked_peaks_hz`` across a dataset.
+
+    Lines that no tracked fish explains and that recur at the same frequency
+    (``bin_hz``) in at least ``min_fraction`` of a dataset's fish segments
+    are interference (e.g. the 97.7-Hz comb of the 2020 recordings, the
+    95-Hz comb of 2022): fish differ between recordings and drift within
+    them, so none of them recurs across a dataset. The per-recording test of
+    the build misses lines that come and go. ``tracks_complete`` is
+    recomputed: no remaining untracked line and every fish tracked in at
+    least 90 % of the frames.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A copy with ``untracked_peaks_hz`` and ``tracks_complete`` updated.
+    """
+    out = manifest.copy()
+    fish_rows = out["segment_class"] == "fish"
+    for dataset in out.loc[fish_rows, "dataset"].unique():
+        rows = (fish_rows & (out["dataset"] == dataset)).to_numpy()
+        lists = [
+            np.asarray(v, dtype=float) for v in out.loc[rows, "untracked_peaks_hz"]
+        ]
+        lines = _stationary_lines(lists, min_fraction, bin_hz)
+        index = np.flatnonzero(rows)
+        for i, peaks in zip(index, lists, strict=True):
+            kept = [float(f) for f in peaks if not _near(float(f), lines, bin_hz)]
+            out.at[out.index[i], "untracked_peaks_hz"] = kept
+            coverage = out.at[out.index[i], "fish_coverage"] or []
+            out.at[out.index[i], "tracks_complete"] = bool(
+                not kept and len(coverage) > 0 and min(coverage) >= 0.9
+            )
+    return out
+
+
 def build_background_library(
     sources: Sequence[SourceRecording | FieldFolder],
     out_dir: str | Path,
@@ -957,7 +1000,7 @@ def build_background_library(
             pd.concat([old, manifest], ignore_index=True) if len(old) else manifest
         )
     manifest = manifest.sort_values(["dataset", "recording", "start_s"], kind="stable")
-    manifest = manifest.reset_index(drop=True)
+    manifest = refine_untracked(manifest.reset_index(drop=True))
     write_manifest(manifest, out)
     infos = pd.DataFrame([info for _, info in results])
     rec_path = out / "recordings.csv"

@@ -627,23 +627,24 @@ class SnrDistribution:
     from ``typical_db`` (the range of real fish). The defaults follow the real
     fish of the 2019/2020 competitions at their strongest electrode, with
     the same definitions: median 46 dB, 5-95 % 29.5-62 dB in the calibration
-    (``gridtools.calibrate``, 33 trials); the library report repeats the
-    comparison on the library's own segments. ``typical_db`` covers and
-    exceeds the real range; ``hard_db`` reaches down to where a fish's band
-    barely stands out of the floor (0 dB).
+    (``gridtools.calibrate``, 33 trials); in the library v1 fish segments
+    48.5 (34-64) dB for 2019/2020 and 57 (44-80) dB for 2022, whose floor is
+    lower. ``typical_db`` covers that range; ``hard_db`` lies below the real
+    5 % quantile and reaches down to where a fish's band barely stands out
+    of the floor (0 dB).
 
     Attributes
     ----------
     hard_db : (float, float)
         Range of hard SNRs (default 0-30 dB).
     typical_db : (float, float)
-        Range of realistic SNRs (default 30-65 dB).
+        Range of realistic SNRs (default 30-80 dB).
     hard_fraction : float
         Probability of a hard SNR (default 0.4).
     """
 
     hard_db: tuple[float, float] = (0.0, 30.0)
-    typical_db: tuple[float, float] = (30.0, 65.0)
+    typical_db: tuple[float, float] = (30.0, 80.0)
     hard_fraction: float = 0.4
 
     def __post_init__(self) -> None:
@@ -665,7 +666,11 @@ class SnrDistribution:
         )
 
     def sample(
-        self, rng: np.random.Generator, size: int | None = None
+        self,
+        rng: np.random.Generator,
+        size: int | None = None,
+        *,
+        min_db: float | None = None,
     ) -> float | FloatArray:
         """Draw target SNRs.
 
@@ -674,17 +679,47 @@ class SnrDistribution:
         rng : numpy.random.Generator
         size : int, optional
             Number of draws; one float if omitted.
+        min_db : float, optional
+            Draw from the distribution truncated below ``min_db`` (each
+            uniform component cut at ``min_db``, the mixture weights scaled
+            by the probability mass left in each). Use it to cap how much
+            louder a background's real fish may be than the simulated ones:
+            ``min_db = segment.info["real_snr_max_db"] - max_gap_db``. If no
+            mass is left, every draw is ``min_db``.
 
         Returns
         -------
         float or numpy.ndarray
         """
         n = 1 if size is None else int(size)
-        hard = rng.random(n) < self.hard_fraction
-        u = rng.random(n)
-        low = np.where(hard, self.hard_db[0], self.typical_db[0])
-        high = np.where(hard, self.hard_db[1], self.typical_db[1])
-        values = low + u * (high - low)
+        parts = [
+            (self.hard_fraction, *self.hard_db),
+            (1.0 - self.hard_fraction, *self.typical_db),
+        ]
+        weights, lows, highs = [], [], []
+        for weight, low, high in parts:
+            if min_db is not None:
+                kept = (
+                    1.0
+                    if high <= low and low >= min_db
+                    else (max(0.0, high - max(low, min_db)) / (high - low))
+                    if high > low
+                    else 0.0
+                )
+                low = max(low, min_db)
+                weight *= kept
+            weights.append(weight)
+            lows.append(low)
+            highs.append(max(high, low))
+        total = sum(weights)
+        if total <= 0:
+            values = np.full(n, float(min_db) if min_db is not None else math.nan)
+        else:
+            first = rng.random(n) < weights[0] / total
+            u = rng.random(n)
+            low = np.where(first, lows[0], lows[1])
+            high = np.where(first, highs[0], highs[1])
+            values = low + u * (high - low)
         return float(values[0]) if size is None else values
 
 
