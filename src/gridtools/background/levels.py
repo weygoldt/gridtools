@@ -46,7 +46,10 @@ SNR
     carrier-to-noise density in dB-Hz (the unit of the calibration report),
     and for white noise of standard deviation :math:`\\sigma` at 20 kHz,
     ``SNR = 20 log10(a / sigma) + 28.3 dB`` (the scene config's broadband
-    ``noise.snr_db`` plus 28.3 dB).
+    ``noise.snr_db`` plus 28.3 dB). A spectrogram summed over electrodes
+    (in power) adds the floor of every electrode but the fish only where it
+    is strong, so there its band stands roughly ``10 log10(E / E_fish)``
+    lower: 10-15 dB on 9-16 electrode grids for a fish near one electrode.
 
 Scaling
     A background scaled by :math:`s` has level :math:`s^2 B`, so a scene with
@@ -630,21 +633,23 @@ class SnrDistribution:
     (``gridtools.calibrate``, 33 trials); in the library v1 fish segments
     48.5 (34-64) dB for 2019/2020 and 57 (44-80) dB for 2022, whose floor is
     lower. ``typical_db`` covers that range; ``hard_db`` lies below the real
-    5 % quantile and reaches down to where a fish's band barely stands out
-    of the floor (0 dB).
+    5 % quantile (35 dB) and stops at 10 dB, where a fish next to one
+    electrode is already at or below the floor of an electrode-summed
+    spectrogram (see the module docstring), so lower targets would mostly
+    produce invisible chirps.
 
     Attributes
     ----------
     hard_db : (float, float)
-        Range of hard SNRs (default 0-30 dB).
+        Range of hard SNRs (default 10-35 dB).
     typical_db : (float, float)
-        Range of realistic SNRs (default 30-80 dB).
+        Range of realistic SNRs (default 35-80 dB).
     hard_fraction : float
         Probability of a hard SNR (default 0.4).
     """
 
-    hard_db: tuple[float, float] = (0.0, 30.0)
-    typical_db: tuple[float, float] = (30.0, 80.0)
+    hard_db: tuple[float, float] = (10.0, 35.0)
+    typical_db: tuple[float, float] = (35.0, 80.0)
     hard_fraction: float = 0.4
 
     def __post_init__(self) -> None:

@@ -428,6 +428,12 @@ def write_report(
     lo, hi = dist.range_db
     p5 = float(np.percentile(real, 5)) if real.size else math.nan
     add(
+        "The SNR refers to the fish's strongest electrode; in a spectrogram "
+        "summed over electrodes its band stands about 10 log10(E / E_fish) "
+        "lower (10-15 dB for a fish near one electrode of a 9-16 electrode "
+        "grid; compare the demo figures).\n"
+    )
+    add(
         f"Default `SnrDistribution`: with probability {dist.hard_fraction:g} "
         f"uniform in {dist.hard_db[0]:g}-{dist.hard_db[1]:g} dB (harder than "
         f"real: below the real 5 % quantile, {p5:.1f} dB), otherwise uniform in "
@@ -446,11 +452,21 @@ def write_report(
             "real fish in the same segment, "
             f"{np.mean(implied > 40):.0%} exceed 40 dB. Hard SNRs therefore pair a "
             "faint simulated fish with much louder real ones, a combination that "
-            "is rare in the tanks. Options: condition the target SNR on the "
-            "segment (e.g. `SNR_target >= real_snr_max_db - 30`), use fish-free "
-            "segments for the hardest SNRs, or raise the floor with synthetic "
-            "noise (`other_noise_level`), which lowers real and simulated fish "
-            "together.\n"
+            "is rare in the tanks. Options: truncate the target per segment "
+            "(`SnrDistribution.sample(rng, min_db=real_snr_max_db - 30)`), use "
+            "fish-free segments for the hardest SNRs, or raise the floor with "
+            "synthetic noise (`other_noise_level`), which lowers real and "
+            "simulated fish together.\n"
+        )
+        capped = np.concatenate(
+            [np.asarray(dist.sample(rng, 50, min_db=r - 30.0)) for r in real_max]
+        )
+        add(
+            "With the truncation at a 30-dB gap, targets on fish segments are "
+            f"{_q(capped)} dB and {np.mean(capped < dist.hard_db[1]):.0%} of them "
+            f"fall in the hard range (below {dist.hard_db[1]:g} dB), against "
+            f"{dist.hard_fraction:.0%} without it; fish-free segments keep the "
+            "full distribution.\n"
         )
     add("![snr](figures/snr.png)\n")
 

@@ -43,15 +43,21 @@ How a hybrid scene uses it
 
 3. Draw a target SNR and scale the background::
 
-       snr = SnrDistribution().sample(rng)
+       real = segment.info["real_snr_max_db"]  # NaN without real fish
+       snr = SnrDistribution().sample(
+           rng, min_db=None if math.isnan(real) else real - 30.0)
        scale = scale_for_snr(segment.level, signal, snr)
        recording = add_background(recording, segment, scale,
-                                  geometry=geometry, samplerate_hz=fs)
+                                  geometry=segment.geometry, samplerate_hz=fs)
 
-   Add the background after the scene's channel gains and instead of (or
-   in addition to, then pass ``other_noise_level``) the synthetic noise.
-   ``scale`` also converts the background's unit (ADC volts) into the
-   scene's.
+   Real fish keep their own SNR when the background is scaled, so a hard
+   target leaves them far louder than the simulated fish; ``min_db`` caps
+   that gap (30 dB covers 95 % of the level differences between two real
+   fish in one segment). Add the background after the scene's channel
+   gains and instead of (or in addition to, then pass
+   ``other_noise_level``) the synthetic noise. ``scale`` also converts the
+   background's unit (ADC volts, or int16 full scale for field loggers)
+   into the scene's.
 4. Merge the real fish into the scene's tracks under identities from 1000
    on and list them in ``scene.json`` with ``real_fish=True``::
 
