@@ -73,6 +73,9 @@ class BuildConfig:
     min_duration_10_s
         ``too_short`` is set for templates whose full width at 10% of the
         excursion is below this value (excluded by default).
+    max_brief_cycles
+        ``brief_cycles`` is set when the full width at half maximum spans at
+        most this many cycles of the baseline EODf (excluded by default).
     ripple_score_max
         ``ripple_flag`` is set when the RMS of the detrended frequency
         baseline exceeds this fraction of the excursion.
@@ -133,6 +136,7 @@ class BuildConfig:
     multi_peak_prominence_hz: float = 10.0
     eodf_atypical_below_hz: float = 500.0
     min_duration_10_s: float = 0.005
+    max_brief_cycles: float = 2.0
     ripple_score_max: float = 0.08
     amp_ripple_max: float = 0.02
     amp_dip_to_ripple_min: float = 3.0

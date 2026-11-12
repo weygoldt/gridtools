@@ -256,7 +256,19 @@ def test_default_exclusions_follow_author_decisions() -> None:
     from gridtools.templates import DEFAULT_EXCLUDE
 
     assert "eodf_atypical" not in DEFAULT_EXCLUDE  # kept (possibly Eigenmannia)
-    assert "too_short" in DEFAULT_EXCLUDE
+    assert "amp_ripple_flag" not in DEFAULT_EXCLUDE  # measured amplitude only
+    # only clean samples (library v4)
+    for flag in (
+        "too_short",
+        "brief_cycles",
+        "ripple_flag",
+        "multi_peak",
+        "line_in_span",
+        "baseline_drift",
+        "low_snr",
+        "decay_interrupted",
+    ):
+        assert flag in DEFAULT_EXCLUDE
 
 
 def test_too_short_flag_falls_back_to_duration() -> None:
@@ -356,3 +368,142 @@ def test_cycler_validates_weights() -> None:
         TemplateCycler(groups, np.random.default_rng(0), weights=[1.0, -1.0])
     only_first = TemplateCycler(groups, np.random.default_rng(0), weights=[1.0, 0.0])
     assert set(only_first.draw(10).tolist()) == {0, 1}
+
+
+# ---- library v4: clean samples and fish-first sampling ---------------------
+
+
+def flagged_library() -> TemplateLibrary:
+    """Eight templates, each of templates 1-7 carrying one quality flag."""
+    n = 8
+    values = np.arange(n, dtype=np.float32)[:, None] * np.ones((1, 8), np.float32)
+    meta = pd.DataFrame(
+        {
+            "template_id": np.arange(n),
+            "valid": True,
+            "has_nan": False,
+            "duplicate_of": -1,
+            "truncated": False,
+            "step_flag": False,
+            "family": "small",
+            "excursion_hz": 80.0,
+            "duration_10_s": 0.02,
+            # template 1: FWHM 2.4 ms at 800 Hz = 1.9 cycles; template 2: 3 ms
+            # at 400 Hz = 1.2 cycles; template 0: 12 ms at 800 Hz
+            "duration_50_s": [0.012, 0.0024, 0.003, 0.012, 0.012, 0.012, 0.012, 0.012],
+            "baseline_hz": [800.0, 800.0, 400.0, 800.0, 800.0, 800.0, 800.0, np.nan],
+            "ripple_flag": [False, False, False, True, False, False, False, False],
+            "multi_peak": [False, False, False, False, True, False, False, False],
+            "line_in_span": [None, None, None, None, None, True, False, None],
+            "low_snr": [False, False, False, False, False, False, True, False],
+        }
+    )
+    return TemplateLibrary(values, np.ones_like(values), meta, FS)
+
+
+def test_quality_flags_are_excluded_by_default() -> None:
+    lib = flagged_library()
+    np.testing.assert_array_equal(
+        lib.flag_mask("brief_cycles"), [0, 1, 1, 0, 0, 0, 0, 0]
+    )
+    # a missing value is not a flag; a missing harvest-only column neither
+    np.testing.assert_array_equal(
+        lib.flag_mask("line_in_span"), [0, 0, 0, 0, 0, 1, 0, 0]
+    )
+    assert not lib.flag_mask("baseline_drift").any()
+    assert not lib.flag_mask("decay_interrupted").any()
+    # unknown EODf: cycles cannot be counted, so not flagged
+    assert not lib.flag_mask("brief_cycles")[7]
+    np.testing.assert_array_equal(lib.select().template_ids, [0, 7])
+    assert lib.select(exclude=()).n_templates == 8
+
+
+def test_individual_labels_prefer_group_label() -> None:
+    from gridtools.templates.library import individual_labels
+
+    meta = pd.DataFrame(
+        {
+            "template_id": [0, 1, 2, 3],
+            "inferred_group": [5, 5, 6, 7],
+            "group_label": [None, "", "recA/track1", "recA/track1"],
+        }
+    )
+    assert individual_labels(meta).tolist() == [
+        "group/5",
+        "group/5",
+        "recA/track1",
+        "recA/track1",
+    ]
+    bare = pd.DataFrame({"template_id": [3, 4]})
+    assert individual_labels(bare).tolist() == ["template/3", "template/4"]
+
+
+def fish_library() -> TemplateLibrary:
+    """One bin: fish A with 1 template, B with 3, C with 30 (34 templates)."""
+    owners = ["A"] + ["B"] * 3 + ["C"] * 30
+    n = len(owners)
+    values = np.arange(n, dtype=np.float32)[:, None] * np.ones((1, 8), np.float32)
+    meta = pd.DataFrame(
+        {
+            "template_id": np.arange(n),
+            "duplicate_of": -1,
+            "family": "small",
+            "excursion_hz": 60.0,
+            "duration_10_s": 0.015,
+            "group_label": owners,
+        }
+    )
+    return TemplateLibrary(values, np.ones_like(values), meta, FS)
+
+
+def test_fish_first_sampling_balances_individuals_within_a_bin() -> None:
+    lib = fish_library()
+    n = 3000
+    ids = lib.sample(np.random.default_rng(0), n).template_ids
+    counts = np.bincount(ids, minlength=34)
+    per_fish = [counts[:1].sum(), counts[1:4].sum(), counts[4:].sum()]
+    # individuals come in successive permutations: exactly n / 3 each
+    assert per_fish == [1000, 1000, 1000]
+    # each fish's templates are used evenly (successive permutations)
+    assert counts[1:4].max() - counts[1:4].min() <= 1
+    assert counts[4:].max() - counts[4:].min() <= 1
+    # template balance gives every template the same share instead
+    flat = lib.sample(np.random.default_rng(0), n, balance="template").template_ids
+    flat_counts = np.bincount(flat, minlength=34)
+    assert flat_counts.max() - flat_counts.min() <= 1
+    with pytest.raises(ValueError, match="balance"):
+        lib.cycler(np.random.default_rng(0), balance="fish")  # type: ignore[arg-type]
+
+
+def test_fish_first_probabilities_and_determinism() -> None:
+    lib = fish_library()
+    eq = lib.equalization_bins()
+    p = dict(
+        zip(
+            eq.template_ids.tolist(),
+            eq.template_probabilities(balance="individual").tolist(),
+            strict=True,
+        )
+    )
+    assert sum(p.values()) == pytest.approx(1.0)
+    assert p[0] == pytest.approx(1 / 3)
+    assert p[1] == pytest.approx(1 / 9)
+    assert p[10] == pytest.approx(1 / 90)
+    flat = eq.template_probabilities(balance="template")
+    np.testing.assert_allclose(flat, 1 / 34)
+    a = lib.sample(np.random.default_rng(7), 200).template_ids
+    b = lib.sample(np.random.default_rng(7), 200).template_ids
+    np.testing.assert_array_equal(a, b)
+    # drawing one at a time keeps the balance across calls
+    cycler = lib.cycler(np.random.default_rng(8))
+    one = np.concatenate([cycler.draw(1) for _ in range(300)])
+    per_fish = [np.isin(one, [0]).sum(), np.isin(one, [1, 2, 3]).sum()]
+    assert per_fish == [100, 100]
+
+
+def test_fish_first_equals_template_balance_without_individuals() -> None:
+    # every template its own individual: identical draws to template balance
+    lib = skewed_library()
+    a = lib.sample(np.random.default_rng(3), 500, balance="individual").template_ids
+    b = lib.sample(np.random.default_rng(3), 500, balance="template").template_ids
+    np.testing.assert_array_equal(a, b)

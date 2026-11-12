@@ -50,7 +50,7 @@ from gridtools.templates.harvest import (
     HARVEST_METADATA_FILE,
     read_review,
 )
-from gridtools.templates.library import MIN_DURATION_S
+from gridtools.templates.library import KNOWN_FLAGS, flag_mask_of
 
 log = logging.getLogger(__name__)
 
@@ -299,19 +299,19 @@ def merged_metadata(
     Base rows get ``source = "chirp_chamber"`` and keep their ids; harvested
     rows get ``source = "competition"``, ids after the base, and
     ``inferred_group`` values after the base's (one group per recording and
-    emitter track; ``group_label`` names it). ``too_short`` is filled for
-    base libraries built before the flag existed.
+    emitter track; ``group_label`` names it). Every known flag becomes a bool
+    column: derived for libraries built before it existed (``too_short``,
+    ``brief_cycles``), False where it does not apply (harvest-only flags on
+    chirp-chamber rows).
     """
     base: Frame = base_meta.copy()
     n_base = len(base)
     base["source"] = "chirp_chamber"
-    if "too_short" not in base.columns:
-        base["too_short"] = base["duration_10_s"].to_numpy(dtype=float) < MIN_DURATION_S
     base["group_label"] = [f"chirp_chamber/{int(g)}" for g in base["inferred_group"]]
     base["review_accept"] = True
     base["review_note"] = ""
     if harvest_meta is None or len(harvest_meta) == 0:
-        return base
+        return _complete_flags(base)
     harvest: Frame = harvest_meta.copy()
     harvest["template_id"] = n_base + np.arange(len(harvest), dtype=np.int64)
     harvest["source_row"] = -1
@@ -329,12 +329,36 @@ def merged_metadata(
         (notes or {}).get(k, "") for k in harvest["harvest_key"].astype(str)
     ]
     merged = pd.concat([base, harvest], ignore_index=True, sort=False)
-    for column in ("multi_peak", "ripple_flag", "amp_ripple_flag", "too_short"):
-        merged[column] = merged[column].fillna(False).astype(bool)
-    for column in base.columns.intersection(harvest.columns):
-        if base[column].dtype == bool and merged[column].dtype != bool:
-            merged[column] = merged[column].fillna(False).astype(bool)
-    return merged
+    return _complete_flags(merged)
+
+
+def _complete_flags(meta: Frame) -> pd.DataFrame:
+    """Write every known flag as a bool column (derived or False where missing)."""
+    meta = meta.copy()
+    for flag in KNOWN_FLAGS:
+        if flag in ("invalid", "duplicate"):
+            continue
+        if flag in ("too_short", "brief_cycles") and flag in meta.columns:
+            # derived flags: fill rows of sources built before the flag existed
+            derived = flag_mask_of(meta.drop(columns=flag), flag)
+            given = meta[flag]
+            meta[flag] = np.where(
+                given.isna().to_numpy(),
+                derived,
+                given.fillna(False).to_numpy(dtype=bool),
+            )
+        else:
+            meta[flag] = flag_mask_of(meta, flag)
+    for column in meta.columns:
+        if column == "hint_agrees":  # None = v1 had no track; keep it
+            continue
+        values = meta[column]
+        if values.dtype == object and set(values.dropna().map(type)) <= {
+            bool,
+            np.bool_,
+        }:
+            meta[column] = values.fillna(False).astype(bool)
+    return meta
 
 
 def _sha256(path: Path) -> str:

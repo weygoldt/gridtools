@@ -13,7 +13,9 @@ from gridtools.templates.amplitude import (
 from gridtools.templates.build import build_library
 from gridtools.templates.config import BuildConfig
 from gridtools.templates.library import (
+    BRIEF_CYCLES_MAX,
     DEFAULT_ALPHA,
+    DEFAULT_BALANCE,
     DEFAULT_BINS,
     DEFAULT_EXCLUDE,
     DEFAULT_SPACING,
@@ -28,7 +30,9 @@ from gridtools.templates.library import (
 from gridtools.templates.report import write_report
 
 __all__ = [
+    "BRIEF_CYCLES_MAX",
     "DEFAULT_ALPHA",
+    "DEFAULT_BALANCE",
     "DEFAULT_BINS",
     "DEFAULT_DIP_RANGE",
     "DEFAULT_EXCLUDE",

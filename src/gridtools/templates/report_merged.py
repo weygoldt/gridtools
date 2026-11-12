@@ -21,10 +21,13 @@ import numpy.typing as npt
 import pandas as pd
 
 from gridtools.templates.library import (
+    BRIEF_CYCLES_MAX,
     DEFAULT_ALPHA,
     DEFAULT_BINS,
+    DEFAULT_EXCLUDE,
     DEFAULT_SPACING,
     MIN_DURATION_S,
+    Balance,
     Spacing,
     TemplateLibrary,
     load_library,
@@ -54,6 +57,7 @@ class Scheme:
     equalize: bool
     spacing: Spacing = "log"
     alpha: float = 1.0
+    balance: Balance = "template"
 
 
 def draw_probabilities(
@@ -64,7 +68,36 @@ def draw_probabilities(
         ids = lib.unique_ids()
         return ids, np.full(ids.size, 1.0 / ids.size)
     eq = lib.equalization_bins(bins, spacing=scheme.spacing)
-    return eq.template_ids, eq.template_probabilities(scheme.alpha)
+    return eq.template_ids, eq.template_probabilities(scheme.alpha, scheme.balance)
+
+
+def individual_summary(
+    lib: TemplateLibrary, scheme: Scheme, n_draws: int = 100_000, top: int = 10
+) -> dict[str, Any]:
+    """How draws spread over individuals under ``scheme``.
+
+    Returns
+    -------
+    dict
+        ``top_share`` (draws from the ``top`` individuals with most templates
+        in the pool), ``effective_individuals`` (exp of the entropy of the
+        draw shares of individuals), ``distinct_individuals`` (expected number
+        drawn at least once in ``n_draws``), ``n_individuals``.
+    """
+    ids, p = draw_probabilities(lib, scheme)
+    labels = lib.individuals()[lib.rows_of(ids)]
+    names, codes = np.unique(labels, return_inverse=True)
+    share = np.bincount(codes, weights=p, minlength=names.size)
+    size = np.bincount(codes, minlength=names.size)
+    largest = np.argsort(-size, kind="stable")[:top]
+    positive = share[share > 0]
+    return {
+        "top_share": float(share[largest].sum()),
+        "effective_individuals": float(np.exp(-np.sum(positive * np.log(positive)))),
+        "distinct_individuals": float(np.sum(1.0 - (1.0 - share) ** n_draws)),
+        "n_individuals": int(names.size),
+        "largest": [(str(names[k]), int(size[k])) for k in largest],
+    }
 
 
 def sampling_summary(
@@ -814,6 +847,301 @@ def write_merged_report(
     path.write_text("\n".join(lines) + "\n")
     (library_dir / "sampling_comparison.json").write_text(
         json.dumps(rows, indent=2, default=float)
+    )
+    log.info("report written to %s", path)
+    return path
+
+
+# --------------------------------------------------------------------------
+# Library v4: clean samples and fish-first sampling
+# --------------------------------------------------------------------------
+
+
+def _duration_class(duration_s: Any) -> npt.NDArray[np.str_]:
+    ms = 1e3 * np.asarray(duration_s, dtype=np.float64)
+    out = np.full(ms.shape, "", dtype=object)
+    for label, lo, hi in DURATION_CLASSES_MS:
+        out[(ms >= lo) & (ms < hi)] = label
+    return np.asarray(out, dtype=str)
+
+
+def write_v4_report(
+    library_dir: Path | str,
+    *,
+    previous: str = "../v3/report.md",
+    n_draws: int = 100_000,
+) -> Path:
+    """Write ``report.md`` of library v4 (clean samples, fish-first sampling).
+
+    Library v4 has the arrays and harvest of v3; this report covers the
+    author decisions that change its default selection and sampling. The
+    harvest and template-length sections live in ``previous``.
+
+    Parameters
+    ----------
+    library_dir
+        Library written by :func:`gridtools.templates.merge.build_merged_library`.
+    previous
+        Path (relative to the library) of the v3 report, for references.
+    n_draws
+        Draw count for the repetition statistics.
+
+    Returns
+    -------
+    pathlib.Path
+        Path of the report.
+    """
+    from gridtools.templates.build import _code_version
+    from gridtools.templates.library import flag_mask_of
+
+    library_dir = Path(library_dir)
+    lib = load_library(library_dir, mmap=True)
+    manifest = lib.manifest
+    meta: Frame = lib.metadata
+    default = lib.select()
+    dmeta: Frame = default.metadata
+    code = _code_version()
+    fs = lib.samplerate_hz
+    competition = (meta["source"] == "competition").to_numpy()
+    atypical = meta["eodf_atypical"].to_numpy(dtype=bool)
+    lines: list[str] = []
+    add = lines.append
+
+    add("# Chirp template library v4: build report\n")
+    add(
+        f"Generated {datetime.datetime.now(tz=datetime.UTC):%Y-%m-%d %H:%M} UTC. "
+        f"Library built by gridtools {manifest['code']['gridtools_version']} at "
+        f"`{(manifest['code'].get('git_sha') or 'unknown')[:10]}`"
+        f"{' (dirty)' if manifest['code'].get('git_dirty') else ''}, report by "
+        f"`{(code.get('git_sha') or 'unknown')[:10]}`"
+        f"{' (dirty)' if code.get('git_dirty') else ''}. "
+        f"{lib.n_templates} templates × {lib.n_samples} samples at {fs:.0f} Hz: the "
+        "same arrays, harvest and template length as v3 (v2 chirp-chamber templates "
+        f"plus {int(competition.sum())} long chirps from the competition recordings; "
+        f"see `{previous}`). v4 changes the default selection and the sampling. v1–v3 "
+        "are unchanged.\n"
+    )
+    add("## What changed since v3 (author decisions)\n")
+    add(
+        "1. **Fish-first sampling** (“keep them all, spread by fish”): within every "
+        "equalization bin an individual is drawn first, uniformly among those present, "
+        'then one of its templates; `balance="individual"` is the new default of '
+        '`sample` and `cycler` (`balance="template"` gives v3). Bins and weights '
+        f"unchanged: log {DEFAULT_BINS[0]}×{DEFAULT_BINS[1]}, α = {DEFAULT_ALPHA}.\n"
+        f"2. **One- and two-cycle events cut** (“yup, let's cut them”): new flag "
+        f"`brief_cycles` (FWHM × baseline EODf ≤ {BRIEF_CYCLES_MAX:g}), excluded by "
+        "default.\n"
+        "3. **Only clean samples** (“veto them all”): every quality flag excludes by "
+        "default, for chirp-chamber and harvested templates alike: `ripple_flag`, "
+        "`multi_peak`, `line_in_span`, `baseline_drift`, `low_snr`, "
+        "`decay_interrupted`, besides the artefact flags, `too_short` and "
+        "`brief_cycles`. `amp_ripple_flag` (measured amplitude only; it marks 70% of "
+        "the templates) stays informational, as does `eodf_atypical`. The flagged "
+        "templates stay in the library; `select(exclude=...)` brings them back.\n"
+    )
+
+    # exclusions -------------------------------------------------------------
+    add("## 1. Exclusions\n")
+    add(
+        "Each criterion on its own (all templates, chirp chamber, competition) and "
+        "what is left after applying the criteria in order:\n"
+    )
+    add("| criterion | flagged | chirp chamber | competition | left |")
+    add("|---|---:|---:|---:|---:|")
+    keep = np.ones(len(meta), dtype=bool)
+    add(f"| all templates | | | | {len(meta)} |")
+    kind = meta["duplicate_kind"].fillna("").to_numpy()
+    for name in DEFAULT_EXCLUDE:
+        parts = (
+            [("exact duplicate", kind == "exact"), ("near duplicate", kind == "near")]
+            if name == "duplicate"
+            else [(f"`{name}`", flag_mask_of(meta, name))]
+        )
+        for label, mask in parts:
+            keep &= ~mask
+            add(
+                f"| {label} | {int(mask.sum())} | {int((mask & ~competition).sum())} | "
+                f"{int((mask & competition).sum())} | {int(keep.sum())} |"
+            )
+    assert int(keep.sum()) == default.n_templates
+    brief = flag_mask_of(meta, "brief_cycles")
+    pool_before = np.ones(len(meta), dtype=bool)
+    for name in DEFAULT_EXCLUDE:
+        if name not in ("brief_cycles",):
+            pool_before &= ~flag_mask_of(meta, name)
+    cut = brief & pool_before
+    left_atyp: Frame = dmeta[dmeta["eodf_atypical"].astype(bool)]
+    add(
+        f"\n**`brief_cycles`.** {int(brief.sum())} templates have a FWHM of at most "
+        f"{BRIEF_CYCLES_MAX:g} cycles of their baseline EODf: "
+        f"{int((brief & atypical).sum())} of the {int(atypical.sum())} atypical-EODf "
+        f"(320–440 Hz) templates and {int((brief & ~atypical).sum())} others "
+        f"({int((brief & competition).sum())} harvested). Among templates that pass "
+        f"every other criterion the cut removes {int(cut.sum())}: "
+        f"{int((cut & atypical).sum())} atypical and {int((cut & ~atypical).sum())} "
+        f"others. What remains of the atypical group in the default selection: "
+        f"{len(left_atyp)} template{'s' if len(left_atyp) != 1 else ''}"
+        + (
+            " ("
+            + ", ".join(
+                f"id {int(r.template_id)}: {r.excursion_hz:.0f} Hz, FWHM "
+                f"{1e3 * r.duration_50_s:.1f} ms = "
+                f"{r.duration_50_s * r.baseline_hz:.1f} cycles at {r.baseline_hz:.0f} Hz"
+                for r in left_atyp.itertuples()
+            )
+            + ")"
+            if len(left_atyp)
+            else ""
+        )
+        + ". Templates without a recovered baseline EODf "
+        f"({int(np.isnan(meta['baseline_hz'].to_numpy(dtype=float)).sum())}) cannot "
+        "be counted in cycles and are not flagged.\n"
+    )
+    add("**Default selection** by family and duration class (full width at 10%):\n")
+    classes = _duration_class(dmeta["duration_10_s"])
+    header = [c[0] for c in DURATION_CLASSES_MS]
+    add("| | " + " | ".join(header) + " | total |")
+    add("|---|" + "---:|" * (len(header) + 1))
+    for label, mask in (
+        ("small (< 200 Hz)", dmeta["family"].to_numpy() == "small"),
+        ("big (≥ 200 Hz)", dmeta["family"].to_numpy() == "big"),
+        ("of which competition", dmeta["source"].to_numpy() == "competition"),
+        ("all", np.ones(len(dmeta), dtype=bool)),
+    ):
+        cells = [str(int((mask & (classes == h)).sum())) for h in header]
+        add(f"| {label} | " + " | ".join(cells) + f" | {int(mask.sum())} |")
+    long_left = int((dmeta["duration_10_s"] >= 0.3).sum())
+    add(
+        f"\nDefault selection: **{default.n_templates}** templates "
+        f"({int((dmeta['source'] == 'chirp_chamber').sum())} chirp chamber, "
+        f"{int((dmeta['source'] == 'competition').sum())} competition, of these "
+        f"{long_left} ≥ 300 ms; longest "
+        f"{1e3 * float(dmeta['duration_10_s'].max()):.0f} ms).\n"
+    )
+
+    # fish-first ---------------------------------------------------------------
+    add("## 2. Fish-first sampling\n")
+    labels = default.individuals()
+    n_ind = np.unique(labels).size
+    n_cc = np.unique(labels[(dmeta["source"] == "chirp_chamber").to_numpy()]).size
+    n_comp = np.unique(labels[(dmeta["source"] == "competition").to_numpy()]).size
+    add(
+        "Individuals: harvested chirps use `group_label` = `<recording>/track<id>` "
+        "(one wavetracker track of one recording; the same fish in two recordings "
+        "counts twice, e.g. g6f5 in three recordings). Chirp-chamber chirps use "
+        "`inferred_group`, runs of consecutive source rows whose baseline EODf "
+        "changes by less than 10 Hz: the extraction appended chirps file by file, so "
+        "a run approximates one recording, not reliably one fish. Two fish of similar "
+        "EODf recorded one after the other merge into one group, a recording whose "
+        "EODf jumps splits, and rows without a recovered EODf start new groups. The "
+        f"default selection holds {n_ind} groups ({n_cc} chirp chamber, {n_comp} "
+        "competition). Within a bin, groups come in successive random permutations "
+        "and each group's templates in successive random permutations of its own, so "
+        "no template repeats more often than the balance needs.\n"
+    )
+    v3_scheme = Scheme("v3: log, α = 0.6, template balance", True, "log", 0.6)
+    v4_scheme = Scheme(
+        "**v4: log, α = 0.6, individual balance**", True, "log", 0.6, "individual"
+    )
+    natural = Scheme("natural", False)
+    effect = []
+    for scheme in (natural, v3_scheme, v4_scheme):
+        ind = individual_summary(default, scheme, n_draws)
+        tpl = sampling_summary(default, scheme, n_draws)
+        effect.append(
+            {
+                "scheme": scheme.label,
+                "10 largest groups": _fmt_share(ind["top_share"]),
+                f"effective groups / {n_draws // 1000}k": f"{ind['effective_individuals']:,.0f}",
+                f"distinct groups / {n_draws // 1000}k": f"{ind['distinct_individuals']:,.0f}",
+                f"distinct templates / {n_draws // 1000}k": f"{tpl['distinct']:,.0f}",
+                f"max repeats / {n_draws // 1000}k": f"{tpl['max_repeats']:,.0f}",
+            }
+        )
+    largest = individual_summary(default, v4_scheme, n_draws)["largest"]
+    add(
+        "Effect on the default selection (*10 largest groups*: share of draws from the "
+        "10 groups with most templates; *effective groups*: exp(entropy) of the "
+        "groups' draw shares; *distinct*: expected number drawn at least once):\n"
+    )
+    lines.extend(_table(pd.DataFrame(effect)))
+    add(
+        "\nThe 10 largest groups: "
+        + ", ".join(f"`{name}` ({size})" for name, size in largest)
+        + ".\n"
+    )
+
+    # sampling table -------------------------------------------------------------
+    add("## 3. Sampling with the v4 defaults\n")
+    schemes = [
+        natural,
+        Scheme("v2: linear 10×10, α = 1", True, "linear", 1.0),
+        v3_scheme,
+        Scheme("log, α = 1, individual", True, "log", 1.0, "individual"),
+        Scheme("log, α = 0.7, individual", True, "log", 0.7, "individual"),
+        v4_scheme,
+        Scheme("log, α = 0.5, individual", True, "log", 0.5, "individual"),
+    ]
+    rows = [sampling_summary(default, s, n_draws) for s in schemes]
+    shown = pd.DataFrame(rows)
+    for column in ["big", "small", *(c[0] for c in DURATION_CLASSES_MS), "competition"]:
+        shown[column] = shown[column].map(_fmt_share)
+    for column in ("distinct", "effective", "max_repeats"):
+        shown[column] = shown[column].map(lambda v: f"{v:,.0f}")
+    shown.columns = [
+        "scheme",
+        "big",
+        "small",
+        *(c[0] for c in DURATION_CLASSES_MS),
+        "competition",
+        f"distinct / {n_draws // 1000}k",
+        "effective n",
+        f"max repeats / {n_draws // 1000}k",
+    ]
+    add(
+        f"Draw shares on the v4 default selection ({default.n_templates} templates); "
+        "columns as in the v3 report.\n"
+    )
+    lines.extend(_table(shown))
+    v4 = rows[5]
+    add(
+        f"\nWith the v4 defaults big chirps get {_fmt_share(v4['big'])} of draws, small "
+        f"chirps {_fmt_share(v4['small'])}, chirps ≥ 150 ms "
+        f"{_fmt_share(v4['≥ 150 ms'])}, harvested chirps "
+        f"{_fmt_share(v4['competition'])}; no template is drawn more than "
+        f"{v4['max_repeats']:,.0f} times per {n_draws:,}. Bin shares are the same as "
+        "with template balance; fish-first moves draws, within a bin, from prolific "
+        "groups to the others.\n"
+    )
+    eq = default.equalization_bins(DEFAULT_BINS, spacing=DEFAULT_SPACING)
+    add(
+        f"Occupancy of the default bins ({eq.n_nonempty} of {eq.counts.size} occupied):\n"
+    )
+    lines.extend(_bin_table(eq.table()))
+    groups_per_bin = np.zeros(eq.counts.size, dtype=np.int64)
+    individuals = eq.individual_of if eq.individual_of is not None else eq.bin_of
+    for b in np.flatnonzero(eq.counts.ravel()):
+        groups_per_bin[b] = np.unique(individuals[eq.bin_of == b]).size
+    add("\nGroups per bin (fish-first draws a group uniformly within its bin):\n")
+    lines.extend(
+        _bin_table(
+            pd.DataFrame(
+                groups_per_bin.reshape(eq.counts.shape),
+                index=eq.table().index,
+                columns=eq.table().columns,
+            )
+        )
+    )
+    add(
+        "\n## Files\n\n- Same layout as v3: `delta_f_hz.npy`, `amp_rel.npy` "
+        f"(float32, n × {lib.n_samples}), `templates.parquet` (every flag as a "
+        "bool column, `group_label` for every template), `manifest.json`, "
+        "`review.csv`.\n"
+    )
+    path = library_dir / "report.md"
+    path.write_text("\n".join(lines) + "\n")
+    (library_dir / "sampling_comparison.json").write_text(
+        json.dumps({"schemes": rows, "fish_first": effect}, indent=2, default=float)
     )
     log.info("report written to %s", path)
     return path
