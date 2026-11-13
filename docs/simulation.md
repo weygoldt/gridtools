@@ -3,14 +3,14 @@
 ```sh
 gridtools sim run CONFIG --seeds 0:10 --out OUT [--workers N] [--no-plots]
 gridtools sim plot OUT/000003 [--out DIR]
-gridtools sim compare OUT [--calibration calibration.json]
+gridtools sim compare OUT --calibration calibration.json
 ```
 
 `CONFIG` is a TOML file or the name of a shipped config (`default`).
 `--seeds` takes `0:10` (stop excluded), `0:10:2`, `3` or `1,4,7`; every seed
 gives one scene directory `OUT/<seed:06d>/`, and `OUT/config.json` records
-the resolved config. Without `--out`, scenes go to
-`/mnt/data1/chirp_v2/scenes/<name>` (a path of the development machine).
+the resolved config. Without `--out`, scenes go to `scenes/<name>` in the
+working directory.
 `--no-plots` skips the two annotated spectrograms per scene.
 
 A short synthetic scene, as used to check these docs:
@@ -97,7 +97,7 @@ it.
 
 With probability `background.prob`, a scene uses a real 60-s background
 segment from the [background library](background.md) instead of synthetic
-noise:
+noise (off by default: no library, `prob = 0`; set both as below):
 
 - the segment's electrodes (the whole grid, or a contiguous run of a larger
   one) with their positions and channel order replace the drawn layout, and
@@ -140,8 +140,9 @@ INFO gridtools.sim.cli: seed 000000: 4 fish, 6 electrodes, 77 chirps, competitio
 ## Chirps
 
 Chirps are real chirps from the [template library](templates.md)
-(`[chirps] library`), relative to the baseline, so a template fits a fish of
-any EODf. Templates are drawn with the library's tempered equalisation over
+(`[chirps] library`, default `$GRIDTOOLS_TEMPLATES`; required), relative
+to the baseline, so a template fits a fish of any EODf. Templates are
+drawn with the library's tempered equalisation over
 a 10 x 10 grid of excursion x 10 %-width bins (log-spaced, bin weight
 count^(1 - 0.6)), choosing an individual first and then one of its
 templates, so rare big and long chirps are seen often. The

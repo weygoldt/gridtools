@@ -46,3 +46,37 @@ def test_review_and_report(make_trial: Callable[..., Trial], tmp_path: Path) -> 
         assert heading in report
     assert (root / "figures" / "snr.png").exists()
     assert list((root / "figures").glob("demo_*.png"))
+
+
+@pytest.mark.parametrize("command", ["review", "report"])
+def test_a_library_without_segments_exits_with_a_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str
+) -> None:
+    from gridtools.background.__main__ import main
+
+    root = tmp_path / "lib"
+    assert build_background_library([], root, BackgroundConfig(workers=1)).empty
+    with pytest.raises(SystemExit) as exit_info:
+        main([command, str(root)])
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "has no segments" in err
+    assert "Traceback" not in err
+    with pytest.raises(SystemExit) as exit_info:
+        main([command, str(tmp_path / "missing")])
+    assert exit_info.value.code == 1
+    assert "not a background library" in capsys.readouterr().err
+    with pytest.raises(ValueError, match="has no segments"):
+        write_review(root)
+
+
+def test_build_needs_the_roots_of_its_datasets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gridtools.background.__main__ import main
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["build", str(tmp_path / "lib"), "--datasets", "competition2019"])
+    assert exit_info.value.code == 2
+    assert "--root-2019" in capsys.readouterr().err
+    assert not (tmp_path / "lib").exists()

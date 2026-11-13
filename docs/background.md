@@ -60,8 +60,8 @@ Per recording it chooses segments, reads each once, measures it (noise
 floor, real fish and their SNR, hum, clicks, tonal peaks), and writes it
 with its tracks; channels without fish signal in any segment are marked
 dead. `--recordings-2019` / `--recordings-2022` restrict the recordings,
-`--root-2019` etc. give the data locations (defaults: paths of the
-development machine), `--workers` the processes.
+`--root-2019` etc. give the data locations (required for every dataset in
+`--datasets`), `--workers` the processes.
 
 The build config (`BackgroundConfig`, TOML; its keys replace the
 command-line defaults) of library v2:
@@ -196,5 +196,4 @@ so their own SNR does not change.
 
 v1 (2026-11-12) took competition segments from whole recordings, screened
 only by v1's saved detections at score >= 0.5. It is kept on disk for
-reference; the shipped default scene config still points to it (`[background]
-library`), the final training scenes use v2.
+reference; the final training scenes use v2.

@@ -44,7 +44,6 @@ from gridtools.background.levels import (
     snr_db,
 )
 from gridtools.background.library import (
-    DEFAULT_LIBRARY,
     REAL_FISH_IDENT_OFFSET,
     BackgroundLibrary,
     BackgroundSegment,
@@ -69,7 +68,6 @@ from gridtools.background.sources import (
 )
 
 __all__ = [
-    "DEFAULT_LIBRARY",
     "LEVEL_BAND_HZ",
     "REAL_FISH_IDENT_OFFSET",
     "REFERENCE_BANDWIDTH_HZ",

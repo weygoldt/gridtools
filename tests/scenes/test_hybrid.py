@@ -1,11 +1,13 @@
 """Hybrid scenes: simulated fish on a real background segment.
 
-Needs the background library (``/mnt/data1/chirp_v2/background/v1``);
-skipped without it. The chirp templates are the synthetic test library.
+Needs a background library (``$GRIDTOOLS_TEST_BACKGROUND``, default the
+development machine's ``/mnt/data1/chirp_v2/background/v1``); skipped
+without it. The chirp templates are the synthetic test library.
 """
 
 import json
 import math
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -33,7 +35,14 @@ from gridtools.sim.scene import (
 
 from .conftest import small_config
 
-LIBRARY = Path(HybridConfig().library)
+LIBRARY = Path(
+    os.environ.get("GRIDTOOLS_TEST_BACKGROUND", "/mnt/data1/chirp_v2/background/v1")
+)
+
+
+def _hybrid(**kwargs: object) -> HybridConfig:
+    return HybridConfig(library=str(LIBRARY), **kwargs)  # type: ignore[arg-type]
+
 
 pytestmark = pytest.mark.skipif(
     not (LIBRARY / "manifest.parquet").exists(),
@@ -57,7 +66,7 @@ def hybrid_config(
     config = small_config(library, duration_s=4.0, grid=grid)
     return replace(
         config,
-        background=HybridConfig(prob=1.0, datasets=datasets, **background),  # type: ignore[arg-type]
+        background=_hybrid(prob=1.0, datasets=datasets, **background),
     )
 
 
@@ -336,7 +345,7 @@ def test_reproducible_under_the_seed(library_dir: Path) -> None:
 def test_hybrid_share_follows_prob(library_dir: Path) -> None:
     config = replace(
         hybrid_config(library_dir, n_electrodes=1),
-        background=HybridConfig(prob=0.5, datasets=("competition2019",)),
+        background=_hybrid(prob=0.5, datasets=("competition2019",)),
     )
     hybrid = [plan_scene(config, seed).background is not None for seed in range(16)]
     assert 0 < sum(hybrid) < 16
@@ -351,16 +360,16 @@ def test_longer_scenes_are_refused(library_dir: Path) -> None:
 
 
 def test_source_weights() -> None:
-    m, w = candidates(HybridConfig())
+    m, w = candidates(_hybrid())
     unscreened = ~m["screened"].to_numpy(dtype=bool)
     assert unscreened.any()
     assert np.all(w[unscreened] == pytest.approx(0.3))
     assert np.all(w[~unscreened] == 1.0)
-    m2, w2 = candidates(HybridConfig(dataset_weights=(("field_iriri2026", 0.5),)))
+    m2, w2 = candidates(_hybrid(dataset_weights=(("field_iriri2026", 0.5),)))
     field = (m2["dataset"] == "field_iriri2026").to_numpy()
     assert np.all(w2[field] == 0.5)
     with pytest.raises(ValueError, match="not in"):
-        candidates(HybridConfig(datasets=("nope",)))
+        candidates(_hybrid(datasets=("nope",)))
 
 
 def test_silent_channels_are_never_chosen_and_not_in_the_level() -> None:
@@ -372,7 +381,7 @@ def test_silent_channels_are_never_chosen_and_not_in_the_level() -> None:
     if segment_id is None:
         pytest.skip("no segment with silent channels")
     silent = silent_channels(lib, segment_id)
-    config = HybridConfig(datasets=("field_flona2025",))
+    config = _hybrid(datasets=("field_flona2025",))
     rng = np.random.default_rng(0)
     from gridtools.sim.hybrid import _choose
 

@@ -16,8 +16,10 @@ from gridtools.background import (
     competition_2022_sources,
 )
 from gridtools.background.build import build_background_library
-from gridtools.background.sources import COMPETITION_2022_ROOT
 from gridtools.io import read_v1_detections
+
+COMPETITION_2019_ROOT = Path("/mnt/data2/2019_tube_competition")
+COMPETITION_2022_ROOT = Path("/mnt/data2/2022_tube_competition")
 
 pytestmark = [
     pytest.mark.data,
@@ -33,8 +35,8 @@ RECORDINGS_2019 = ["2019-12-02-10_00", "2020-03-16-10_00", "2020-05-21-10_00"]
 @pytest.fixture(scope="module")
 def built(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("background")
-    sources = competition_2019_sources(recordings=RECORDINGS_2019)
-    sources += competition_2022_sources(recordings=["2022-06-24-10_00"])
+    sources = competition_2019_sources(COMPETITION_2019_ROOT, RECORDINGS_2019)
+    sources += competition_2022_sources(COMPETITION_2022_ROOT, ["2022-06-24-10_00"])
     config = BackgroundConfig(
         selection=SelectionConfig(segments_per_recording=2),
         fish_free_per_recording=1,
@@ -50,9 +52,7 @@ def test_no_v1_detection_near_any_screened_fish_segment(built: Path) -> None:
     assert len(m) == 2 * len(RECORDINGS_2019)
     margin = SelectionConfig().margin_s
     for recording, rows in m.groupby("recording"):
-        det = read_v1_detections(
-            Path("/mnt/data2/2019_tube_competition") / str(recording)
-        )
+        det = read_v1_detections(COMPETITION_2019_ROOT / str(recording))
         for start, stop in zip(rows["start_s"], rows["stop_s"], strict=True):
             near = (det["t_start_s"] < stop + margin) & (
                 det["t_end_s"] > start - margin

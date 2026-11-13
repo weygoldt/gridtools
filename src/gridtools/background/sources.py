@@ -3,7 +3,8 @@
 A :class:`SourceRecording` names one real recording and the files around
 it: tracks (wavetracker layout), chirpdetector v1 detections and hand
 labels. :func:`competition_2019_sources` and :func:`competition_2022_sources`
-list the tube competition recordings on ``/mnt/data2``:
+list the tube competition recordings under a dataset root (given; on the
+development machine ``/mnt/data2``):
 
 2019/2020 competitions (``/mnt/data2/2019_tube_competition/<trial>/``)
     50 trials, fishgrid raw (3x3 grids in 2019, 15 electrodes in 2020) at
@@ -36,17 +37,12 @@ from pathlib import Path
 from gridtools.io import Recording, open_recording
 
 __all__ = [
-    "COMPETITION_2019_ROOT",
-    "COMPETITION_2022_ROOT",
     "DARK_PHASE_S",
     "SourceRecording",
     "competition_2019_sources",
     "competition_2022_sources",
     "open_source_recording",
 ]
-
-COMPETITION_2019_ROOT = Path("/mnt/data2/2019_tube_competition")
-COMPETITION_2022_ROOT = Path("/mnt/data2/2022_tube_competition")
 
 #: The competitions start with 3 h of darkness, then the light is switched on.
 DARK_PHASE_S = 10_800.0
@@ -134,7 +130,7 @@ def _select(dirs: Iterable[Path], names: Iterable[str] | None) -> list[Path]:
 
 
 def competition_2019_sources(
-    root: str | Path = COMPETITION_2019_ROOT,
+    root: str | Path,
     recordings: Iterable[str] | None = None,
 ) -> list[SourceRecording]:
     """The 2019/2020 tube competition trials.
@@ -170,7 +166,7 @@ def competition_2019_sources(
 
 
 def competition_2022_sources(
-    root: str | Path = COMPETITION_2022_ROOT,
+    root: str | Path,
     recordings: Iterable[str] | None = None,
 ) -> list[SourceRecording]:
     """The 2022 tube competition trials (no chirp detections; geometry unknown).

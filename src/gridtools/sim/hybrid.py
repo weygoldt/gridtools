@@ -74,6 +74,14 @@ def background_library(
     return BackgroundLibrary.load(root, include_rejected=include_rejected)
 
 
+def _library(cfg: HybridConfig) -> str:
+    """The configured library directory; hybrid scenes need one."""
+    if cfg.library is None:
+        msg = 'hybrid scenes need [background] library = "PATH"'
+        raise ValueError(msg)
+    return cfg.library
+
+
 @functools.lru_cache(maxsize=8)
 def candidates(cfg: HybridConfig) -> tuple[pd.DataFrame, np.ndarray]:
     """Eligible segments (manifest rows) and their unnormalised weights.
@@ -87,7 +95,7 @@ def candidates(cfg: HybridConfig) -> tuple[pd.DataFrame, np.ndarray]:
         If a dataset in ``datasets`` or ``dataset_weights`` is not in the
         library, or nothing is left.
     """
-    lib = background_library(cfg.library)
+    lib = background_library(_library(cfg))
     known = set(lib.manifest["dataset"])
     named = set(cfg.datasets) | {name for name, _ in cfg.dataset_weights}
     unknown = sorted(named - known)
@@ -299,7 +307,7 @@ def draw_segment(
     index = int(rng.choice(len(m), p=w / w.sum()))
     row = m.iloc[index].to_dict()
     n_channels = int(row["n_electrodes"])
-    lib = background_library(cfg.library)
+    lib = background_library(_library(cfg))
     silent = silent_channels(lib, str(row["segment_id"]))
     channels = _choose(
         rng, row, n_channels if k is None else min(k, n_channels), cfg, silent
@@ -461,7 +469,7 @@ class HybridBackground:
         """
         snr, min_db = target_snr(rng, cfg, segment)
         ratio = scale_for_snr(segment.level, signal_level, snr)
-        natural = natural_scale(cfg.library, str(segment.info.get("dataset", "")))
+        natural = natural_scale(_library(cfg), str(segment.info.get("dataset", "")))
         scale, fish_gain = ratio, 1.0
         if not cfg.amplify_background and ratio > natural:
             scale, fish_gain = natural, natural / ratio

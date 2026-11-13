@@ -2,11 +2,16 @@
 
 .. code-block:: sh
 
-    python -m gridtools.background build /mnt/data1/chirp_v2/background/v1 \\
-        --datasets competition2019 competition2022 field_iriri2026 \\
+    python -m gridtools.background build LIB/v1 \\
+        --datasets competition2019 competition2022 \\
+        --root-2019 DATA/2019_tube_competition --root-2022 DATA/2022_tube_competition \\
         --workers 6 --seed 0
-    python -m gridtools.background review /mnt/data1/chirp_v2/background/v1
-    python -m gridtools.background report /mnt/data1/chirp_v2/background/v1
+    python -m gridtools.background review LIB/v1
+    python -m gridtools.background report LIB/v1
+
+Every dataset of ``--datasets`` needs its root (``--root-2019`` etc.).
+``review``, ``report`` and ``diagnose`` exit with status 1 and a message if
+the directory is not a library or has no segments.
 
 A build can take its options from a TOML file (``BackgroundConfig.from_toml``:
 per-dataset time windows, external chirp screens, the recording gate,
@@ -14,13 +19,13 @@ per-dataset selection); its keys replace the command-line defaults:
 
 .. code-block:: sh
 
-    python -m gridtools.background carry-over /mnt/data1/chirp_v2/background/v1 \
-        /mnt/data1/chirp_v2/background/v2 --datasets field_flona2025 field_iriri2026
-    python -m gridtools.background build /mnt/data1/chirp_v2/background/v2 \
-        --config configs/background/v2.toml --datasets competition2019 competition2022
-    python -m gridtools.background diagnose /mnt/data1/chirp_v2/background/v2 \
+    python -m gridtools.background carry-over LIB/v1 LIB/v2 \
+        --datasets field_flona2025 field_iriri2026
+    python -m gridtools.background build LIB/v2 --config configs/background/v2.toml \
+        --datasets competition2019 competition2022 --root-2019 ... --root-2022 ...
+    python -m gridtools.background diagnose LIB/v2 \
         --screen v1 --snippets 2020-03-18-10_34 2020-03-10-09_56
-    python -m gridtools.background report /mnt/data1/chirp_v2/background/v2 \
+    python -m gridtools.background report LIB/v2 \
         --splits train=configs/scenes/train_v3_train.toml ...
 """
 
@@ -28,23 +33,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 from gridtools.background.build import BackgroundConfig, build_background_library
 from gridtools.background.field import (
-    FLONA2023_ROOT,
-    FLONA2025_ROOT,
-    IRIRI2026_ROOT,
     FieldFolder,
     FieldScanConfig,
     flona2023_folders,
     flona2025_folders,
     iriri2026_folders,
 )
+from gridtools.background.library import read_manifest
 from gridtools.background.select import SelectionConfig
 from gridtools.background.sources import (
-    COMPETITION_2019_ROOT,
-    COMPETITION_2022_ROOT,
     SourceRecording,
     competition_2019_sources,
     competition_2022_sources,
@@ -57,6 +59,32 @@ DATASETS = (
     "field_flona2025",
     "field_flona2023",
 )
+
+#: The root option of every dataset (no defaults: the data are the author's).
+ROOT_OPTIONS = {
+    "competition2019": "--root-2019",
+    "competition2022": "--root-2022",
+    "field_iriri2026": "--root-iriri2026",
+    "field_flona2025": "--root-flona2025",
+    "field_flona2023": "--root-flona2023",
+}
+
+
+def _fail(message: str) -> None:
+    """Print ``error: message`` and exit with status 1."""
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _check_library(root: Path, command: str) -> None:
+    """Exit with a message unless ``root`` is a library with segments."""
+    if not (root / "manifest.parquet").exists():
+        _fail(
+            f"{root} is not a background library (no manifest.parquet); "
+            "build one with `python -m gridtools.background build`"
+        )
+    if read_manifest(root).empty:
+        _fail(f"background library {root} has no segments: nothing to {command}")
 
 
 def _sources(args: argparse.Namespace) -> list[SourceRecording | FieldFolder]:
@@ -86,11 +114,10 @@ def main(argv: list[str] | None = None) -> None:
         default=list(DATASETS),
         choices=list(DATASETS),
     )
-    build.add_argument("--root-2019", type=Path, default=COMPETITION_2019_ROOT)
-    build.add_argument("--root-2022", type=Path, default=COMPETITION_2022_ROOT)
-    build.add_argument("--root-iriri2026", type=Path, default=IRIRI2026_ROOT)
-    build.add_argument("--root-flona2025", type=Path, default=FLONA2025_ROOT)
-    build.add_argument("--root-flona2023", type=Path, default=FLONA2023_ROOT)
+    for dataset, option in ROOT_OPTIONS.items():
+        build.add_argument(
+            option, type=Path, default=None, help=f"root of {dataset} (if built)"
+        )
     build.add_argument("--field-probes", type=int, default=8)
     build.add_argument("--field-segments", type=int, default=2)
     build.add_argument("--recordings-2019", nargs="+", default=None)
@@ -139,6 +166,17 @@ def main(argv: list[str] | None = None) -> None:
         help="scene configs whose [background] include_groups define splits",
     )
     args = parser.parse_args(argv)
+    if args.command == "build":
+        lacking = [
+            ROOT_OPTIONS[d]
+            for d in args.datasets
+            if getattr(args, ROOT_OPTIONS[d].removeprefix("--").replace("-", "_"))
+            is None
+        ]
+        if lacking:
+            build.error(f"give the root of every dataset built: {' '.join(lacking)}")
+    elif args.command in ("review", "report", "diagnose"):
+        _check_library(args.out_dir, args.command)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
     )
@@ -158,7 +196,9 @@ def main(argv: list[str] | None = None) -> None:
         )
         if args.config is not None:
             config = _from_file(config, args.config)
-        build_background_library(_sources(args), args.out_dir, config)
+        manifest = build_background_library(_sources(args), args.out_dir, config)
+        if manifest.empty:
+            _fail(f"the build selected no segments: {args.out_dir} is empty")
         if not args.no_report:
             from gridtools.background.report import write_report
             from gridtools.background.review import write_review

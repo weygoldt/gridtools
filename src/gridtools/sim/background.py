@@ -11,7 +11,7 @@ How a hybrid scene uses it
 --------------------------
 1. Draw the background first; it fixes the grid::
 
-       lib = BackgroundLibrary.load()  # /mnt/data1/chirp_v2/background/v1
+       lib = BackgroundLibrary.load("LIBRARY")
        segment = lib.sample(rng, duration_s, n_electrodes=n_electrodes,
                             samplerate_hz=20_000.0, resample=True)
 
@@ -93,7 +93,6 @@ from gridtools.background.levels import (
     snr_db,
 )
 from gridtools.background.library import (
-    DEFAULT_LIBRARY,
     REAL_FISH_IDENT_OFFSET,
     BackgroundLibrary,
     BackgroundSegment,
@@ -102,7 +101,6 @@ from gridtools.background.library import (
 )
 
 __all__ = [
-    "DEFAULT_LIBRARY",
     "LEVEL_BAND_HZ",
     "REAL_FISH_IDENT_OFFSET",
     "REFERENCE_BANDWIDTH_HZ",

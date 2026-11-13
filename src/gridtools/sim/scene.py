@@ -162,7 +162,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 FORMAT_VERSION = 1
-DEFAULT_ROOT = Path("/mnt/data1/chirp_v2/scenes")
+DEFAULT_ROOT = Path("scenes")
+"""Default output root, relative to the working directory."""
 OVERLAP_WINDOW_S = 0.25
 
 #: Columns of ``chirps.csv``.

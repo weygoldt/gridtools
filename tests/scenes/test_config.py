@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from gridtools.sim.config import (
+    TEMPLATES_ENV,
     ChirpConfig,
+    HybridConfig,
     NoiseConfig,
     PopulationConfig,
     SceneConfig,
@@ -88,3 +90,51 @@ def test_sections_validate_on_construction() -> None:
 
 def test_n_samples() -> None:
     assert SceneConfig(duration_s=1.5, samplerate_hz=20_000.0).n_samples == 30_000
+
+
+# -- portable defaults: nothing points to the development machine ----------
+
+
+def test_shipped_default_has_no_machine_paths() -> None:
+    text = default_config_path().read_text()
+    for prefix in ("/mnt/", "/home/", "/run/media/", "chirp_v2"):
+        assert prefix not in text
+
+
+def test_default_scene_is_synthetic_without_a_background_library() -> None:
+    config = SceneConfig()
+    assert config.background.library is None
+    assert config.background.prob == 0.0
+    with pytest.raises(ValueError, match=r"background\.library"):
+        HybridConfig(prob=0.6)
+    assert HybridConfig(library="/libs/background", prob=0.6).prob == 0.6
+
+
+def test_template_library_defaults_to_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(TEMPLATES_ENV, raising=False)
+    assert ChirpConfig().library is None
+    assert SceneConfig.from_toml(default_config_path()).chirps.library is None
+    monkeypatch.setenv(TEMPLATES_ENV, "/libs/templates")
+    assert ChirpConfig().library == "/libs/templates"
+    assert SceneConfig.from_toml(default_config_path()).chirps.library == (
+        "/libs/templates"
+    )
+    # an explicit key wins, and the resolved config records the path
+    explicit = SceneConfig.from_dict({"chirps": {"library": "/other"}})
+    assert explicit.chirps.library == "/other"
+    assert SceneConfig.from_json(SceneConfig().to_json()).chirps.library == (
+        "/libs/templates"
+    )
+
+
+def test_missing_template_library_says_what_to_provide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gridtools.sim.chirps import TemplatePool
+
+    monkeypatch.delenv(TEMPLATES_ENV, raising=False)
+    with pytest.raises(FileNotFoundError, match=TEMPLATES_ENV) as err:
+        TemplatePool.open(ChirpConfig())
+    assert "[chirps] library" in str(err.value)

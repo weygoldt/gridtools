@@ -357,10 +357,18 @@ def write_review(
     dict
         ``n_segments``, ``n_plotted``, ``wall_s`` and ``cpu_s`` (sum over
         plots).
+
+    Raises
+    ------
+    ValueError
+        If the library has no segments.
     """
     root = Path(root)
     t0 = time.perf_counter()
     manifest = read_manifest(root / "manifest.parquet")
+    if manifest.empty:
+        msg = f"background library {root} has no segments: nothing to review"
+        raise ValueError(msg)
     review = merge_review(root, manifest)
     summed = 10 * np.log10(
         manifest["noise_psd"].to_numpy(dtype=float)
@@ -377,8 +385,8 @@ def write_review(
             continue
         tasks.append((root, row, png, floors[str(row["dataset"])] - 5.0))
     cpu = 0.0
+    (root / "review").mkdir(exist_ok=True)
     if tasks:
-        (root / "review").mkdir(exist_ok=True)
         with ProcessPoolExecutor(max_workers=max(1, min(workers, 6))) as pool:
             for _, seconds in pool.map(_plot_task, tasks, chunksize=4):
                 cpu += seconds

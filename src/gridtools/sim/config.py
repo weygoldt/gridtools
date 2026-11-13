@@ -18,6 +18,7 @@ key with its default; :func:`default_config_path` returns its location.
 import dataclasses
 import json
 import math
+import os
 import tomllib
 import types
 import typing
@@ -30,6 +31,7 @@ from gridtools.sim.movement import MovementParams
 from gridtools.templates.library import DEFAULT_EXCLUDE as _LIBRARY_EXCLUDE
 
 __all__ = [
+    "TEMPLATES_ENV",
     "ChirpConfig",
     "ClickConfig",
     "FieldConfig",
@@ -43,6 +45,7 @@ __all__ = [
     "SceneConfig",
     "TrackConfig",
     "default_config_path",
+    "default_template_library",
 ]
 
 FloatRange = tuple[float, float]
@@ -52,7 +55,14 @@ IntRange = tuple[int, int]
 #: demonstrable artefacts and events shorter than 5 ms).
 DEFAULT_TEMPLATE_EXCLUDE: tuple[str, ...] = tuple(_LIBRARY_EXCLUDE)
 
-DEFAULT_LIBRARY = "/mnt/data1/chirp_v2/templates/v4"
+TEMPLATES_ENV = "GRIDTOOLS_TEMPLATES"
+"""Environment variable with the default chirp template library
+(``[chirps] library``); no library ships with gridtools."""
+
+
+def default_template_library() -> str | None:
+    """``$GRIDTOOLS_TEMPLATES``, or None if it is unset or empty."""
+    return os.environ.get(TEMPLATES_ENV) or None
 
 
 def _check_range(
@@ -419,8 +429,11 @@ class ChirpConfig:
 
     Attributes
     ----------
-    library : str
-        Path of the template library (default ``/mnt/data1/chirp_v2/templates/v4``).
+    library : str or None
+        Path of the template library (:mod:`gridtools.templates`); default
+        the environment variable ``GRIDTOOLS_TEMPLATES``. None ships with
+        gridtools: without one, simulating a scene fails with an error that
+        names both ways to give it.
     families : tuple of str
         Template families to draw from (``"small"``, ``"big"``; default both).
     exclude : tuple of str
@@ -471,7 +484,7 @@ class ChirpConfig:
         Range of the amplitude dip in frequency mode (default 0-0.8).
     """
 
-    library: str = DEFAULT_LIBRARY
+    library: str | None = dataclasses.field(default_factory=default_template_library)
     families: tuple[str, ...] = ("small", "big")
     exclude: tuple[str, ...] = DEFAULT_TEMPLATE_EXCLUDE
     equalize: bool = True
@@ -494,7 +507,7 @@ class ChirpConfig:
     dip: FloatRange = (0.0, 0.8)
 
     def __post_init__(self) -> None:
-        if not self.library:
+        if self.library is not None and not self.library:
             msg = "chirps.library must not be empty"
             raise ValueError(msg)
         for family in self.families:
@@ -1051,6 +1064,12 @@ class FootprintConfig:
 class HybridConfig:
     """Real background segments (hybrid scenes), TOML section ``[background]``.
 
+    Off by default (``prob = 0``, no library): every scene has synthetic
+    noise, hum and clicks. Hybrid scenes need a background library
+    (:mod:`gridtools.background`; none ships with gridtools) in ``library``
+    and ``prob > 0`` (the released detector's training scenes: library v2,
+    ``prob = 1``).
+
     With probability ``prob`` a scene is hybrid: a segment of a real
     recording from the background library (:mod:`gridtools.sim.background`)
     replaces the synthetic electrode noise, hum and clicks, and fixes the
@@ -1072,10 +1091,11 @@ class HybridConfig:
 
     Attributes
     ----------
-    library : str
-        Library directory (default ``/mnt/data1/chirp_v2/background/v1``).
+    library : str or None
+        Library directory (default None: no hybrid scenes).
     prob : float
-        Share of hybrid scenes (default 0.6).
+        Share of hybrid scenes (default 0: none); above 0 it needs
+        ``library``.
     unscreened_weight : float
         Sampling weight of segments not screened for chirps (the 2022
         competitions; default 0.3; screened and fish-free segments 1).
@@ -1108,8 +1128,8 @@ class HybridConfig:
         :meth:`gridtools.sim.hybrid.HybridBackground.build`).
     """
 
-    library: str = "/mnt/data1/chirp_v2/background/v1"
-    prob: float = 0.6
+    library: str | None = None
+    prob: float = 0.0
     unscreened_weight: float = 0.3
     dataset_weights: tuple[tuple[str, float], ...] = ()
     datasets: tuple[str, ...] = ()
@@ -1124,10 +1144,17 @@ class HybridConfig:
     amplify_background: bool = False
 
     def __post_init__(self) -> None:
-        if not self.library:
+        if self.library is not None and not self.library:
             msg = "background.library must not be empty"
             raise ValueError(msg)
         _check_number(self.prob, "background.prob", low=0.0, high=1.0)
+        if self.prob > 0.0 and self.library is None:
+            msg = (
+                f"background.prob = {self.prob:g} needs background.library: set "
+                '[background] library = "PATH" (a gridtools.background library), '
+                "or prob = 0 for synthetic backgrounds only"
+            )
+            raise ValueError(msg)
         _check_number(self.unscreened_weight, "background.unscreened_weight", low=0.0)
         for name, weight in self.dataset_weights:
             _check_number(weight, f"background.dataset_weights[{name}]", low=0.0)

@@ -52,7 +52,30 @@ def resolve_config(config: str) -> SceneConfig:
     if not path.exists():
         msg = f"no config file {config!r} (and no shipped config of that name)"
         raise typer.BadParameter(msg)
-    return SceneConfig.from_toml(path)
+    try:
+        return SceneConfig.from_toml(path)
+    except (TypeError, ValueError) as err:
+        raise typer.BadParameter(f"{path}: {err}") from err
+
+
+def _check_libraries(config: SceneConfig) -> None:
+    """Fail early, with what to provide, if a library is missing."""
+    from gridtools.sim.chirps import TemplatePool
+
+    try:
+        TemplatePool.open(config.chirps)
+    except (FileNotFoundError, ValueError) as err:
+        typer.echo(f"error: {err}", err=True)
+        raise typer.Exit(1) from err
+    library = config.background.library
+    hybrid = config.background.prob > 0.0 and library is not None
+    if hybrid and not (Path(str(library)) / "manifest.parquet").exists():
+        msg = (
+            f"error: background library not found: {library} "
+            "([background] library; no manifest.parquet)"
+        )
+        typer.echo(msg, err=True)
+        raise typer.Exit(1)
 
 
 def _run_one(config_json: str, seed: int, out_dir: str, plots: bool) -> dict[str, Any]:
@@ -91,14 +114,20 @@ def run(
     ] = "0:1",
     out: Annotated[
         Path | None,
-        typer.Option(help="Output root; default /mnt/data1/chirp_v2/scenes/<name>."),
+        typer.Option(help="Output root; default scenes/NAME in the working directory."),
     ] = None,
     workers: Annotated[int, typer.Option(min=1, help="Parallel processes.")] = 1,
     no_plots: Annotated[
         bool, typer.Option("--no-plots", help="Skip the annotated spectrograms.")
     ] = False,
 ) -> None:
-    """Simulate scenes, one directory per seed (``OUT/<seed:06d>``)."""
+    """Simulate scenes, one directory per seed (OUT/SEED, six digits).
+
+    Chirps come from a template library: the config's chirps.library, else
+    the environment variable GRIDTOOLS_TEMPLATES (none ships with
+    gridtools). Backgrounds are synthetic unless the config sets
+    background.library and background.prob (hybrid scenes).
+    """
     from gridtools.sim.scene import DEFAULT_ROOT
 
     logging.basicConfig(
@@ -106,6 +135,7 @@ def run(
     )
     scene_config = resolve_config(config)
     seed_list = parse_seeds(seeds)
+    _check_libraries(scene_config)
     root = out if out is not None else DEFAULT_ROOT / scene_config.name
     root.mkdir(parents=True, exist_ok=True)
     config_json = scene_config.to_json()
@@ -148,8 +178,13 @@ def compare(
         Path, typer.Argument(help="Directory of scene directories (one per seed).")
     ],
     calibration: Annotated[
-        Path, typer.Option(help="calibration.json of gridtools.calibrate.")
-    ] = Path("/mnt/data1/chirp_v2/calibration/v1/calibration.json"),
+        Path,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="calibration.json written by python -m gridtools.calibrate.",
+        ),
+    ],
     out: Annotated[
         Path | None,
         typer.Option(help="Output stem; default SCENES/comparison(.md, .csv)."),

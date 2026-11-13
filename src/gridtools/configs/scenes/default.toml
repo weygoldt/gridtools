@@ -1,5 +1,5 @@
 # Default scene config for `gridtools sim run`, calibrated on the 33
-# tube-competition trials (calibration v1, /mnt/data1/chirp_v2/calibration/v1).
+# tube-competition trials (calibration v1, docs/calibration.md).
 #
 # Every key is listed with its default; delete keys to fall back to the
 # defaults, or change them. Ranges are [low, high]; one value is drawn
@@ -8,8 +8,15 @@
 # Unknown keys are an error. Documentation of every field: the dataclasses
 # in gridtools.sim.config.
 #
-#   gridtools sim run default --seeds 0:10        # this file
-#   gridtools sim run my.toml --seeds 0:10 --out /mnt/data1/chirp_v2/scenes/my
+#   gridtools sim run default --seeds 0:10        # this file, into scenes/default
+#   gridtools sim run my.toml --seeds 0:10 --out scenes/my
+#
+# Two libraries do not ship with gridtools (the chirp competition libraries
+# are not public yet):
+# - the chirp template library ([chirps] library) is required: set the key
+#   or the environment variable GRIDTOOLS_TEMPLATES;
+# - a background library ([background] library) is optional: without it
+#   (the default) every scene has synthetic noise, hum and clicks.
 
 name = "default"
 duration_s = 60.0                    # = background segment length (hybrid scenes)
@@ -63,7 +70,7 @@ amplitude_log_sd = 0.2
 phase_sd_rad = 0.2
 
 [chirps]
-library = "/mnt/data1/chirp_v2/templates/v4"
+# library = "PATH/TO/templates"      # required; default: $GRIDTOOLS_TEMPLATES
 families = ["small", "big"]
 exclude = ["invalid", "has_nan", "duplicate", "truncated", "step_flag",
            "too_short", "brief_cycles", "ripple_flag", "multi_peak",
@@ -77,7 +84,7 @@ equalize_bins = [10, 10]             # excursion x width at 10 %
 # equalize_balance = "individual"    # library v4
 # Fish-disjoint template split (gridtools.templates.splits); omitted = all templates:
 # template_split = "train"           # or "val", "test"
-# template_splits = "/mnt/data1/chirp_v2/templates/v4/splits_v1.json"
+# template_splits = "PATH/TO/templates/splits_v1.json"
 rate_hz = [0.05, 0.5]                # 180-1800/h per fish; real: losers ~61/h
 # max_rate_hz = 1.0                  # optional cap; omit for none
 min_interval_s = 0.2                 # centre to centre, one fish; supports disjoint
@@ -196,8 +203,10 @@ margin_s = 0.05
 background = "others"                # or "recording"
 
 [background]                         # real background segments (hybrid scenes)
-library = "/mnt/data1/chirp_v2/background/v1"
-prob = 0.6                           # share of hybrid scenes
+# Off by default. For hybrid scenes give a library and their share, e.g.
+# library = "PATH/TO/background"     # a gridtools.background library
+# prob = 1.0                         # the released detector's training scenes
+prob = 0.0                           # share of hybrid scenes; > 0 needs library
 unscreened_weight = 0.3              # 2022 segments (not screened for chirps)
 dataset_weights = []                 # e.g. [["field_iriri2026", 0.5]]
 datasets = []                        # empty: all

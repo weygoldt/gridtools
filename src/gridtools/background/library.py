@@ -33,7 +33,7 @@ through the real recording chain):
 
 .. code-block:: python
 
-    lib = BackgroundLibrary.load()
+    lib = BackgroundLibrary.load("LIBRARY")
     segment = lib.select(screened=True).sample(rng, 60.0, n_electrodes=9)
     ...  # simulate fish on segment.geometry, get their fundamentals
     signal = fish_signal_level(fundamentals)          # unit**2 of the scene
@@ -65,7 +65,6 @@ from gridtools.io import GridGeometry, Tracks, load_tracks, open_recording
 
 __all__ = [
     "CHANNEL_MODES",
-    "DEFAULT_LIBRARY",
     "JSON_COLUMNS",
     "MANIFEST_COLUMNS",
     "REAL_FISH_IDENT_OFFSET",
@@ -78,8 +77,6 @@ __all__ = [
     "read_manifest",
     "write_manifest",
 ]
-
-DEFAULT_LIBRARY = Path("/mnt/data1/chirp_v2/background/v1")
 
 #: Real fish get identities from this value on when merged into a scene.
 REAL_FISH_IDENT_OFFSET = 1000
@@ -697,7 +694,7 @@ class BackgroundLibrary:
 
     @classmethod
     def load(
-        cls, root: str | Path = DEFAULT_LIBRARY, *, include_rejected: bool = False
+        cls, root: str | Path, *, include_rejected: bool = False
     ) -> BackgroundLibrary:
         """Load the manifest of a built library.
 

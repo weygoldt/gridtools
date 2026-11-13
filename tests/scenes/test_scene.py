@@ -18,6 +18,7 @@ from gridtools.sim.config import (
     PlotConfig,
     PopulationConfig,
     SceneConfig,
+    default_template_library,
 )
 from gridtools.sim.scene import (
     CHIRP_COLUMNS,
@@ -368,9 +369,12 @@ def test_seed_must_be_non_negative(config: SceneConfig) -> None:
 
 @pytest.mark.slow
 def test_default_config_with_real_library(tmp_path: Path) -> None:
-    config = SceneConfig(duration_s=10.0, plot=PlotConfig(enabled=False))
-    if not Path(config.chirps.library).exists():
+    # $GRIDTOOLS_TEMPLATES, else the development machine's library v4
+    library = Path(default_template_library() or "/mnt/data1/chirp_v2/templates/v4")
+    if not library.exists():
         pytest.skip("template library not available")
+    config = SceneConfig(duration_s=10.0, plot=PlotConfig(enabled=False))
+    config = replace(config, chirps=replace(config.chirps, library=str(library)))
     scene = simulate_scene(config, 0)
     fish = sum(render_fish(scene, i) for i in range(len(scene.model.fish)))
     from gridtools.sim.scene import render_background

@@ -38,7 +38,7 @@ import numpy as np
 import numpy.typing as npt
 
 from gridtools.sim._common import Float32Array, FloatArray, IntArray
-from gridtools.sim.config import ChirpConfig
+from gridtools.sim.config import TEMPLATES_ENV, ChirpConfig
 from gridtools.templates import (
     DEFAULT_ALPHA,
     DEFAULT_SPACING,
@@ -338,9 +338,18 @@ class TemplatePool:
         return str(meta["family"].iat[self._rows[int(template_id)]])
 
 
+NO_LIBRARY = (
+    "no chirp template library: scenes draw real chirps from a template "
+    "library (gridtools.templates), and none ships with gridtools. Give its "
+    'directory as [chirps] library = "PATH" in the scene config, or in the '
+    "environment variable {env}=PATH. The chirp competition library is not "
+    "public yet; build one from your own recordings (docs/templates.md)."
+)
+
+
 @functools.cache
 def _open_pool(
-    library_path: str,
+    library_path: str | None,
     families: tuple[str, ...],
     exclude: tuple[str, ...],
     require_amp: bool,
@@ -350,9 +359,11 @@ def _open_pool(
     template_split: str | None = None,
     template_splits: str | None = None,
 ) -> TemplatePool:
+    if library_path is None:
+        raise FileNotFoundError(NO_LIBRARY.format(env=TEMPLATES_ENV))
     path = Path(library_path)
     if not path.is_dir():
-        msg = f"template library not found: {path}"
+        msg = f"template library not found: {path} ([chirps] library)"
         raise FileNotFoundError(msg)
     library = load_library(path, mmap=True)
     n = library.n_templates

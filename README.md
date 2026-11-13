@@ -60,11 +60,12 @@ in volts), `fishgrid.cfg`, ground-truth tracks in wavetracker's format,
 visibility, `clicks.csv`, `paths.npz`, `chirp_traces.npz`, `scene.json` and
 two annotated spectrograms.
 
-The simulator needs a chirp template library, and hybrid scenes a background
-library. Both are built from the chirp competition recordings and are not
-public yet; the shipped config points to their location on the development
-machine (`[chirps] library`, `[background] library`). Hosting them is an open
-item.
+The simulator needs a chirp template library: `[chirps] library` in the
+config, or the environment variable `GRIDTOOLS_TEMPLATES`; without one,
+`gridtools sim run` stops and says so. Hybrid scenes also need a background
+library (`[background] library` and `prob > 0`); the shipped config has none,
+so its scenes have synthetic noise. Both libraries are built from the chirp
+competition recordings and are not public yet; hosting them is an open item.
 
 ## Documentation
 

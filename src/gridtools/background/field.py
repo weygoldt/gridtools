@@ -56,9 +56,6 @@ from scipy.io import wavfile
 from gridtools.background.levels import tonal_peaks, welch_psd
 
 __all__ = [
-    "FLONA2023_ROOT",
-    "FLONA2025_ROOT",
-    "IRIRI2026_ROOT",
     "FieldFolder",
     "FieldScanConfig",
     "decode_wv",
@@ -68,12 +65,6 @@ __all__ = [
     "iriri2026_folders",
     "probe_wv",
 ]
-
-FLONA2023_ROOT = Path("/mnt/data1/efish/fielddata/flona2023")
-FLONA2025_ROOT = Path("/mnt/data1/efish/fielddata/flona2025_workspace/flona2025")
-IRIRI2026_ROOT = Path(
-    "/run/media/weygoldt/data1/efish/fielddata/iriri2026/iriri2026_recordings"
-)
 
 FIELD_UNITS = "int16 full scale (field logger, gain not calibrated)"
 
@@ -122,7 +113,7 @@ def _folders(pattern_dirs: list[Path]) -> list[Path]:
     return sorted(d for d in pattern_dirs if d.is_dir() and any(d.glob("*.wv")))
 
 
-def iriri2026_folders(root: str | Path = IRIRI2026_ROOT) -> list[FieldFolder]:
+def iriri2026_folders(root: str | Path) -> list[FieldFolder]:
     """Deployments of the Rio Iriri 2026 grids (``<site>/gridNN/<deployment>``)."""
     root = Path(root)
     out = []
@@ -143,7 +134,7 @@ def iriri2026_folders(root: str | Path = IRIRI2026_ROOT) -> list[FieldFolder]:
     return out
 
 
-def flona2025_folders(root: str | Path = FLONA2025_ROOT) -> list[FieldFolder]:
+def flona2025_folders(root: str | Path) -> list[FieldFolder]:
     """Grid deployments of FLONA 2025 (``site_N/<deployment>``, no calibrations)."""
     root = Path(root)
     out = []
@@ -163,7 +154,7 @@ def flona2025_folders(root: str | Path = FLONA2025_ROOT) -> list[FieldFolder]:
     return out
 
 
-def flona2023_folders(root: str | Path = FLONA2023_ROOT) -> list[FieldFolder]:
+def flona2023_folders(root: str | Path) -> list[FieldFolder]:
     """Single-logger deployments of FLONA 2023 (``<site>/<date>-*logger``)."""
     root = Path(root)
     out = []
