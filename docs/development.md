@@ -23,16 +23,10 @@ scene edges.
 
 ## Documentation
 
-The pages in `docs/` render on GitHub and build as a site with MkDocs
-(Material theme, `mkdocs.yml`):
-
-```sh
-uvx --from mkdocs==1.6.1 --with mkdocs-material==9.8.1 mkdocs build --strict
-uvx --from mkdocs==1.6.1 --with mkdocs-material==9.8.1 mkdocs serve
-```
-
-CI builds the site on every push; `mkdocs gh-deploy` publishes it to the
-repository's GitHub Pages.
+The documentation is plain Markdown in `docs/` (index:
+[docs/README.md](README.md)), read on GitHub. `tests/test_docs.py` checks
+that every relative link in `README.md` and `docs/*.md` points to an
+existing file and, for a `#fragment`, to an existing heading.
 
 ## Conventions
 

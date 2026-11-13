@@ -51,7 +51,8 @@ gridtools sim compare scenes/my --calibration calibration.json
 ```
 
 `default` is the shipped config
-(`src/gridtools/configs/scenes/default.toml`, every key with its default);
+([`src/gridtools/configs/scenes/default.toml`](src/gridtools/configs/scenes/default.toml),
+every key with its default);
 copy it to make your own. Each seed gives one scene directory
 (`OUT/<seed:06d>/`): `recording.wav` (float32, one channel per electrode,
 in volts), `fishgrid.cfg`, ground-truth tracks in wavetracker's format,
@@ -67,20 +68,17 @@ item.
 
 ## Documentation
 
-| page | contents |
-|---|---|
-| [Installation](docs/installation.md) | uv, pip, extras |
-| [Simulating scenes](docs/simulation.md) | configs, layouts, hybrid scenes, templates and splits, seeds, the Python API |
-| [Scene outputs](docs/outputs.md) | directory layout, `chirps.csv` columns, tracks, `scene.json`, plots |
-| [Ground truth](docs/ground-truth.md) | the per-period instantaneous frequency, footprints, visibility |
-| [Template library](docs/templates.md) | building it, the long-chirp harvest, QC flags, sampling, fish-disjoint splits |
-| [Background library](docs/background.md) | windows, chirp screens, the recording gate, building, review |
-| [Reading recordings](docs/io.md) | recordings, geometry, tracks, labels |
-| [Calibration](docs/calibration.md) | what the simulator's defaults are fitted to |
-| [Development](docs/development.md) | tests, checks, the docs site |
+Start at [docs/README.md](docs/README.md). The pages:
 
-The pages build as a site with `uvx --from mkdocs==1.6.1 --with
-mkdocs-material==9.8.1 mkdocs build --strict`.
+- [Installation](docs/installation.md): uv, pip, extras
+- [Simulating scenes](docs/simulation.md): configs, layouts, hybrid scenes, templates and splits, seeds, the Python API
+- [Scene outputs](docs/outputs.md): directory layout, `chirps.csv` columns, tracks, `scene.json`, plots
+- [Ground truth](docs/ground-truth.md): the per-period instantaneous frequency, footprints, visibility
+- [Template library](docs/templates.md): building it, the long-chirp harvest, QC flags, sampling, fish-disjoint splits
+- [Background library](docs/background.md): windows, chirp screens, the recording gate, building, review
+- [Reading recordings](docs/io.md): recordings, geometry, tracks, labels
+- [Calibration](docs/calibration.md): what the simulator's defaults are fitted to
+- [Development](docs/development.md): tests and checks
 
 ## Versions
 

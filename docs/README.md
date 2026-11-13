@@ -1,4 +1,4 @@
-# gridtools
+# gridtools documentation
 
 Read and simulate multi-electrode grid recordings of wave-type weakly
 electric fish.
@@ -45,10 +45,16 @@ the others. Every fish's contribution can be re-rendered exactly for any
 span, with or without any chirp; that defines the chirp boxes and the
 ground truth of chirpdetector's parameter decoder.
 
-## Where to start
+## Pages
 
-- [Simulating scenes](simulation.md) and [Scene outputs](outputs.md).
-- [Ground truth](ground-truth.md): what a chirp's box, visibility and
-  parameters mean.
-- [Template library](templates.md) and [Background library](background.md):
-  the real data the simulator draws on.
+- [Installation](installation.md): uv, pip, extras
+- [Simulating scenes](simulation.md): `gridtools sim`, configs, electrode layouts, hybrid scenes, chirps and template splits, the Python API
+- [Scene outputs](outputs.md): directory layout, `chirps.csv` columns, tracks, clicks, `scene.json`, plots
+- [Ground truth](ground-truth.md): the per-EOD-period instantaneous frequency, re-rendering, footprint boxes, visibility
+- [Template library](templates.md): versions, building, the long-chirp harvest, QC flags, sampling, fish-disjoint splits
+- [Background library](background.md): library v2 (windows, screens, gate), building, review, layout, levels and SNR
+- [Reading recordings](io.md): recordings, geometry, tracks, labels
+- [Calibration](calibration.md): the measurements behind the simulator's defaults
+- [Development](development.md): tests and checks
+
+Back to the [project README](../README.md).

@@ -49,7 +49,8 @@ one scene. Ranges are `[low, high]`, drawn uniformly per scene or per fish
 volts at the ADC like the real raw data, and every time and frequency
 setting is physical, so `samplerate_hz` (or `samplerate_choices_hz`, one
 rate drawn per scene) changes nothing else. Unknown keys are an error. A
-config only needs the keys it changes; the shipped `default.toml` lists
+config only needs the keys it changes; the shipped
+[`default.toml`](../src/gridtools/configs/scenes/default.toml) lists
 all of them with their defaults (documentation of every field: the
 dataclasses in `gridtools.sim.config`):
 
