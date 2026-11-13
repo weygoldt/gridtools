@@ -5,9 +5,12 @@ independently (one worker process per recording, each with its own random
 stream derived from the library seed and the recording's name, so the result
 does not depend on the order, the subset or the number of workers):
 
-1. candidates on a grid inside the recording, screened against v1 chirp
-   detections and hand labels, and one segment chosen per time stratum
-   (:mod:`gridtools.background.select`);
+1. candidates on a grid inside the recording's time window (all of it by
+   default; e.g. only the fish's inactive period), screened against hand
+   labels, v1 chirp detections and external chirp screens
+   (:mod:`gridtools.background.screen`), and one segment chosen per time
+   stratum (:mod:`gridtools.background.select`); recordings whose window is
+   too chirp-active are dropped by the recording gate;
 2. fish-free candidates: windows without any assigned track detection,
    searched over the whole recording (fish are often put in after the
    recording started) and verified on the audio: no line more than
@@ -27,12 +30,13 @@ import importlib.metadata
 import json
 import logging
 import math
+import os
 import platform
 import shutil
 import subprocess
 import time
 import zlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -62,14 +66,27 @@ from gridtools.background.library import (
     write_manifest,
 )
 from gridtools.background.review import merge_review, read_review
+from gridtools.background.screen import (
+    RecordingGate,
+    Screen,
+    ScreenTable,
+    TimeWindow,
+    gate_rate_per_h,
+    max_score_near,
+    read_screen,
+    rejects,
+)
 from gridtools.background.select import (
     SelectionConfig,
     candidate_starts,
     choose_stratified,
     count_overlaps,
     expected_missed_chirps,
+    fill_non_overlapping,
     frame_coverage,
     local_rate_per_s,
+    pack_non_overlapping,
+    span_starts,
 )
 from gridtools.background.sources import SourceRecording, open_source_recording
 from gridtools.io import (
@@ -85,6 +102,7 @@ from gridtools.io import (
 __all__ = [
     "BackgroundConfig",
     "build_background_library",
+    "carry_over",
     "refine_untracked",
     "segment_id",
 ]
@@ -146,6 +164,23 @@ class BackgroundConfig:
         (:mod:`gridtools.background.field`).
     workers : int
         Worker processes (default 4; at most 6 on the shared machine).
+    windows : mapping of str to TimeWindow
+        Per dataset: where in a recording candidates (fish and fish-free)
+        may come from. Datasets not listed use the whole recording.
+    selection_by_dataset : mapping of str to SelectionConfig
+        Per dataset: replaces ``selection`` (e.g. a denser grid and more
+        segments in a narrow window).
+    screens : sequence of Screen
+        External chirp screens; a candidate must pass all of them.
+    gate : RecordingGate or None
+        Drop recordings whose window has more screen boxes per hour than
+        this allows (default None: no gate).
+    use_saved_detections : bool
+        Also reject candidates near the source's saved v1 detections
+        (``detections_path``, with ``selection.margin_s``; default True).
+        Without them, the gate's screen at the gate threshold provides the
+        local detection rate of the selection score and the
+        ``*_v1_*`` columns.
     """
 
     selection: SelectionConfig = dataclasses.field(default_factory=SelectionConfig)
@@ -162,8 +197,23 @@ class BackgroundConfig:
     reference_bandwidth_hz: float = REFERENCE_BANDWIDTH_HZ
     field: FieldScanConfig = dataclasses.field(default_factory=FieldScanConfig)
     workers: int = 4
+    windows: Mapping[str, TimeWindow] = dataclasses.field(default_factory=dict)
+    selection_by_dataset: Mapping[str, SelectionConfig] = dataclasses.field(
+        default_factory=dict
+    )
+    screens: tuple[Screen, ...] = ()
+    gate: RecordingGate | None = None
+    use_saved_detections: bool = True
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "screens", tuple(self.screens))
+        names = [sc.name for sc in self.screens]
+        if len(set(names)) != len(names):
+            msg = f"screen names must be unique, got {names}"
+            raise ValueError(msg)
+        if self.gate is not None and self.gate.screen not in names:
+            msg = f"gate screen {self.gate.screen!r} is not one of the screens {names}"
+            raise ValueError(msg)
         if self.workers < 1:
             msg = f"workers must be >= 1, got {self.workers}"
             raise ValueError(msg)
@@ -175,8 +225,60 @@ class BackgroundConfig:
             raise ValueError(msg)
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain dict for ``library.json``."""
-        return dataclasses.asdict(self)
+        """Plain dict for ``library.json`` (inverse of :meth:`from_dict`)."""
+        out = dataclasses.asdict(self)
+        out["screens"] = [sc.to_dict() for sc in self.screens]
+        out["windows"] = {k: dataclasses.asdict(v) for k, v in self.windows.items()}
+        out["selection_by_dataset"] = {
+            k: dataclasses.asdict(v) for k, v in self.selection_by_dataset.items()
+        }
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BackgroundConfig:
+        """Config from a plain dict (e.g. a TOML file); unknown keys are errors.
+
+        ``selection_by_dataset`` entries are applied on top of
+        ``selection``, so they only need the fields that differ.
+        """
+        data = dict(data)
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            msg = f"unknown background config keys: {unknown}"
+            raise ValueError(msg)
+        selection = SelectionConfig(**data.pop("selection", {}))
+        base = dataclasses.asdict(selection)
+        kwargs: dict[str, Any] = {"selection": selection}
+        kwargs["selection_by_dataset"] = {
+            k: SelectionConfig(**{**base, **v})
+            for k, v in data.pop("selection_by_dataset", {}).items()
+        }
+        kwargs["windows"] = {
+            k: TimeWindow(**v) for k, v in data.pop("windows", {}).items()
+        }
+        kwargs["screens"] = tuple(Screen(**v) for v in data.pop("screens", []))
+        gate = data.pop("gate", None)
+        kwargs["gate"] = None if gate is None else RecordingGate(**gate)
+        if "field" in data:
+            field = dict(data.pop("field"))
+            if "band_hz" in field:
+                field["band_hz"] = tuple(field["band_hz"])
+            kwargs["field"] = FieldScanConfig(**field)
+        if "level_band_hz" in data:
+            data["level_band_hz"] = tuple(data["level_band_hz"])
+        return cls(**kwargs, **data)
+
+    @classmethod
+    def from_toml(cls, path: str | Path) -> BackgroundConfig:
+        """Config from a TOML file (:meth:`from_dict`)."""
+        import tomllib
+
+        return cls.from_dict(tomllib.loads(Path(path).read_text()))
+
+    def selection_for(self, dataset: str) -> SelectionConfig:
+        """The selection rules of a dataset."""
+        return self.selection_by_dataset.get(dataset, self.selection)
 
 
 def segment_id(source: SourceRecording, start_s: float) -> str:
@@ -208,45 +310,75 @@ def _track_frames(tracks: Tracks) -> dict[int, np.ndarray]:
     return out
 
 
+def _screened(
+    starts: np.ndarray,
+    length: float,
+    screens: Sequence[Screen],
+    tables: Mapping[str, ScreenTable],
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Candidates passing every screen, and which each screen rejects."""
+    ok = np.ones(starts.size, dtype=bool)
+    rejected: dict[str, np.ndarray] = {}
+    for screen in screens:
+        table = tables.get(screen.name)
+        if table is None:
+            continue
+        bad, _ = rejects(starts, length, table, screen.threshold, screen.margin_s)
+        rejected[screen.name] = bad
+        ok &= ~bad
+    return ok, rejected
+
+
 def _plan(
-    source: SourceRecording,
     duration_s: float,
     tracks: Tracks | None,
     detections: pd.DataFrame | None,
+    blocking: pd.DataFrame | None,
     labels: pd.DataFrame | None,
     config: BackgroundConfig,
     rng: np.random.Generator,
+    *,
+    sel: SelectionConfig,
+    span: tuple[float, float],
+    tables: Mapping[str, ScreenTable],
 ) -> _Plan:
-    sel = config.selection
+    """Choose fish and fish-free candidates of one recording.
+
+    ``detections`` give the local detection rate of the selection score,
+    ``blocking`` and ``labels`` reject candidates within
+    ``sel.margin_s``, the screens' ``tables`` reject by their own rules.
+    Candidates lie inside ``span`` (the recording's window) and at least
+    ``sel.edge_s`` from the recording's start and end.
+    """
     length = sel.segment_s
     stats: dict[str, Any] = {}
 
     def blocked(starts: np.ndarray) -> np.ndarray:
         bad = np.zeros(starts.size, dtype=bool)
-        if detections is not None and len(detections):
-            bad |= (
-                count_overlaps(
-                    starts,
-                    length,
-                    detections["t_start_s"],
-                    detections["t_end_s"],
-                    sel.margin_s,
+        for spans in (blocking, labels):
+            if spans is not None and len(spans):
+                bad |= (
+                    count_overlaps(
+                        starts,
+                        length,
+                        spans["t_start_s"],
+                        spans["t_end_s"],
+                        sel.margin_s,
+                    )
+                    > 0
                 )
-                > 0
-            )
-        if labels is not None and len(labels):
-            bad |= (
-                count_overlaps(
-                    starts, length, labels["t_start_s"], labels["t_end_s"], sel.margin_s
-                )
-                > 0
-            )
         return bad
 
     frames = _track_frames(tracks) if tracks is not None else {}
+    lo = max(span[0], sel.edge_s)
+    hi = min(span[1], duration_s - sel.edge_s)
+    # accounting grid: the whole recording, as without a window
+    n_grid = candidate_starts(duration_s, length, sel.step_s, sel.edge_s).size
     # fish segments
-    starts = candidate_starts(duration_s, length, sel.step_s, sel.edge_s)
-    valid = ~blocked(starts)
+    starts = span_starts(lo, hi, length, sel.step_s)
+    other_bad = blocked(starts)
+    passed, rejected = _screened(starts, length, config.screens, tables)
+    valid = ~other_bad & passed
     score = np.zeros(starts.size)
     if detections is not None:
         centres = starts + length / 2
@@ -256,6 +388,7 @@ def _plan(
             sel.rate_window_s,
         )
         score += expected_missed_chirps(rate, length, sel.v1_recall)
+    no_fish = np.zeros(starts.size, dtype=bool)
     if tracks is not None and frames:
         coverages = np.vstack(
             [
@@ -266,30 +399,63 @@ def _plan(
         present = np.nan_to_num(coverages, nan=0.0) > 0
         worst = np.where(present, np.nan_to_num(coverages, nan=0.0), np.inf).min(axis=0)
         # windows without any tracked fish are fish-free candidates instead
-        valid &= present.any(axis=0)
+        no_fish = ~present.any(axis=0)
+        valid &= ~no_fish
         score += np.where(np.isfinite(worst), 1.0 - worst, 0.0)
-    chosen = choose_stratified(
-        rng,
-        starts,
-        valid,
-        score,
-        segment_s=length,
-        n_strata=sel.segments_per_recording,
-        span_s=(sel.edge_s, max(sel.edge_s, duration_s - sel.edge_s - length)),
-    )
+    plan_span = (lo, max(lo, hi - length))
+    if sel.pack:
+        chosen = pack_non_overlapping(
+            starts, valid, segment_s=length, n_max=sel.segments_per_recording
+        )
+    else:
+        chosen = choose_stratified(
+            rng,
+            starts,
+            valid,
+            score,
+            segment_s=length,
+            n_strata=sel.segments_per_recording,
+            span_s=plan_span,
+        )
+    if sel.fill and chosen.size < sel.segments_per_recording:
+        chosen = fill_non_overlapping(
+            rng,
+            starts,
+            valid,
+            score,
+            chosen,
+            segment_s=length,
+            n_max=sel.segments_per_recording,
+        )
+    # rejections, attributed in order: other rules, then the screens in order
+    left = ~other_bad
+    counts: dict[str, int] = {"n_rejected_other": int(other_bad.sum())}
+    for name, bad in rejected.items():
+        counts[f"n_rejected_{name}"] = int((left & bad).sum())
+        counts[f"n_rejected_{name}_any"] = int(bad.sum())
+        left &= ~bad
+    counts["n_rejected_no_fish"] = int((left & no_fish).sum())
     stats.update(
+        n_grid=int(n_grid),
+        n_outside_window=int(n_grid - starts.size),
         n_candidates=int(starts.size),
+        **counts,
         n_valid=int(valid.sum()),
         n_fish_segments=int(chosen.size),
     )
-    plan_starts = [float(s) for s in starts[chosen]]
+    plan_starts = [float(x) for x in starts[chosen]]
     plan_classes = ["fish"] * len(plan_starts)
-    plan_scores = [float(s) for s in score[chosen]]
+    plan_scores = [float(x) for x in score[chosen]]
 
-    # fish-free candidates: no assigned detection at all (whole recording)
+    # fish-free candidates: no assigned detection at all (whole window)
     n_free = 0
     if tracks is not None and config.fish_free_per_recording > 0:
-        free_starts = candidate_starts(duration_s, length, sel.step_s, sel.margin_s)
+        free_starts = span_starts(
+            max(span[0], sel.margin_s),
+            min(span[1], duration_s - sel.margin_s),
+            length,
+            sel.step_s,
+        )
         any_fish = np.zeros(len(tracks.times_s), dtype=bool)
         for mask in frames.values():
             any_fish |= mask
@@ -300,7 +466,8 @@ def _plan(
             any_fish,
         )
         empty = np.nan_to_num(widened, nan=0.0) == 0
-        free_valid = empty & ~blocked(free_starts)
+        free_passed, _ = _screened(free_starts, length, config.screens, tables)
+        free_valid = empty & ~blocked(free_starts) & free_passed
         if plan_starts:
             taken = np.asarray(plan_starts)
             free_valid &= np.all(
@@ -316,9 +483,9 @@ def _plan(
                 np.zeros(free_starts.size),
                 segment_s=length,
                 n_strata=max(1, 3 * config.fish_free_per_recording),
-                span_s=(0.0, duration_s),
+                span_s=span,
             )
-            plan_starts += [float(s) for s in free_starts[pick]]
+            plan_starts += [float(x) for x in free_starts[pick]]
             plan_classes += ["fish_free_candidate"] * len(pick)
             plan_scores += [0.0] * len(pick)
     stats["n_fish_free_candidates"] = n_free
@@ -616,14 +783,68 @@ def _process(
     rec: Recording = open_source_recording(source)
     fs = rec.samplerate_hz
     duration = rec.duration_s
+    sel = config.selection_for(source.dataset)
+    window = config.windows.get(source.dataset)
+    info["duration_s"] = duration
+    info["window_rule"] = "whole recording" if window is None else window.describe()
+    span = (0.0, duration) if window is None else window.span(duration)
+    if span is None:
+        info["skipped"] = f"too short for its window ({info['window_rule']})"
+        return [], info
+    info.update(window_start_s=span[0], window_stop_s=span[1])
+    tables: dict[str, ScreenTable] = {}
+    for screen in config.screens:
+        table = read_screen(screen.root, source.dataset, source.name)
+        if table is not None:
+            tables[screen.name] = table
+            info[f"screen_{screen.name}_covered_h"] = (
+                table.covered_within(span[0], span[1]) / 3600
+            )
+    gate = config.gate
+    if gate is not None and gate.screen not in tables:
+        info["skipped"] = f"no {gate.screen} screen (gate)"
+        return [], info
+    gate_rate = math.nan
+    if gate is not None and gate.screen in tables:
+        gate_rate = gate_rate_per_h(tables[gate.screen], gate.threshold, *span)
+        info["gate_rate_per_h"] = gate_rate
+        info["gate_passed"] = bool(gate_rate <= gate.max_rate_per_h)
+        if not info["gate_passed"]:
+            n_grid = candidate_starts(duration, sel.segment_s, sel.step_s, sel.edge_s)
+            n_in = span_starts(
+                max(span[0], sel.edge_s),
+                min(span[1], duration - sel.edge_s),
+                sel.segment_s,
+                sel.step_s,
+            )
+            info.update(
+                n_grid=int(n_grid.size),
+                n_outside_window=int(n_grid.size - n_in.size),
+                n_candidates=int(n_in.size),
+                n_gated=int(n_in.size),
+                n_segments=0,
+                skipped=f"recording gate: {gate_rate:.1f} {gate.screen} boxes/h "
+                f"(score >= {gate.threshold:g}) > {gate.max_rate_per_h:g}/h",
+            )
+            return [], info
+    missing = [
+        sc.name for sc in config.screens if sc.required and sc.name not in tables
+    ]
+    if missing:
+        info["skipped"] = f"no {', '.join(missing)} screen"
+        return [], info
     cfg = read_fishgrid_config(source.config_path) if source.config_path else None
     tracks = load_tracks(source.tracks_dir) if source.tracks_dir else None
-    detections = (
+    saved = (
         read_v1_detections(source.detections_path) if source.detections_path else None
     )
+    blocking = saved if config.use_saved_detections else None
+    detections = blocking
+    if detections is None and gate is not None and gate.screen in tables:
+        detections = tables[gate.screen].above(gate.threshold)
     labels = read_labels(source.labels_path) if source.labels_path else None
     # segments the author rejected in review.csv are avoided like labels
-    rejected = _vetoed_spans(source, vetoed, config.selection.segment_s)
+    rejected = _vetoed_spans(source, vetoed, sel.segment_s)
     if len(rejected):
         labels = (
             rejected
@@ -632,15 +853,25 @@ def _process(
         )
         info["n_vetoed"] = len(rejected)
     rng = _rng(config.seed, source)
-    plan = _plan(source, duration, tracks, detections, labels, config, rng)
+    plan = _plan(
+        duration,
+        tracks,
+        detections,
+        blocking,
+        labels,
+        config,
+        rng,
+        sel=sel,
+        span=span,
+        tables=tables,
+    )
     info.update(plan.stats)
     info.update(
-        duration_s=duration,
         n_electrodes=rec.n_channels,
         n_detections=None if detections is None else len(detections),
         n_track_ids=None if tracks is None else int(tracks.ids.size),
     )
-    length = config.selection.segment_s
+    length = sel.segment_s
     n = round(length * fs)
     n_ids = 0 if tracks is None else int(tracks.ids.size)
     track_quality = (
@@ -743,7 +974,6 @@ def _process(
         rate_h = math.nan
         expected = math.nan
         if detections is not None and det_centres is not None:
-            sel = config.selection
             n_det = int(
                 count_overlaps(
                     [start_s],
@@ -764,7 +994,11 @@ def _process(
             )
             rate_h = float(rate[0] * 3600)
             expected = float(expected_missed_chirps(rate, length, sel.v1_recall)[0])
-        screened = kind == "fish_free" or detections is not None
+        screened = (
+            kind == "fish_free"
+            or detections is not None
+            or (bool(config.screens) and len(tables) == len(config.screens))
+        )
         complete = kind == "fish_free" or (
             clipped is not None
             and not m["untracked"]
@@ -822,6 +1056,14 @@ def _process(
             "dead_channels": dead,
             "noisy_channels": noisy,
             **_level_columns(m, n / fs),
+            "window_rule": info["window_rule"],
+            "window_start_s": float(span[0]),
+            "window_stop_s": float(span[1]),
+            "gate_screen": None if gate is None else gate.screen,
+            "gate_threshold": math.nan if gate is None else gate.threshold,
+            "gate_max_rate_per_h": math.nan if gate is None else gate.max_rate_per_h,
+            "gate_rate_per_h": gate_rate,
+            **_screen_columns(start_s, n / fs, config.screens, tables),
             "accept": sid not in vetoed,
         }
         details = {
@@ -838,6 +1080,11 @@ def _process(
                 "detections": None
                 if source.detections_path is None
                 else str(source.detections_path),
+                "screens": {
+                    sc.name: str(sc.root / source.dataset / f"{source.name}.csv")
+                    for sc in config.screens
+                    if sc.name in tables
+                },
             },
             **_level_details(m),
             "fish": fish,
@@ -858,6 +1105,37 @@ def _process(
         info["runtime_s"],
     )
     return rows, info
+
+
+def _screen_columns(
+    start_s: float,
+    length_s: float,
+    screens: Sequence[Screen],
+    tables: Mapping[str, ScreenTable],
+) -> dict[str, Any]:
+    """``screen_<name>_*`` manifest columns of a segment."""
+    out: dict[str, Any] = {}
+    for screen in screens:
+        table = tables.get(screen.name)
+        prefix = f"screen_{screen.name}_"
+        meta = {} if table is None else table.meta
+        out[prefix + "detector"] = meta.get("detector")
+        out[prefix + "weights_sha256"] = meta.get("weights_sha256")
+        out[prefix + "store_threshold"] = meta.get("store_threshold")
+        out[prefix + "threshold"] = screen.threshold
+        out[prefix + "margin_s"] = screen.margin_s
+        if table is None:
+            out[prefix + "n_near"] = None
+            out[prefix + "max_score_near"] = math.nan
+            continue
+        _, n_near = rejects(
+            [start_s], length_s, table, screen.threshold, screen.margin_s
+        )
+        out[prefix + "n_near"] = int(n_near[0])
+        out[prefix + "max_score_near"] = float(
+            max_score_near([start_s], length_s, table.boxes, screen.margin_s)[0]
+        )
+    return out
 
 
 def _json_default(value: Any) -> Any:
@@ -888,6 +1166,19 @@ def _git_commit() -> str | None:
         return sha + ("+dirty" if dirty else "")
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+def _manifest_columns(
+    rows: Sequence[Mapping[str, Any]], extra: Sequence[str] = ()
+) -> list[str]:
+    """:data:`MANIFEST_COLUMNS`, with the ``screen_*`` columns before ``accept``."""
+    screens: list[str] = list(extra)
+    for row in rows:
+        for key in row:
+            if key.startswith("screen_") and key not in screens:
+                screens.append(key)
+    base = [c for c in MANIFEST_COLUMNS if c != "accept"]
+    return [*base, *screens, "accept"]
 
 
 def refine_untracked(
@@ -926,6 +1217,129 @@ def refine_untracked(
                 not kept and len(coverage) > 0 and min(coverage) >= 0.9
             )
     return out
+
+
+def _link_or_copy(src: str, dst: str) -> None:
+    """Hard-link a file (copy it across file systems)."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def carry_over(
+    source_dir: str | Path, out_dir: str | Path, datasets: Sequence[str]
+) -> pd.DataFrame:
+    """Take whole datasets from another library, unchanged.
+
+    Segment directories and review PNGs are hard-linked (copied across file
+    systems), and the datasets' manifest, ``recordings.csv`` and
+    ``review.csv`` rows (with the author's ``accept``/``note``) are copied.
+    Rows of these datasets already in ``out_dir`` are replaced, other rows
+    are kept; ``library.json`` records the carry-over. Columns the source
+    manifest lacks are left empty.
+
+    Parameters
+    ----------
+    source_dir : path
+        Library to take the segments from.
+    out_dir : path
+        Library to add them to (created if missing).
+    datasets : sequence of str
+        Datasets to carry over (all of their segments).
+
+    Returns
+    -------
+    pandas.DataFrame
+        The manifest of ``out_dir``.
+    """
+    src, out = Path(source_dir), Path(out_dir)
+    wanted = list(datasets)
+    (out / "segments").mkdir(parents=True, exist_ok=True)
+    source = read_manifest(src / "manifest.parquet")
+    rows = pd.DataFrame(source.loc[source["dataset"].isin(wanted).to_numpy()])
+    missing = sorted(set(wanted) - set(rows["dataset"]))
+    if missing:
+        msg = f"{src} has no segments of {missing}"
+        raise ValueError(msg)
+    for row in rows.to_dict("records"):
+        target = out / str(row["path"])
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(src / str(row["path"]), target, copy_function=_link_or_copy)
+        for suffix in (".png", ".thumb.jpg"):
+            png = src / "review" / f"{row['segment_id']}{suffix}"
+            if png.exists():
+                (out / "review").mkdir(exist_ok=True)
+                dst = out / "review" / png.name
+                dst.unlink(missing_ok=True)
+                _link_or_copy(str(png), str(dst))
+    old_path = out / "manifest.parquet"
+    old = read_manifest(old_path) if old_path.exists() else None
+    if old is not None:
+        old = pd.DataFrame(old.loc[~old["dataset"].isin(wanted).to_numpy()])
+    extra = [] if old is None else [c for c in old.columns if c.startswith("screen_")]
+    columns = _manifest_columns([], extra)
+    parts = [p for p in (old, rows) if p is not None and len(p)]
+    for part in parts:
+        for column in columns:
+            if column not in part.columns:
+                part[column] = None
+    manifest = pd.concat([pd.DataFrame(p[columns]) for p in parts], ignore_index=True)
+    manifest = manifest.sort_values(["dataset", "recording", "start_s"], kind="stable")
+    write_manifest(manifest.reset_index(drop=True), out)
+    # recordings
+    if (src / "recordings.csv").exists():
+        recs = pd.read_csv(src / "recordings.csv")
+        recs = pd.DataFrame(recs.loc[recs["dataset"].isin(wanted).to_numpy()])
+        rec_path = out / "recordings.csv"
+        if rec_path.exists():
+            previous = pd.read_csv(rec_path)
+            previous = pd.DataFrame(
+                previous.loc[~previous["dataset"].isin(wanted).to_numpy()]
+            )
+            recs = pd.concat([previous, recs], ignore_index=True)
+        recs.to_csv(rec_path, index=False)
+    # the author's review of the carried segments
+    src_review = read_review(src)
+    if src_review is not None:
+        ids = set(rows["segment_id"].astype(str))
+        carried = pd.DataFrame(
+            src_review.loc[src_review["segment_id"].isin(sorted(ids))]
+        )
+        out_review = read_review(out)
+        if out_review is not None:
+            out_review = pd.DataFrame(
+                out_review.loc[~out_review["segment_id"].isin(sorted(ids)).to_numpy()]
+            )
+            carried = pd.concat([out_review, carried], ignore_index=True)
+        carried.to_csv(out / "review.csv", index=False)
+    merge_review(out, read_manifest(out / "manifest.parquet"))
+    meta_path = out / "library.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    src_meta_path = src / "library.json"
+    src_meta = json.loads(src_meta_path.read_text()) if src_meta_path.exists() else {}
+    meta.setdefault("carried_over", []).append(
+        {
+            "created": datetime.now(UTC).isoformat(timespec="seconds"),
+            "source": str(src.resolve()),
+            "datasets": wanted,
+            "n_segments": len(rows),
+            "source_builds": [
+                {
+                    "created": b.get("created"),
+                    "gridtools_commit": b.get("versions", {}).get("gridtools_commit"),
+                }
+                for b in src_meta.get("builds", [])
+            ],
+            "gridtools_commit": _git_commit(),
+        }
+    )
+    meta["n_segments"] = len(manifest)
+    meta["updated"] = meta["carried_over"][-1]["created"]
+    meta_path.write_text(json.dumps(meta, indent=1, default=str) + "\n")
+    log.info("carried over %d segments of %s from %s", len(rows), wanted, src)
+    return read_manifest(out / "manifest.parquet")
 
 
 def build_background_library(
@@ -981,7 +1395,8 @@ def build_background_library(
             futures = [pool.submit(_dispatch, s, out, config, vetoed) for s in sources]
             results = [f.result() for f in futures]
     rows = [row for r, _ in results for row in r]
-    manifest = pd.DataFrame(rows, columns=list(MANIFEST_COLUMNS))
+    columns = _manifest_columns(rows)
+    manifest = pd.DataFrame(rows, columns=columns)
     # keep this build's rows even if the merge below fails
     manifest.to_pickle(out / "manifest.this_build.pkl")
     processed = set(keys)
@@ -992,10 +1407,15 @@ def build_background_library(
         old = pd.DataFrame(old.loc[keep.to_numpy()])
         if "accept" not in old.columns:
             old["accept"] = True
-        for column in MANIFEST_COLUMNS:  # columns added since the old build
+        extra = [c for c in old.columns if c.startswith("screen_")]
+        columns = _manifest_columns(rows, extra)
+        for column in columns:  # columns added since the old build
             if column not in old.columns:
                 old[column] = None
-        old = pd.DataFrame(old[list(MANIFEST_COLUMNS)])
+            if column not in manifest.columns:
+                manifest[column] = None
+        old = pd.DataFrame(old[columns])
+        manifest = pd.DataFrame(manifest[columns])
         manifest = (
             pd.concat([old, manifest], ignore_index=True) if len(old) else manifest
         )
@@ -1037,12 +1457,12 @@ def build_background_library(
             },
         }
     )
-    meta = {
-        "updated": builds[-1]["created"],
-        "n_segments": len(manifest),
-        "size_bytes": size,
-        "builds": builds,
-    }
+    meta.update(
+        updated=builds[-1]["created"],
+        n_segments=len(manifest),
+        size_bytes=size,
+        builds=builds,
+    )
     meta_path.write_text(json.dumps(meta, indent=1, default=str) + "\n")
     log.info("library %s: %d segments, %.1f GB", out, len(manifest), size / 1e9)
     return read_manifest(out / "manifest.parquet")

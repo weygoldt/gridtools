@@ -18,6 +18,17 @@ Rules
    segment where the worst-covered fish has no track detection. Ties are
    broken at random, so recordings without detections get a random
    candidate per stratum. Chosen segments never overlap.
+4. Optionally (``fill``), strata that found no free candidate are made up
+   for: the remaining valid candidates that overlap no chosen segment are
+   added, lowest score first, until ``segments_per_recording`` are chosen.
+   With narrow windows (e.g. the last 30 min of a recording) and strata
+   about one segment wide, this packs the window instead of leaving gaps.
+5. Alternatively (``pack``), strata and scores are ignored: valid
+   candidates are taken greedily from the earliest on, each starting at
+   least one segment after the previous one (for equal lengths this fits
+   the most segments), and if more than ``segments_per_recording`` fit, an
+   evenly spread subset is kept. For windows that hold about as many
+   segments as wanted.
 """
 
 from __future__ import annotations
@@ -33,8 +44,11 @@ __all__ = [
     "choose_stratified",
     "count_overlaps",
     "expected_missed_chirps",
+    "fill_non_overlapping",
     "frame_coverage",
     "local_rate_per_s",
+    "pack_non_overlapping",
+    "span_starts",
 ]
 
 FloatArray = npt.NDArray[np.float64]
@@ -64,6 +78,12 @@ class SelectionConfig:
     v1_recall : float
         Recall of chirpdetector v1 on the hand labels (0.764 at threshold
         0.5), used for the expected number of missed chirps.
+    fill : bool
+        Make up for empty strata from the remaining valid candidates
+        (default False; rule 4).
+    pack : bool
+        Pack the valid candidates greedily instead of choosing per stratum
+        (default False; rule 5).
     """
 
     segment_s: float = 60.0
@@ -73,6 +93,8 @@ class SelectionConfig:
     segments_per_recording: int = 8
     rate_window_s: float = 600.0
     v1_recall: float = 0.764
+    fill: bool = False
+    pack: bool = False
 
     def __post_init__(self) -> None:
         for name in ("segment_s", "step_s", "rate_window_s"):
@@ -104,6 +126,22 @@ def candidate_starts(
         return np.empty(0)
     n = int(np.floor((last - edge_s) / step_s + 1e-9)) + 1
     return edge_s + step_s * np.arange(n, dtype=np.float64)
+
+
+def span_starts(
+    start_s: float, stop_s: float, segment_s: float, step_s: float
+) -> FloatArray:
+    """Start times on a grid of ``step_s`` from ``start_s``, segments inside the span.
+
+    Every candidate ``[start, start + segment_s]`` lies within
+    ``[start_s, stop_s]``. ``candidate_starts(d, L, step, edge)`` equals
+    ``span_starts(edge, d - edge, L, step)``.
+    """
+    last = stop_s - segment_s
+    if last < start_s:
+        return np.empty(0)
+    n = int(np.floor((last - start_s) / step_s + 1e-9)) + 1
+    return start_s + step_s * np.arange(n, dtype=np.float64)
 
 
 def count_overlaps(
@@ -258,3 +296,88 @@ def choose_stratified(
         best = idx[np.lexsort((tie[idx], sc[idx]))[0]]
         chosen.append(int(best))
     return np.sort(np.asarray(chosen, dtype=np.intp))
+
+
+def fill_non_overlapping(
+    rng: np.random.Generator,
+    starts_s: npt.ArrayLike,
+    valid: npt.ArrayLike,
+    score: npt.ArrayLike,
+    chosen: npt.ArrayLike,
+    *,
+    segment_s: float,
+    n_max: int,
+) -> npt.NDArray[np.intp]:
+    """Add valid candidates that overlap no chosen one, lowest score first.
+
+    Parameters
+    ----------
+    rng : numpy.random.Generator
+        Breaks ties between equal scores.
+    starts_s, valid, score : array_like, shape (C,)
+        As for :func:`choose_stratified`.
+    chosen : array_like of int
+        Indices already chosen (kept).
+    segment_s : float
+        Candidate length.
+    n_max : int
+        Stop when this many are chosen in total.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        The chosen indices (old and new), in time order.
+    """
+    s = np.asarray(starts_s, dtype=np.float64)
+    sc = np.asarray(score, dtype=np.float64)
+    ok = np.asarray(valid, dtype=bool) & np.isfinite(sc)
+    out = [int(i) for i in np.asarray(chosen, dtype=np.intp)]
+    tie = rng.random(s.size)
+    taken = np.sort(s[np.asarray(out, dtype=np.intp)]) if out else np.empty(0)
+    for i in np.flatnonzero(ok)[np.lexsort((tie[ok], sc[ok]))]:
+        if len(out) >= n_max:
+            break
+        k = np.searchsorted(taken, s[i])
+        near = taken[max(0, k - 1) : k + 1]
+        if near.size and np.min(np.abs(near - s[i])) < segment_s:
+            continue
+        out.append(int(i))
+        taken = np.insert(taken, k, s[i])
+    return np.sort(np.asarray(out, dtype=np.intp))
+
+
+def pack_non_overlapping(
+    starts_s: npt.ArrayLike,
+    valid: npt.ArrayLike,
+    *,
+    segment_s: float,
+    n_max: int,
+) -> npt.NDArray[np.intp]:
+    """Most non-overlapping valid candidates, earliest first (rule 5).
+
+    Parameters
+    ----------
+    starts_s : array_like, shape (C,)
+        Candidate starts (sorted).
+    valid : array_like of bool, shape (C,)
+    segment_s : float
+        Candidate length.
+    n_max : int
+        At most this many; if more fit, an evenly spread subset of them.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        Indices of the chosen candidates, in time order.
+    """
+    s = np.asarray(starts_s, dtype=np.float64)
+    chosen: list[int] = []
+    last = -np.inf
+    for i in np.flatnonzero(np.asarray(valid, dtype=bool)):
+        if s[i] >= last + segment_s - 1e-9:
+            chosen.append(int(i))
+            last = s[i]
+    out = np.asarray(chosen, dtype=np.intp)
+    if out.size > n_max:
+        out = out[np.unique(np.round(np.linspace(0, out.size - 1, n_max)).astype(int))]
+    return out

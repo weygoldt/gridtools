@@ -10,19 +10,28 @@ the real fish in them tracked and counted as non-chirping candidates.
   from :class:`SourceRecording` objects
   (:func:`competition_2019_sources`, :func:`competition_2022_sources`) and
   from field deployments scanned for fish-free stretches
-  (:mod:`gridtools.background.field`);
+  (:mod:`gridtools.background.field`), optionally only inside a time window
+  of each recording, screened by external chirp detectors and with a
+  recording gate (:mod:`gridtools.background.screen`);
+  :func:`carry_over` takes whole datasets from another library unchanged;
 - :class:`BackgroundLibrary` loads the manifest and draws segments;
 - :mod:`gridtools.background.levels` defines background and signal levels
   and :func:`scale_for_snr`;
 - :mod:`gridtools.background.review` plots every segment and keeps the
   author's veto table (``review.csv``);
-- :mod:`gridtools.background.report` documents a built library (needs the
-  ``plot`` extra); ``python -m gridtools.background`` runs all of it.
+- :mod:`gridtools.background.report` documents a built library and
+  :mod:`gridtools.background.diagnostics` draws the screens' activity per
+  recording (both need the ``plot`` extra); ``python -m
+  gridtools.background`` runs all of it.
 
 Scenes use the API re-exported by :mod:`gridtools.sim.background`.
 """
 
-from gridtools.background.build import BackgroundConfig, build_background_library
+from gridtools.background.build import (
+    BackgroundConfig,
+    build_background_library,
+    carry_over,
+)
 from gridtools.background.levels import (
     LEVEL_BAND_HZ,
     REFERENCE_BANDWIDTH_HZ,
@@ -44,6 +53,13 @@ from gridtools.background.library import (
     merge_tracks,
     read_manifest,
 )
+from gridtools.background.screen import (
+    RecordingGate,
+    Screen,
+    ScreenTable,
+    TimeWindow,
+    read_screen,
+)
 from gridtools.background.select import SelectionConfig
 from gridtools.background.sources import (
     SourceRecording,
@@ -61,12 +77,17 @@ __all__ = [
     "BackgroundLevel",
     "BackgroundLibrary",
     "BackgroundSegment",
+    "RecordingGate",
+    "Screen",
+    "ScreenTable",
     "SelectionConfig",
     "SnrDistribution",
     "SourceRecording",
+    "TimeWindow",
     "add_background",
     "background_level",
     "build_background_library",
+    "carry_over",
     "clip_tracks",
     "competition_2019_sources",
     "competition_2022_sources",
@@ -75,6 +96,7 @@ __all__ = [
     "merge_tracks",
     "open_source_recording",
     "read_manifest",
+    "read_screen",
     "scale_for_snr",
     "snr_db",
 ]

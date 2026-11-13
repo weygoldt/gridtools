@@ -154,9 +154,17 @@ def merge_review(root: str | Path, manifest: pd.DataFrame) -> pd.DataFrame:
 
 
 def spectrogram_power(
-    x: np.ndarray, samplerate_hz: float, f_max_hz: float = _F_MAX_HZ
+    x: np.ndarray,
+    samplerate_hz: float,
+    f_max_hz: float = _F_MAX_HZ,
+    *,
+    nfft: int | None = None,
+    hop: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Electrode-summed power spectrogram (unit**2/Hz) up to ``f_max_hz``.
+
+    ``nfft`` defaults to 2**round(log2(0.1024 fs)) (2048 at 20 kHz), ``hop``
+    to ``nfft // 8``.
 
     Returns
     -------
@@ -165,8 +173,8 @@ def spectrogram_power(
     freqs_hz : numpy.ndarray, shape (F,)
     power : numpy.ndarray, shape (F, T)
     """
-    nfft = int(2 ** round(math.log2(0.1024 * samplerate_hz)))
-    hop = nfft // 8
+    nfft = int(2 ** round(math.log2(0.1024 * samplerate_hz))) if nfft is None else nfft
+    hop = nfft // 8 if hop is None else hop
     window = np.hanning(nfft + 1)[:-1].astype(np.float32)
     scale = 2.0 / (samplerate_hz * float(np.sum(window.astype(np.float64) ** 2)))
     n_bins = int(f_max_hz * nfft / samplerate_hz) + 1

@@ -235,8 +235,295 @@ def _snr_figure(
     plt.close(fig)
 
 
+#: Candidate counts of a screened build, per recording (``recordings.csv``).
+_COUNTS = (
+    "n_grid",
+    "n_outside_window",
+    "n_gated",
+    "n_rejected_other",
+    "n_valid",
+    "n_fish_segments",
+)
+
+
+def _screen_counts(
+    recordings: pd.DataFrame, manifest: pd.DataFrame, screens: list[str]
+) -> pd.DataFrame:
+    """Per competition recording: why candidates were rejected, what was kept."""
+    rows = []
+    for r in recordings.to_dict("records"):
+        if str(r["dataset"]).startswith("field_"):
+            continue
+        sub = manifest[
+            (manifest["dataset"] == r["dataset"])
+            & (manifest["recording"] == r["recording"])
+        ]
+        skipped = r.get("skipped")
+        skipped = (
+            ""
+            if skipped is None or (isinstance(skipped, float) and math.isnan(skipped))
+            else str(skipped)
+        )
+        status = (
+            "used"
+            if not skipped
+            else "gated"
+            if skipped.startswith("recording gate")
+            else "skipped"
+        )
+        row: dict[str, Any] = {
+            "dataset": r["dataset"],
+            "recording": r["recording"],
+            "split_group": f"{r['dataset']}/{r['recording']}",
+            "status": status,
+            "reason": skipped,
+            "duration_h": float(r.get("duration_s", math.nan)) / 3600,
+            "window_h": (
+                float(r.get("window_stop_s", math.nan))
+                - float(r.get("window_start_s", math.nan))
+            )
+            / 3600,
+            "gate_rate_per_h": float(r.get("gate_rate_per_h", math.nan)),
+        }
+        for c in (
+            *_COUNTS,
+            *(f"n_rejected_{n}" for n in screens),
+            *(f"n_rejected_{n}_any" for n in screens),
+            "n_rejected_no_fish",
+        ):
+            row[c] = _int(r.get(c))
+        classes = np.asarray(sub["segment_class"], dtype=str)
+        row["segments_fish"] = int(np.sum(classes == "fish"))
+        row["segments_fish_free"] = int(np.sum(classes == "fish_free"))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _int(value: Any) -> int:
+    """An integer count; 0 for a missing value."""
+    if value is None:
+        return 0
+    v = float(value)
+    return int(v) if math.isfinite(v) else 0
+
+
+def _counts_table(df: pd.DataFrame, key: str, screens: list[str]) -> list[str]:
+    head = (
+        f"| {key} | recordings (used / gated / skipped) | candidates | outside window "
+        "| gate | other | " + " | ".join(screens) + " | no fish | valid | segments |"
+    )
+    lines = [head, "|" + "---|" * (9 + len(screens))]
+    for name, group in df.groupby(key, sort=True):
+        g = pd.DataFrame(group)
+        n = {
+            str(c): int(np.nansum(_col(g, str(c))))
+            for c in g.columns
+            if str(c).startswith("n_")
+        }
+        status = list(np.asarray(g["status"], dtype=str))
+        rej = " | ".join(f"{n.get(f'n_rejected_{s}', 0):,}" for s in screens)
+        segments = int(
+            np.nansum(_col(g, "segments_fish"))
+            + np.nansum(_col(g, "segments_fish_free"))
+        )
+        lines.append(
+            f"| {name} | {len(g)} ({status.count('used')} / "
+            f"{status.count('gated')} / {status.count('skipped')}) | "
+            f"{n.get('n_grid', 0):,} | {n.get('n_outside_window', 0):,} | "
+            f"{n.get('n_gated', 0):,} | {n.get('n_rejected_other', 0):,} | {rej} | "
+            f"{n.get('n_rejected_no_fish', 0):,} | {n.get('n_valid', 0):,} | "
+            f"{segments} |"
+        )
+    return lines
+
+
+def _screen_section(
+    root: Path,
+    manifest: pd.DataFrame,
+    recordings: pd.DataFrame,
+    build: dict[str, Any],
+    splits: dict[str, list[str]],
+) -> list[str]:
+    """Report section of a build with chirp screens (time window, screens, gate)."""
+    config = build["config"]
+    screens = [s["name"] for s in config["screens"]]
+    gate = config.get("gate")
+    lines: list[str] = ["## Chirp screening\n"]
+    lines.append(
+        "Candidates come only from each recording's time window; a candidate "
+        "is rejected if any screen box with at least the screen's score overlaps "
+        "it widened by the margin, or if the screen did not cover that span. "
+        "Recordings whose window has more gate-screen boxes per covered hour "
+        "than the gate allows are dropped entirely. Definitions: "
+        "`gridtools.background.screen`.\n"
+    )
+    lines.append("| dataset | window | segments per recording | grid step |")
+    lines.append("|---|---|---|---|")
+    base = config["selection"]
+    for dataset, window in sorted(config.get("windows", {}).items()):
+        sel = {**base, **config.get("selection_by_dataset", {}).get(dataset, {})}
+        rule = []
+        if window.get("last_s") is not None:
+            rule.append(f"last {window['last_s'] / 3600:g} h")
+        if window.get("min_start_s"):
+            rule.append(f"not before {window['min_start_s'] / 3600:g} h")
+        if window.get("min_duration_s"):
+            rule.append(f"recordings >= {window['min_duration_s'] / 3600:g} h")
+        lines.append(
+            f"| {dataset} | {', '.join(rule)} | {sel['segments_per_recording']}"
+            f"{' (packed)' if sel.get('pack') else ' (fill)' if sel.get('fill') else ''}"
+            f" | {sel['step_s']:g} s, "
+            f"edges {sel['edge_s']:g} s |"
+        )
+    lines.append("")
+    lines.append(
+        "| screen | detector | weights sha256 | stored from | threshold | margin |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    from gridtools.background.screen import read_screen_meta
+
+    for s in config["screens"]:
+        try:
+            meta = read_screen_meta(s["root"])
+        except FileNotFoundError:
+            meta = {}
+        lines.append(
+            f"| {s['name']} | {meta.get('detector', '?')} | "
+            f"`{str(meta.get('weights_sha256', '?'))[:16]}` | "
+            f"{meta.get('store_threshold', '?')} | {s['threshold']:g} | "
+            f"{s['margin_s']:g} s |"
+        )
+    lines.append("")
+    if gate is not None:
+        lines.append(
+            f"Gate: `{gate['screen']}` boxes with score >= {gate['threshold']:g}, at most "
+            f"{gate['max_rate_per_h']:g} per hour of the window.\n"
+        )
+    counts = _screen_counts(recordings, manifest, screens)
+    counts.to_csv(root / "screen_counts.csv", index=False, float_format="%.6g")
+    lines.append(
+        "Counts are candidates on each dataset's grid (starts every `step_s`, "
+        "so neighbouring candidates overlap); rejections are attributed in "
+        "order: window, gate, other rules (labels, vetoes, saved detections), "
+        "then the screens in order, then windows without tracked fish. "
+        "`segments` are the chosen, non-overlapping segments. Per recording: "
+        "`screen_counts.csv` (also `n_rejected_<screen>_any`: every candidate "
+        "the screen rejects on its own).\n"
+    )
+    lines.append("### Per dataset\n")
+    lines += _counts_table(counts, "dataset", screens)
+    lines.append("")
+    for name in screens:
+        col = f"n_rejected_{name}_any"
+        if col in counts:
+            in_window = (
+                _col(counts, "n_grid")
+                - _col(counts, "n_outside_window")
+                - _col(counts, "n_gated")
+            )
+            lines.append(
+                f"`{name}` alone would reject {int(np.nansum(_col(counts, col))):,} "
+                f"of the {int(np.nansum(in_window)):,} in-window candidates of used "
+                "recordings."
+            )
+    lines.append("")
+    if splits:
+        lines.append("### Per scene split\n")
+        rows = []
+        for split, groups in splits.items():
+            sub = pd.DataFrame(
+                counts.loc[counts["split_group"].isin(groups).to_numpy()]
+            )
+            sub["split"] = split
+            rows.append(sub)
+        lines += _counts_table(pd.concat(rows, ignore_index=True), "split", screens)
+        lines.append("")
+        lines.append("Split groups without any segment in this library:\n")
+        per_group = {
+            str(k): int(v)
+            for k, v in zip(
+                *np.unique(
+                    np.asarray(manifest["split_group"], dtype=str), return_counts=True
+                ),
+                strict=True,
+            )
+        }
+        any_empty = False
+        for split, groups in splits.items():
+            empty = [g for g in groups if per_group.get(g, 0) == 0]
+            if empty:
+                any_empty = True
+                lines.append(
+                    f"- {split} ({len(empty)} of {len(groups)}): "
+                    + ", ".join(f"`{g}`" for g in empty)
+                )
+        if not any_empty:
+            lines.append("- none")
+        lines.append("")
+        lines.append(
+            "| split | groups | groups with segments | segments | competition segments |"
+        )
+        lines.append("|---|---|---|---|---|")
+        for split, groups in splits.items():
+            in_split = manifest["split_group"].isin(groups).to_numpy()
+            datasets = np.asarray(manifest["dataset"], dtype=str)[in_split]
+            n_groups = len(
+                set(np.asarray(manifest["split_group"], dtype=str)[in_split])
+            )
+            n_comp = int(np.sum(~np.char.startswith(datasets, "field_")))
+            lines.append(
+                f"| {split} | {len(groups)} | {n_groups} | {int(in_split.sum())} | "
+                f"{n_comp} |"
+            )
+        lines.append("")
+    lines.append("### Per recording (split group)\n")
+    lines.append(
+        "| recording | status | duration (h) | window (h) | gate rate (/h) | "
+        "candidates in window | " + " | ".join(screens) + " | valid | segments |"
+    )
+    lines.append("|---|---|---|---|---|---|" + "---|" * len(screens) + "---|---|")
+    for r in counts.sort_values(["dataset", "recording"]).to_dict("records"):
+        in_window = r["n_grid"] - r["n_outside_window"]
+        rej = " | ".join(f"{r.get(f'n_rejected_{n}', 0):,}" for n in screens)
+        status = r["status"] if r["status"] != "skipped" else f"skipped: {r['reason']}"
+        lines.append(
+            f"| {r['split_group']} | {status} | {r['duration_h']:.2f} | "
+            f"{r['window_h']:.2f} | {r['gate_rate_per_h']:.1f} | {in_window:,} | "
+            f"{rej} | {r['n_valid']:,} | "
+            f"{r['segments_fish'] + r['segments_fish_free']} |"
+        )
+    lines.append("")
+    gated = pd.DataFrame(
+        counts.loc[(np.asarray(counts["status"], dtype=str) == "gated")]
+    ).sort_values(by="gate_rate_per_h")
+    if len(gated):
+        lines.append(
+            f"Dropped by the gate ({len(gated)}): "
+            + ", ".join(
+                f"{r['split_group']} ({r['gate_rate_per_h']:.1f}/h)"
+                for r in gated.to_dict("records")
+            )
+            + ".\n"
+        )
+    diag = root / "figures" / "diagnostics"
+    if (diag / "gate.png").exists():
+        lines.append("![gate](figures/diagnostics/gate.png)\n")
+    if (diag / "rates").exists():
+        lines.append(
+            "Screen boxes per 30 min over each recording: "
+            "`figures/diagnostics/rates/` (rates per phase in "
+            "`figures/diagnostics/rates.csv`); light-phase snippets: "
+            "`figures/diagnostics/snippets/*.html`.\n"
+        )
+    return lines
+
+
 def write_report(
-    root: str | Path, *, seed: int = 0, n_demo_per_dataset: int = 2
+    root: str | Path,
+    *,
+    seed: int = 0,
+    n_demo_per_dataset: int = 2,
+    splits: dict[str, list[str]] | None = None,
 ) -> Path:
     """Write ``report.md`` and figures for a built library.
 
@@ -248,6 +535,10 @@ def write_report(
         Seed of the demo choices and SNR draws.
     n_demo_per_dataset : int
         Demo segments per source dataset.
+    splits : mapping of str to list of str, optional
+        Named lists of split groups (e.g. a scene config's
+        ``include_groups`` per train/val/test): the screening section counts
+        per split and lists groups left without segments.
 
     Returns
     -------
@@ -281,6 +572,16 @@ def write_report(
         "`gridtools.background.select`, `gridtools.background.field`; review "
         "PNGs and veto table: `review/index.html`, `review.csv`.\n"
     )
+
+    screened_builds = [
+        b for b in meta.get("builds", []) if b.get("config", {}).get("screens")
+    ]
+    if meta.get("carried_over"):
+        for c in meta["carried_over"]:
+            add(
+                f"Carried over unchanged from `{c['source']}` ({c['created']}): "
+                f"{', '.join(c['datasets'])} ({c['n_segments']} segments, hard links).\n"
+            )
 
     # inventory
     add("## Inventory\n")
@@ -317,6 +618,13 @@ def write_report(
                 )
                 + ".\n"
             )
+
+    if screened_builds:
+        lines.extend(
+            _screen_section(
+                root, manifest, recordings, screened_builds[-1], splits or {}
+            )
+        )
 
     # field scan
     field = (
