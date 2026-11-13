@@ -399,6 +399,15 @@ class ChirpConfig:
     ``scene.json`` records the values in effect. Templates may be up to 1.2 s
     long (library v3); only each chirp's support matters.
 
+    Template splits: ``template_split`` (``"train"``, ``"val"`` or
+    ``"test"``) restricts the pool to the templates of that split in the
+    splits file ``template_splits`` (:mod:`gridtools.templates.splits`:
+    fish-disjoint, so test scenes use chirps of fish unseen in training).
+    Equalization then runs within the split's pool on the bins of the whole
+    eligible pool; bins empty in the split are skipped (their share goes to
+    the others; logged and recorded in ``scene.json``). Unset (default):
+    every eligible template.
+
     Amplitude modulation (``amplitude_mode``):
 
     - ``"frequency"`` (default, the author's method): the EOD amplitude
@@ -429,6 +438,11 @@ class ChirpConfig:
     equalize_balance : str or None
         Within-bin balancing of library v4 (e.g. ``"individual"``; default
         None: library default; not passed to libraries without it).
+    template_split : {"train", "val", "test"} or None
+        Draw only templates of this split (default None: all).
+    template_splits : str or None
+        Splits file (JSON of ``gridtools.templates.splits.write_splits``)
+        for the library; required with ``template_split`` (default None).
     rate_hz : (float, float)
         Range of the spontaneous chirp rate per fish in chirps/s
         (default 0.05-0.5, i.e. 180-1800/h).
@@ -465,6 +479,8 @@ class ChirpConfig:
     equalize_spacing: str | None = None
     equalize_alpha: float | None = None
     equalize_balance: str | None = None
+    template_split: Literal["train", "val", "test"] | None = None
+    template_splits: str | None = None
     rate_hz: FloatRange = (0.05, 0.5)
     max_rate_hz: float | None = None
     min_interval_s: float = 0.2
@@ -501,6 +517,18 @@ class ChirpConfig:
             _check_number(
                 self.equalize_alpha, "chirps.equalize_alpha", low=0.0, high=1.0
             )
+        if self.template_split not in (None, "train", "val", "test"):
+            msg = (
+                "chirps.template_split must be 'train', 'val' or 'test', "
+                f"got {self.template_split!r}"
+            )
+            raise ValueError(msg)
+        if (self.template_split is None) != (not self.template_splits):
+            msg = (
+                "chirps.template_split and chirps.template_splits go together: "
+                "set both (split name and splits file) or neither"
+            )
+            raise ValueError(msg)
         _check_range(self.rate_hz, "chirps.rate_hz", low=0.0)
         if self.max_rate_hz is not None:
             _check_number(self.max_rate_hz, "chirps.max_rate_hz", low=0.0)
