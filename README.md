@@ -1,91 +1,92 @@
-<p align="center">
-  <img src="assets/logo.svg" width="120" alt="gridtools logo">
-</p>
-
 # gridtools
 
-Read and simulate multi-electrode grid recordings of wave-type weakly
-electric fish.
+Read and simulate electrode-grid recordings of wave-type weakly electric
+fish, with exact ground truth for every chirp.
 
-- **I/O** (`gridtools.io`): fishgrid recordings and wav files (memory-mapped,
-  in volts), electrode geometry from `fishgrid.cfg` or `electrodes.csv`,
-  wavetracker frequency tracks, audian label files and chirpdetector v1
-  detections.
-- **Simulator** (`gridtools sim`): complete synthetic grid recordings of
-  chirping *Apteronotus leptorhynchus* with exact ground truth: EODs with
-  harmonics and drift, real chirp templates, a dipole field from moving fish
-  to the electrodes, noise, hum, clicks and electrode faults, or real
-  background recordings with their own noise and fish (hybrid scenes). Every
-  chirp gets the box it occupies in a spectrogram (its footprint) and a
-  visibility, and its parameters are defined on the emitter's noise-free
-  per-EOD-period frequency.
-- **Chirp template library** (`gridtools.templates`): real chirps extracted
-  from recordings, cleaned, quality-flagged, sampled with equalisation over
-  size and duration, and split by fish into train, validation and test.
-- **Background library** (`gridtools.background`): one-minute segments of
-  real recordings without chirps, screened by chirp detectors, measured
-  (noise floor, real fish, hum, clicks) and used at a controlled SNR.
-- **Calibration** (`gridtools.calibrate`): the measurements of real
-  recordings that the simulator's defaults come from.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/overview-dark.png">
+  <img alt="Left: paths of three simulated fish over a four-by-four electrode grid. Middle: spectrogram of the simulated recording with every chirp's ground-truth box in its fish's colour. Right: one chirp up close with the frequency it was generated with." src="assets/overview-light.png">
+</picture>
+
+<sub>A simulated scene. Left: three fish swim over a 4 × 4 electrode grid
+for seven seconds (paths fade into the past). Middle: the recording they
+make (spectrogram, power summed over the electrodes) with every chirp's
+ground-truth box in its fish's colour, including chirps too faint to see.
+Right: one chirp up close, with the frequency the simulator generated it
+with.</sub>
+
+## Install
+
+```sh
+pip install "gridtools @ git+https://github.com/weygoldt/gridtools"
+pip install "gridtools[plot] @ git+https://github.com/weygoldt/gridtools"   # with annotated spectrograms and reports
+```
+
+Python 3.13 or later. The `gridtools` on PyPI is a different package;
+install from GitHub. [Installation](docs/installation.md) covers uv and
+pinning a release.
+
+## What it does
+
+- **Read recordings** (`gridtools.io`): fishgrid and wav recordings,
+  memory-mapped and in volts, electrode geometry, wavetracker frequency
+  tracks and label files.
+- **Simulate them** (`gridtools sim`): chirping fish with drifting EODs and
+  harmonics, moving through a dipole field to the electrodes, over
+  synthetic noise or real background recordings. Every chirp comes with its
+  timing, size, spectrogram footprint and visibility, defined on the
+  emitter's noise-free frequency.
+- **Build what the simulator draws from**: a library of real chirp
+  templates split by fish (`gridtools.templates`), a library of chirp-free
+  background recordings (`gridtools.background`), and the calibration of
+  its defaults against real recordings (`gridtools.calibrate`).
 
 gridtools makes the training and test data of
 [chirpdetector](https://github.com/weygoldt/chirpdetector).
 
-## Installation
+## Simulate
 
 ```sh
-uv pip install "gridtools @ git+https://github.com/weygoldt/gridtools"
-uv pip install "gridtools[plot] @ git+https://github.com/weygoldt/gridtools"   # with the annotated spectrograms and reports
-```
-
-Python 3.13 or later. The PyPI package named `gridtools` is unrelated:
-install from GitHub.
-
-## Simulate a scene
-
-```sh
+export GRIDTOOLS_TEMPLATES=/path/to/template/library
 gridtools sim run default --seeds 0:10 --out scenes/default
-gridtools sim run my.toml --seeds 0:100 --out scenes/my --workers 8
-gridtools sim plot scenes/my/000003
-gridtools sim compare scenes/my --calibration calibration.json
+gridtools sim plot scenes/default/000003
 ```
 
-`default` is the shipped config
-([`src/gridtools/configs/scenes/default.toml`](src/gridtools/configs/scenes/default.toml),
-every key with its default);
-copy it to make your own. Each seed gives one scene directory
-(`OUT/<seed:06d>/`): `recording.wav` (float32, one channel per electrode,
-in volts), `fishgrid.cfg`, ground-truth tracks in wavetracker's format,
-`chirps.csv`/`.parquet` with every chirp's timing, size, footprint box and
-visibility, `clicks.csv`, `paths.npz`, `chirp_traces.npz`, `scene.json` and
-two annotated spectrograms.
+Each seed gives one scene directory: a multichannel wav, the fish's tracks
+in wavetracker's format, their paths, and `chirps.csv` with every chirp's
+timing, size, footprint box and visibility. `default` is the shipped config
+([`default.toml`](src/gridtools/configs/scenes/default.toml)); copy it to
+make your own. The simulator needs a chirp template library; the one built
+from the chirp competition recordings is not public yet.
+[Simulating scenes](docs/simulation.md) covers configs, hybrid scenes and
+the Python API.
 
-The simulator needs a chirp template library: `[chirps] library` in the
-config, or the environment variable `GRIDTOOLS_TEMPLATES`; without one,
-`gridtools sim run` stops and says so. Hybrid scenes also need a background
-library (`[background] library` and `prob > 0`); the shipped config has none,
-so its scenes have synthetic noise. Both libraries are built from the chirp
-competition recordings and are not public yet; hosting them is an open item.
+## Read a recording
+
+```python
+from gridtools.io import load_tracks, open_recording
+
+recording = open_recording("path/to/recording")  # fishgrid raw or wav
+samples = recording.read_time(10.0, 12.0)          # (samples, electrodes), volts
+tracks = load_tracks("path/to/recording")          # wavetracker arrays
+```
 
 ## Documentation
 
-Start at [docs/README.md](docs/README.md). The pages:
+Start at [docs/README.md](docs/README.md).
 
-- [Installation](docs/installation.md): uv, pip, extras
-- [Simulating scenes](docs/simulation.md): configs, layouts, hybrid scenes, templates and splits, seeds, the Python API
-- [Scene outputs](docs/outputs.md): directory layout, `chirps.csv` columns, tracks, `scene.json`, plots
-- [Ground truth](docs/ground-truth.md): the per-period instantaneous frequency, footprints, visibility
-- [Template library](docs/templates.md): building it, the long-chirp harvest, QC flags, sampling, fish-disjoint splits
-- [Background library](docs/background.md): windows, chirp screens, the recording gate, building, review
-- [Reading recordings](docs/io.md): recordings, geometry, tracks, labels
-- [Calibration](docs/calibration.md): what the simulator's defaults are fitted to
-- [Development](docs/development.md): tests and checks
+- **Simulate:** [simulating scenes](docs/simulation.md) ·
+  [scene outputs](docs/outputs.md) · [ground truth](docs/ground-truth.md)
+- **Libraries:** [template library](docs/templates.md) ·
+  [background library](docs/background.md) ·
+  [calibration](docs/calibration.md)
+- **Read:** [reading recordings](docs/io.md)
+- **Set up:** [installation](docs/installation.md) ·
+  [development](docs/development.md)
 
-## Versions
+## Versions and license
 
-This is version 2. The code used for the chirp competition paper (2024) is
-tag `paper-chirp-competition-v1`.
+This is version 2 (tag `v2.0.0`). The code of the chirp competition paper
+(2024) is tag `paper-chirp-competition-v1`.
 
-## License
-
-MIT
+MIT.
