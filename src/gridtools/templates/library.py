@@ -142,6 +142,8 @@ EQUALIZE_DURATION_COLUMN = "duration_10_s"
 Family = Literal["small", "big"]
 Spacing = Literal["linear", "log"]
 Balance = Literal["individual", "template"]
+#: Fixed bin edges ``(excursion_edges_hz, duration_edges_s)``.
+Edges = tuple[npt.ArrayLike, npt.ArrayLike]
 
 #: Default equalization grid: bins on excursion x duration.
 DEFAULT_BINS: tuple[int, int] = (10, 10)
@@ -337,13 +339,17 @@ class TemplateLibrary:
         duration_column: str = EQUALIZE_DURATION_COLUMN,
         *,
         spacing: Spacing = DEFAULT_SPACING,
+        edges: Edges | None = None,
     ) -> EqualizationBins:
         """Bin the sampling pool on excursion and duration.
 
         Bins span the minimum to the maximum of the pool (one template per
         duplicate group, see :meth:`unique_ids`); the maximum falls into the
         last bin. Templates with a non-finite (or, for log spacing,
-        non-positive) excursion or duration are left out.
+        non-positive) excursion or duration are left out. With ``edges`` the
+        bins are fixed instead (e.g. those of a larger pool, so that the
+        bins of a subset match its parent's); values outside them fall into
+        the first or last bin.
 
         Parameters
         ----------
@@ -355,6 +361,9 @@ class TemplateLibrary:
             ``"log"`` (default): bins of equal width in log excursion and log
             duration, so the many small, short chirps spread over several
             bins. ``"linear"``: equal-width bins (library v2 scheme).
+        edges
+            Optional fixed ``(excursion_edges_hz, duration_edges_s)`` with
+            ``bins[0] + 1`` and ``bins[1] + 1`` increasing values.
 
         Returns
         -------
@@ -382,9 +391,20 @@ class TemplateLibrary:
         if pool.size == 0:
             msg = "cannot bin an empty template pool"
             raise ValueError(msg)
-        edges = np.geomspace if spacing == "log" else np.linspace
-        exc_edges = edges(excursion.min(), excursion.max(), n_exc + 1)
-        dur_edges = edges(duration.min(), duration.max(), n_dur + 1)
+        if edges is None:
+            make = np.geomspace if spacing == "log" else np.linspace
+            exc_edges = make(excursion.min(), excursion.max(), n_exc + 1)
+            dur_edges = make(duration.min(), duration.max(), n_dur + 1)
+        else:
+            exc_edges = np.asarray(edges[0], dtype=np.float64)
+            dur_edges = np.asarray(edges[1], dtype=np.float64)
+            for name, values, n in (
+                ("excursion", exc_edges, n_exc),
+                ("duration", dur_edges, n_dur),
+            ):
+                if values.shape != (n + 1,) or np.any(np.diff(values) <= 0):
+                    msg = f"need {n + 1} increasing {name} edges, got {values}"
+                    raise ValueError(msg)
         exc_bin = np.clip(
             np.searchsorted(exc_edges, excursion, side="right") - 1, 0, n_exc - 1
         )
@@ -415,18 +435,21 @@ class TemplateLibrary:
         spacing: Spacing = DEFAULT_SPACING,
         alpha: float = DEFAULT_ALPHA,
         balance: Balance = DEFAULT_BALANCE,
+        edges: Edges | None = None,
     ) -> TemplateCycler:
         """Return a stateful sampler that keeps its balance across calls.
 
         Use one cycler per simulation when chirps are drawn one at a time.
-        See :meth:`sample` for the modes and parameters.
+        See :meth:`sample` for the modes and parameters. ``edges`` fixes the
+        equalization bins (see :meth:`equalization_bins`); bins empty in
+        this pool are skipped, so their share goes to the occupied ones.
         """
         if balance not in ("individual", "template"):
             msg = f"balance must be 'individual' or 'template', got {balance!r}"
             raise ValueError(msg)
         if not equalize:
             return TemplateCycler([self.unique_ids()], rng)
-        eq = self.equalization_bins(bins, spacing=spacing)
+        eq = self.equalization_bins(bins, spacing=spacing, edges=edges)
         weights = eq.bin_probabilities(alpha)
         subgroups = eq.subgroups() if balance == "individual" else None
         return TemplateCycler(
@@ -443,6 +466,7 @@ class TemplateLibrary:
         spacing: Spacing = DEFAULT_SPACING,
         alpha: float = DEFAULT_ALPHA,
         balance: Balance = DEFAULT_BALANCE,
+        edges: Edges | None = None,
     ) -> TemplateSample:
         """Draw ``n`` templates without inflating duplicates.
 
@@ -498,6 +522,8 @@ class TemplateLibrary:
         balance
             ``"individual"`` or ``"template"`` within a bin (see above;
             equalized sampling only). Individuals: :func:`individual_labels`.
+        edges
+            Optional fixed bin edges (see :meth:`equalization_bins`).
 
         Returns
         -------
@@ -511,6 +537,7 @@ class TemplateLibrary:
             spacing=spacing,
             alpha=alpha,
             balance=balance,
+            edges=edges,
         ).draw(n)
         return self.get(ids)
 

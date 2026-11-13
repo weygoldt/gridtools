@@ -3,9 +3,10 @@
 Three parts:
 
 - :class:`TemplatePool`, the adapter to the template library
-  (:mod:`gridtools.templates`): selects eligible templates, draws them with
-  the library's histogram-equalised cycler, reads their traces and their
-  support. Scenes only talk to the library through it.
+  (:mod:`gridtools.templates`): selects eligible templates (optionally only
+  those of one fish-disjoint split), draws them with the library's
+  histogram-equalised cycler, reads their traces and their support. Scenes
+  only talk to the library through it.
 - :func:`schedule_chirps`, the timing process: bursts of spontaneous chirps
   per fish, responses by other fish, a minimum silent interval between the
   supports of one fish's chirps, and a rate cap.
@@ -39,18 +40,23 @@ import numpy.typing as npt
 from gridtools.sim._common import Float32Array, FloatArray, IntArray
 from gridtools.sim.config import ChirpConfig
 from gridtools.templates import (
+    DEFAULT_ALPHA,
+    DEFAULT_SPACING,
     EQUALIZE_DURATION_COLUMN,
     TemplateLibrary,
     load_library,
 )
 from gridtools.templates import amplitude_from_frequency as _amplitude_from_frequency
 from gridtools.templates import random_dips as _random_dips
+from gridtools.templates.library import individual_labels
+from gridtools.templates.splits import file_sha256, fish_units, load_splits
 
 __all__ = [
     "ChirpEvent",
     "ChirpPlacement",
     "ChirpSchedule",
     "TemplatePool",
+    "TemplateSplitInfo",
     "amplitude_from_frequency",
     "place_chirp",
     "random_dips",
@@ -88,6 +94,70 @@ class Cycler(Protocol):
 
 
 @dataclass(frozen=True, eq=False)
+class TemplateSplitInfo:
+    """The template split a pool is restricted to.
+
+    Attributes
+    ----------
+    name : str
+        ``"train"``, ``"val"`` or ``"test"``.
+    path : pathlib.Path
+        Splits file.
+    sha256 : str
+        SHA-256 of the splits file.
+    n_eligible_all : int
+        Eligible templates before the split.
+    n_templates, n_groups, n_units : int
+        Eligible templates, groups and units (fish or groups) of the split.
+    edges : (numpy.ndarray, numpy.ndarray) or None
+        Equalization bin edges (excursion in Hz, duration in s) of the whole
+        eligible pool, used for the split's pool (None without
+        equalization).
+    n_bins_all, n_bins : int
+        Occupied bins of the whole eligible pool and of the split.
+    empty_bins : tuple of int
+        Flat indices of bins occupied in the whole pool but empty in the
+        split (skipped when drawing).
+    lost_share : float
+        Draw share of ``empty_bins`` on the whole pool, now spread over the
+        split's occupied bins.
+    """
+
+    name: str
+    path: Path
+    sha256: str
+    n_eligible_all: int
+    n_templates: int
+    n_groups: int
+    n_units: int
+    edges: tuple[FloatArray, FloatArray] | None
+    n_bins_all: int
+    n_bins: int
+    empty_bins: tuple[int, ...]
+    lost_share: float
+
+    def record(self) -> dict[str, Any]:
+        """JSON-ready description (for ``scene.json``)."""
+        return {
+            "name": self.name,
+            "path": str(self.path),
+            "sha256": self.sha256,
+            "n_eligible_all": self.n_eligible_all,
+            "n_templates": self.n_templates,
+            "n_groups": self.n_groups,
+            "n_units": self.n_units,
+            "n_bins_all": self.n_bins_all,
+            "n_bins": self.n_bins,
+            "empty_bins": list(self.empty_bins),
+            "lost_share": self.lost_share,
+            "excursion_edges_hz": (
+                None if self.edges is None else self.edges[0].tolist()
+            ),
+            "duration_edges_s": None if self.edges is None else self.edges[1].tolist(),
+        }
+
+
+@dataclass(frozen=True, eq=False)
 class TemplatePool:
     """Eligible templates of a library and how to draw them.
 
@@ -116,6 +186,9 @@ class TemplatePool:
     require_amp : bool
         Only templates with a usable measured amplitude trace (and their
         amplitude change counts towards the support).
+    split : TemplateSplitInfo or None
+        The template split ``view`` is restricted to (None: all eligible
+        templates).
     """
 
     library: TemplateLibrary
@@ -127,6 +200,7 @@ class TemplatePool:
     options: tuple[tuple[str, Any], ...]
     require_amp: bool
     _rows: dict[int, int] = field(repr=False)
+    split: TemplateSplitInfo | None = None
     _supports: dict[tuple[int, float], tuple[int, int]] = field(
         default_factory=dict, repr=False
     )
@@ -150,6 +224,8 @@ class TemplatePool:
                 )
                 if value is not None
             ),
+            config.template_split,
+            config.template_splits,
         )
 
     @property
@@ -179,7 +255,7 @@ class TemplatePool:
         defaults = {
             name: p.default
             for name, p in parameters.items()
-            if p.default is not inspect.Parameter.empty
+            if p.default is not inspect.Parameter.empty and name != "edges"
         }
         defaults.update(equalize=self.equalize, bins=self.bins)
         defaults.update(dict(self.options))
@@ -188,21 +264,29 @@ class TemplatePool:
     @property
     def sampling(self) -> str:
         """Description of the sampling scheme (for ``scene.json``)."""
+        split = (
+            ""
+            if self.split is None
+            else f"; template split {self.split.name!r} of {self.split.path}"
+        )
         if not self.equalize:
-            return "natural: successive permutations of the eligible pool"
+            return f"natural: successive permutations of the eligible pool{split}"
         options = ", ".join(
             f"{k}={v!r}" for k, v in self.sampling_options.items() if k != "equalize"
         )
+        if self.split is not None:
+            split += " (bins of the whole eligible pool, empty bins skipped)"
         return (
             f"equalized over excursion_hz x {EQUALIZE_DURATION_COLUMN} with "
-            f"gridtools.templates.TemplateLibrary.cycler({options})"
+            f"gridtools.templates.TemplateLibrary.cycler({options}){split}"
         )
 
     def cycler(self, rng: np.random.Generator) -> Cycler:
         """A stateful sampler (one per fish) drawing from ``rng``."""
-        return self.view.cycler(
-            rng, equalize=self.equalize, bins=self.bins, **dict(self.options)
-        )
+        options = dict(self.options)
+        if self.split is not None and self.split.edges is not None:
+            options["edges"] = self.split.edges
+        return self.view.cycler(rng, equalize=self.equalize, bins=self.bins, **options)
 
     def traces(self, template_id: int) -> tuple[Float32Array, Float32Array]:
         """Frequency excursion (Hz) and measured amplitude factor of one template."""
@@ -263,6 +347,8 @@ def _open_pool(
     equalize: bool,
     bins: tuple[int, int],
     options: tuple[tuple[str, Any], ...],
+    template_split: str | None = None,
+    template_splits: str | None = None,
 ) -> TemplatePool:
     path = Path(library_path)
     if not path.is_dir():
@@ -287,16 +373,32 @@ def _open_pool(
         raise ValueError(msg)
     ids = library.template_ids
     manifest = (path / "manifest.json").read_bytes()
+    manifest_sha256 = hashlib.sha256(manifest).hexdigest()
+    split = None
+    if template_split is not None:
+        if not template_splits:
+            msg = "template_split needs a splits file (template_splits)"
+            raise ValueError(msg)
+        view, split = _split_view(
+            view,
+            manifest_sha256,
+            template_split,
+            Path(template_splits),
+            equalize=equalize,
+            bins=bins,
+            options=dict(options),
+        )
     pool = TemplatePool(
         library=library,
         view=view,
         path=path.resolve(),
-        manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        manifest_sha256=manifest_sha256,
         equalize=equalize,
         bins=bins,
         options=options,
         require_amp=require_amp,
         _rows={int(t): i for i, t in enumerate(ids)},
+        split=split,
     )
     logger.info(
         "template pool %s: %d eligible templates, %s",
@@ -305,6 +407,84 @@ def _open_pool(
         pool.sampling,
     )
     return pool
+
+
+def _split_view(
+    view: TemplateLibrary,
+    manifest_sha256: str,
+    name: str,
+    splits_path: Path,
+    *,
+    equalize: bool,
+    bins: tuple[int, int],
+    options: dict[str, Any],
+) -> tuple[TemplateLibrary, TemplateSplitInfo]:
+    """Restrict the eligible view to one split; bins of the whole view."""
+    if not splits_path.is_file():
+        msg = f"template splits file not found: {splits_path}"
+        raise FileNotFoundError(msg)
+    splits = load_splits(splits_path)
+    recorded = splits.provenance.get("library", {}).get("manifest_sha256")
+    if recorded != manifest_sha256:
+        msg = (
+            f"{splits_path} was made for another library build (manifest "
+            f"SHA-256 {str(recorded)[:12]}, this library {manifest_sha256[:12]})"
+        )
+        raise ValueError(msg)
+    keep = splits.split_of(view.metadata) == name
+    if not keep.any():
+        msg = f"split {name!r} of {splits_path} holds no eligible template"
+        raise ValueError(msg)
+    part = view.select(template_ids=view.template_ids[keep].tolist(), exclude=())
+    edges: tuple[FloatArray, FloatArray] | None = None
+    n_bins_all = n_bins = 0
+    empty: tuple[int, ...] = ()
+    lost = 0.0
+    if equalize:
+        spacing = options.get("spacing", DEFAULT_SPACING)
+        whole = view.equalization_bins(bins, spacing=spacing)
+        edges = (whole.excursion_edges_hz, whole.duration_edges_s)
+        own = part.equalization_bins(bins, spacing=spacing, edges=edges)
+        occupied = whole.counts.ravel() > 0
+        empty_mask = occupied & (own.counts.ravel() == 0)
+        share = whole.bin_probabilities(options.get("alpha", DEFAULT_ALPHA))
+        n_bins_all, n_bins = int(occupied.sum()), own.n_nonempty
+        empty = tuple(int(b) for b in np.flatnonzero(empty_mask))
+        lost = float(share[empty_mask].sum())
+    info = TemplateSplitInfo(
+        name=name,
+        path=splits_path.resolve(),
+        sha256=file_sha256(splits_path),
+        n_eligible_all=view.n_templates,
+        n_templates=part.n_templates,
+        n_groups=int(np.unique(individual_labels(part.metadata)).size),
+        n_units=int(np.unique(fish_units(part.metadata)).size),
+        edges=edges,
+        n_bins_all=n_bins_all,
+        n_bins=n_bins,
+        empty_bins=empty,
+        lost_share=lost,
+    )
+    logger.info(
+        "template split %r of %s: %d of %d eligible templates, %d units",
+        name,
+        splits_path,
+        info.n_templates,
+        info.n_eligible_all,
+        info.n_units,
+    )
+    if empty:
+        logger.warning(
+            "template split %r: %d of %d occupied bins are empty and skipped; "
+            "they held %.1f%% of the draws on the whole pool, now spread over "
+            "the other %d bins",
+            name,
+            len(empty),
+            n_bins_all,
+            100 * lost,
+            n_bins,
+        )
+    return part, info
 
 
 # -- timing -----------------------------------------------------------------

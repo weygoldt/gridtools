@@ -75,6 +75,9 @@ equalize_bins = [10, 10]             # excursion x width at 10 %
 # equalize_spacing = "log"           # or "linear"
 # equalize_alpha = 0.6               # bin weight count**(1 - alpha); 1 = flat
 # equalize_balance = "individual"    # library v4
+# Fish-disjoint template split (gridtools.templates.splits); omitted = all templates:
+# template_split = "train"           # or "val", "test"
+# template_splits = "/mnt/data1/chirp_v2/templates/v4/splits_v1.json"
 rate_hz = [0.05, 0.5]                # 180-1800/h per fish; real: losers ~61/h
 # max_rate_hz = 1.0                  # optional cap; omit for none
 min_interval_s = 0.2                 # centre to centre, one fish; supports disjoint

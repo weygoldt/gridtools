@@ -1725,6 +1725,7 @@ def scene_info(scene: Scene) -> dict[str, Any]:
                 k: list(v) if isinstance(v, tuple) else v
                 for k, v in plan.pool.sampling_options.items()
             },
+            "split": None if plan.pool.split is None else plan.pool.split.record(),
         },
         "grid": {
             "rows": plan.rows,
