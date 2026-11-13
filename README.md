@@ -67,8 +67,8 @@ the Python API.
 from gridtools.io import load_tracks, open_recording
 
 recording = open_recording("path/to/recording")  # fishgrid raw or wav
-samples = recording.read_time(10.0, 12.0)          # (samples, electrodes), volts
-tracks = load_tracks("path/to/recording")          # wavetracker arrays
+samples = recording.read_time(10.0, 12.0)  # (samples, electrodes), volts
+tracks = load_tracks("path/to/recording")  # wavetracker arrays
 ```
 
 ## Documentation
