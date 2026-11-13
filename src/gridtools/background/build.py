@@ -85,6 +85,7 @@ from gridtools.background.select import (
     fill_non_overlapping,
     frame_coverage,
     local_rate_per_s,
+    pack_non_overlapping,
     span_starts,
 )
 from gridtools.background.sources import SourceRecording, open_source_recording
@@ -402,15 +403,20 @@ def _plan(
         valid &= ~no_fish
         score += np.where(np.isfinite(worst), 1.0 - worst, 0.0)
     plan_span = (lo, max(lo, hi - length))
-    chosen = choose_stratified(
-        rng,
-        starts,
-        valid,
-        score,
-        segment_s=length,
-        n_strata=sel.segments_per_recording,
-        span_s=plan_span,
-    )
+    if sel.pack:
+        chosen = pack_non_overlapping(
+            starts, valid, segment_s=length, n_max=sel.segments_per_recording
+        )
+    else:
+        chosen = choose_stratified(
+            rng,
+            starts,
+            valid,
+            score,
+            segment_s=length,
+            n_strata=sel.segments_per_recording,
+            span_s=plan_span,
+        )
     if sel.fill and chosen.size < sel.segments_per_recording:
         chosen = fill_non_overlapping(
             rng,

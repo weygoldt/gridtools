@@ -172,3 +172,23 @@ def test_fill_adds_non_overlapping_candidates_up_to_n() -> None:
     assert out.size <= 10
     # nothing more fits than floor(300 / 60) with the invalid stretch
     assert out.size >= 3
+
+
+def test_pack_fits_the_most_segments_in_a_narrow_window() -> None:
+    from gridtools.background.select import pack_non_overlapping
+
+    starts = span_starts(0.0, 1740.0, 60.0, 5.0)
+    valid = np.ones(starts.size, dtype=bool)
+    out = pack_non_overlapping(starts, valid, segment_s=60.0, n_max=30)
+    assert out.size == 29
+    np.testing.assert_allclose(np.diff(starts[out]), 60.0)
+    valid[(starts > 100.0) & (starts < 130.0)] = False  # a screened box
+    out = pack_non_overlapping(starts, valid, segment_s=60.0, n_max=30)
+    assert valid[out].all()
+    assert np.all(np.diff(starts[out]) >= 60.0)
+    assert out.size == 28
+    few = pack_non_overlapping(
+        starts, np.ones(starts.size, bool), segment_s=60.0, n_max=5
+    )
+    assert few.size == 5
+    assert starts[few[0]] == 0.0

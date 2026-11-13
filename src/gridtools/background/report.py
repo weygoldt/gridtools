@@ -371,7 +371,8 @@ def _screen_section(
             rule.append(f"recordings >= {window['min_duration_s'] / 3600:g} h")
         lines.append(
             f"| {dataset} | {', '.join(rule)} | {sel['segments_per_recording']}"
-            f"{' (fill)' if sel.get('fill') else ''} | {sel['step_s']:g} s, "
+            f"{' (packed)' if sel.get('pack') else ' (fill)' if sel.get('fill') else ''}"
+            f" | {sel['step_s']:g} s, "
             f"edges {sel['edge_s']:g} s |"
         )
     lines.append("")

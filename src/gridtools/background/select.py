@@ -23,6 +23,12 @@ Rules
    added, lowest score first, until ``segments_per_recording`` are chosen.
    With narrow windows (e.g. the last 30 min of a recording) and strata
    about one segment wide, this packs the window instead of leaving gaps.
+5. Alternatively (``pack``), strata and scores are ignored: valid
+   candidates are taken greedily from the earliest on, each starting at
+   least one segment after the previous one (for equal lengths this fits
+   the most segments), and if more than ``segments_per_recording`` fit, an
+   evenly spread subset is kept. For windows that hold about as many
+   segments as wanted.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ __all__ = [
     "fill_non_overlapping",
     "frame_coverage",
     "local_rate_per_s",
+    "pack_non_overlapping",
     "span_starts",
 ]
 
@@ -74,6 +81,9 @@ class SelectionConfig:
     fill : bool
         Make up for empty strata from the remaining valid candidates
         (default False; rule 4).
+    pack : bool
+        Pack the valid candidates greedily instead of choosing per stratum
+        (default False; rule 5).
     """
 
     segment_s: float = 60.0
@@ -84,6 +94,7 @@ class SelectionConfig:
     rate_window_s: float = 600.0
     v1_recall: float = 0.764
     fill: bool = False
+    pack: bool = False
 
     def __post_init__(self) -> None:
         for name in ("segment_s", "step_s", "rate_window_s"):
@@ -333,3 +344,40 @@ def fill_non_overlapping(
         out.append(int(i))
         taken = np.insert(taken, k, s[i])
     return np.sort(np.asarray(out, dtype=np.intp))
+
+
+def pack_non_overlapping(
+    starts_s: npt.ArrayLike,
+    valid: npt.ArrayLike,
+    *,
+    segment_s: float,
+    n_max: int,
+) -> npt.NDArray[np.intp]:
+    """Most non-overlapping valid candidates, earliest first (rule 5).
+
+    Parameters
+    ----------
+    starts_s : array_like, shape (C,)
+        Candidate starts (sorted).
+    valid : array_like of bool, shape (C,)
+    segment_s : float
+        Candidate length.
+    n_max : int
+        At most this many; if more fit, an evenly spread subset of them.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        Indices of the chosen candidates, in time order.
+    """
+    s = np.asarray(starts_s, dtype=np.float64)
+    chosen: list[int] = []
+    last = -np.inf
+    for i in np.flatnonzero(np.asarray(valid, dtype=bool)):
+        if s[i] >= last + segment_s - 1e-9:
+            chosen.append(int(i))
+            last = s[i]
+    out = np.asarray(chosen, dtype=np.intp)
+    if out.size > n_max:
+        out = out[np.unique(np.round(np.linspace(0, out.size - 1, n_max)).astype(int))]
+    return out
