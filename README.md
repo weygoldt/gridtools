@@ -4,90 +4,88 @@
 
 # gridtools
 
-Tools for multi-electrode grid recordings of wave-type weakly electric fish:
-reading recordings, electrode geometry and frequency tracks, and simulating
-grid recordings with moving, chirping fish for training and testing
-detectors.
+Read and simulate multi-electrode grid recordings of wave-type weakly
+electric fish.
 
-> **Status:** version 2 is being rebuilt on the `v2` branch. The code used for
-> the chirp competition paper (2024) is available as tag
-> `paper-chirp-competition-v1`.
+- **I/O** (`gridtools.io`): fishgrid recordings and wav files (memory-mapped,
+  in volts), electrode geometry from `fishgrid.cfg` or `electrodes.csv`,
+  wavetracker frequency tracks, audian label files and chirpdetector v1
+  detections.
+- **Simulator** (`gridtools sim`): complete synthetic grid recordings of
+  chirping *Apteronotus leptorhynchus* with exact ground truth: EODs with
+  harmonics and drift, real chirp templates, a dipole field from moving fish
+  to the electrodes, noise, hum, clicks and electrode faults, or real
+  background recordings with their own noise and fish (hybrid scenes). Every
+  chirp gets the box it occupies in a spectrogram (its footprint) and a
+  visibility, and its parameters are defined on the emitter's noise-free
+  per-EOD-period frequency.
+- **Chirp template library** (`gridtools.templates`): real chirps extracted
+  from recordings, cleaned, quality-flagged, sampled with equalisation over
+  size and duration, and split by fish into train, validation and test.
+- **Background library** (`gridtools.background`): one-minute segments of
+  real recordings without chirps, screened by chirp detectors, measured
+  (noise floor, real fish, hum, clicks) and used at a controlled SNR.
+- **Calibration** (`gridtools.calibrate`): the measurements of real
+  recordings that the simulator's defaults come from.
+
+gridtools makes the training and test data of
+[chirpdetector](https://github.com/weygoldt/chirpdetector).
 
 ## Installation
 
 ```sh
-uv add "gridtools @ git+https://github.com/weygoldt/gridtools@v2"
+uv pip install "gridtools @ git+https://github.com/weygoldt/gridtools"
+uv pip install "gridtools[plot] @ git+https://github.com/weygoldt/gridtools"   # with the annotated spectrograms and reports
 ```
 
-The name `gridtools` on PyPI belongs to an unrelated package, so install from
-GitHub.
+Python 3.13 or later. The PyPI package named `gridtools` is unrelated:
+install from GitHub.
 
-## Simulated scenes
-
-`gridtools sim` writes complete synthetic grid recordings of chirping
-*Apteronotus leptorhynchus* with exact ground truth (training data for chirp
-detection and emitter assignment):
+## Simulate a scene
 
 ```sh
-uv run gridtools sim run default --seeds 0:10 --out /mnt/data1/chirp_v2/scenes/default
-uv run gridtools sim plot /mnt/data1/chirp_v2/scenes/default/000000
+gridtools sim run default --seeds 0:10 --out scenes/default
+gridtools sim run my.toml --seeds 0:100 --out scenes/my --workers 8
+gridtools sim plot scenes/my/000003
+gridtools sim compare scenes/my --calibration calibration.json
 ```
 
-`default` is the shipped config `src/gridtools/configs/scenes/default.toml`
-(every key with its default; copy it to make your own). Its defaults are
-calibrated on the 33 tube-competition trials (`gridtools.calibrate`):
-recordings in volts, white noise floors, hum, faults and clipping as
-measured, EOD amplitudes and a dipole field fitted to real `sign_v`
-profiles, baseline EODf, drift, movement regimes and chirp timing. Scenes are
-deliberately harder than the real trials (close frequencies, crossings,
-near-simultaneous chirps, higher chirp rates, noisier recordings), and vary
-the electrode count (1-16), spacing, reference and, optionally, the sampling
-rate; every setting is in physical units.
-
-Hybrid scenes (`[background]`, by default 60 % of the scenes) put the
-simulated fish on a real 60-s background segment from the background library
-(`/mnt/data1/chirp_v2/background/v1`, `gridtools.background`): the
-segment's grid (all its channels, or a subset with their positions), its
-noise, hum, clicks and non-chirping real fish, which join the tracks with
-identities from 1000 on. Synthetic noise, hum and clicks are then off; the
-background is scaled to a drawn SNR of the simulated fish (hard SNRs make
-the simulated fish quieter rather than amplify the background). Hybrid
-scenes are at most 60 s long; set `background.prob = 0` for longer ones.
-
-Each scene directory holds `recording.wav` (float32 V, one channel per
-electrode), `fishgrid.cfg` (plus `electrodes.csv` for layouts that are not a
-full rectangle), ground-truth tracks in wavetracker layout, `chirps.csv`/
-`.parquet` with each chirp's physical extent and its footprint box and
+`default` is the shipped config
+(`src/gridtools/configs/scenes/default.toml`, every key with its default);
+copy it to make your own. Each seed gives one scene directory
+(`OUT/<seed:06d>/`): `recording.wav` (float32, one channel per electrode,
+in volts), `fishgrid.cfg`, ground-truth tracks in wavetracker's format,
+`chirps.csv`/`.parquet` with every chirp's timing, size, footprint box and
 visibility, `clicks.csv`, `paths.npz`, `chirp_traces.npz`, `scene.json` and
-two annotated spectrograms. `recording = sum of render_fish + render_background`
-(for a hybrid scene, the scaled background segment, reloaded from the library
-named in `scene.json`). In Python:
+two annotated spectrograms.
 
-```python
-from gridtools.sim.config import SceneConfig
-from gridtools.sim.footprint import HannSpectrogram, chirp_footprint
-from gridtools.sim.scene import render_fish, simulate_scene, write_scene
+The simulator needs a chirp template library, and hybrid scenes a background
+library. Both are built from the chirp competition recordings and are not
+public yet; the shipped config points to their location on the development
+machine (`[chirps] library`, `[background] library`). Hosting them is an open
+item.
 
-scene = simulate_scene(SceneConfig.from_toml("my.toml"), seed=3)
-path = write_scene(scene, "out/000003")
-# one fish's exact contribution, with and without chirp 12
-with_chirp = render_fish(path, 0, 10.0, 10.5)
-without = render_fish(path, 0, 10.0, 10.5, chirps=[12])
-# chirp 12's box in a spectrogram of your choice
-box = chirp_footprint(path, 12, HannSpectrogram(window_s=0.0256, hop_s=0.0016)).box
-```
+## Documentation
 
-`gridtools sim compare SCENES_DIR` measures scenes with the calibration's
-estimators and tabulates them against the real recordings.
+| page | contents |
+|---|---|
+| [Installation](docs/installation.md) | uv, pip, extras |
+| [Simulating scenes](docs/simulation.md) | configs, layouts, hybrid scenes, templates and splits, seeds, the Python API |
+| [Scene outputs](docs/outputs.md) | directory layout, `chirps.csv` columns, tracks, `scene.json`, plots |
+| [Ground truth](docs/ground-truth.md) | the per-period instantaneous frequency, footprints, visibility |
+| [Template library](docs/templates.md) | building it, the long-chirp harvest, QC flags, sampling, fish-disjoint splits |
+| [Background library](docs/background.md) | windows, chirp screens, the recording gate, building, review |
+| [Reading recordings](docs/io.md) | recordings, geometry, tracks, labels |
+| [Calibration](docs/calibration.md) | what the simulator's defaults are fitted to |
+| [Development](docs/development.md) | tests, checks, the docs site |
 
-## Development
+The pages build as a site with `uvx --from mkdocs==1.6.1 --with
+mkdocs-material==9.8.1 mkdocs build --strict`.
 
-```sh
-uv sync
-uv run pytest
-uv run ruff check . && uv run ruff format --check .
-uv run pyright
-```
+## Versions
+
+This is version 2. The code used for the chirp competition paper (2024) is
+tag `paper-chirp-competition-v1`.
 
 ## License
 

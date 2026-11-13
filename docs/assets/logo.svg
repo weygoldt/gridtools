@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="151.1162mm"
+   height="108.44566mm"
+   viewBox="0 0 151.1162 108.44567"
+   version="1.1"
+   id="svg1"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <linearGradient
+       gradientTransform="matrix(1.0166229,0,0,0.67774857,641.21999,73.471879)"
+       gradientUnits="userSpaceOnUse"
+       y2="-108.40581"
+       x2="-482.09006"
+       y1="136.57748"
+       x1="-721.11523"
+       id="linearGradient823-2"
+       xlink:href="#magma" />
+    <linearGradient
+       id="magma">
+      <stop
+         id="stop4558"
+         offset="0"
+         style="stop-color:#000004;stop-opacity:1" />
+      <stop
+         style="stop-color:#0a0822;stop-opacity:1"
+         offset="0.0625"
+         id="stop4560" />
+      <stop
+         style="stop-color:#1d1146;stop-opacity:1"
+         offset="0.125"
+         id="stop4562" />
+      <stop
+         id="stop4564"
+         offset="0.1875"
+         style="stop-color:#36106a;stop-opacity:1" />
+      <stop
+         style="stop-color:#50127c;stop-opacity:1"
+         offset="0.25"
+         id="stop4566" />
+      <stop
+         id="stop4568"
+         offset="0.3125"
+         style="stop-color:#691c81;stop-opacity:1" />
+      <stop
+         id="stop4570"
+         offset="0.375"
+         style="stop-color:#822681;stop-opacity:1" />
+      <stop
+         style="stop-color:#9c2e7f;stop-opacity:1"
+         offset="0.4375"
+         id="stop4572" />
+      <stop
+         style="stop-color:#b63779;stop-opacity:1"
+         offset="0.5"
+         id="stop4574" />
+      <stop
+         id="stop4576"
+         offset="0.5625"
+         style="stop-color:#cf4170;stop-opacity:1" />
+      <stop
+         id="stop4578"
+         offset="0.625"
+         style="stop-color:#e65163;stop-opacity:1" />
+      <stop
+         style="stop-color:#f5695c;stop-opacity:1"
+         offset="0.6875"
+         id="stop4580" />
+      <stop
+         id="stop4582"
+         offset="0.75"
+         style="stop-color:#fb8761;stop-opacity:1" />
+      <stop
+         style="stop-color:#fea571;stop-opacity:1"
+         offset="0.8125"
+         id="stop4584" />
+      <stop
+         style="stop-color:#fec387;stop-opacity:1"
+         offset="0.875"
+         id="stop4586" />
+      <stop
+         id="stop4588"
+         offset="0.9375"
+         style="stop-color:#fde0a2;stop-opacity:1" />
+      <stop
+         id="stop4590"
+         offset="1"
+         style="stop-color:#fcfdbf;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <g
+     id="layer1"
+     transform="translate(-30.960577,-100.1823)" />
+  <g
+     id="g37"
+     style="stroke-width:10.5833;stroke-dasharray:none"
+     transform="matrix(1.3407099,0,0,1.3407099,209.50146,-161.81188)">
+    <rect
+       style="font-variation-settings:normal;opacity:1;vector-effect:none;fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.101339;stroke-linecap:square;stroke-linejoin:bevel;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;-inkscape-stroke:none;paint-order:normal"
+       id="rect38"
+       width="112.71358"
+       height="80.886757"
+       x="-156.2616"
+       y="120.6912"
+       ry="11.961621" />
+  </g>
+  <text
+     xml:space="preserve"
+     style="font-style:normal;font-variant:normal;font-weight:800;font-stretch:normal;font-size:119.719px;font-family:'JetBrainsMono Nerd Font';-inkscape-font-specification:'JetBrainsMono Nerd Font Ultra-Bold';font-variation-settings:normal;letter-spacing:-6.57198px;opacity:1;vector-effect:none;fill:url(#linearGradient823-2);fill-opacity:1;stroke:none;stroke-width:0.16407;stroke-linecap:square;stroke-linejoin:bevel;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;-inkscape-stroke:none;paint-order:normal;stop-color:#000000;stop-opacity:1"
+     x="5.8154798"
+     y="97.920273"
+     id="text36"><tspan
+       id="tspan36"
+       style="font-variation-settings:normal;letter-spacing:-6.57198px;vector-effect:none;fill:url(#linearGradient823-2);fill-opacity:1;stroke:none;stroke-width:0.16407;stroke-linecap:square;stroke-linejoin:bevel;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;-inkscape-stroke:none;paint-order:normal;stop-color:#000000;stop-opacity:1"
+       x="5.8154798"
+       y="97.920273">GT</tspan></text>
+</svg>
