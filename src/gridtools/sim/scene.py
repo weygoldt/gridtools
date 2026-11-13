@@ -6,10 +6,12 @@
 
 ``recording.wav``
     Multichannel float32 wav (WAVE_FORMAT_EXTENSIBLE), one channel per
-    electrode in row-major grid order. Unit: the EOD potential on the body
-    axis at the field's reference distance of a fish with amplitude 1
-    (nominally mV; see :class:`~gridtools.sim.config.FieldConfig`). Not
-    normalised, not clipped unless ``noise.clip_limit`` is set.
+    electrode in row-major grid order. Unit: volts at the ADC (electrode
+    potential x 100), like the raw competition recordings: EOD amplitudes
+    are drawn in these units and a field gain of 1 is the potential on the
+    body axis at the field's reference distance (see
+    :class:`~gridtools.sim.config.FieldConfig`). Not normalised, not
+    clipped unless ``noise.clip_limit`` is set.
 ``fishgrid.cfg``
     Sampling rate and grid geometry, so :func:`gridtools.io.open_recording`
     finds the electrode positions.
